@@ -1,0 +1,637 @@
+// Conversation Manager para flujos conversacionales
+// Gestiona estados, transiciones y validaciones de flujos multi-paso
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+// Tipos importados del proyecto
+type FlowType = 'new_loan' | 'new_service' | 'reschedule' | 'confirm_return' | 'confirm_payment' | 'general_inquiry';
+type FlowStep = 'init' | 'awaiting_contact' | 'awaiting_item' | 'awaiting_due_date' | 'awaiting_confirmation' | 'awaiting_reschedule_date' | 'awaiting_service_details' | 'awaiting_recurrence' | 'confirming' | 'complete' | 'cancelled';
+
+interface ConversationState {
+  id?: string;
+  tenant_id: string;
+  contact_id: string;
+  phone_number?: string;
+  flow_type: FlowType;
+  current_step: FlowStep;
+  context: Record<string, any>;
+  expires_at: string;
+}
+
+interface FlowDefinition {
+  steps: FlowStep[];
+  validations: Record<FlowStep, (context: any, input: string) => boolean>;
+  transitions: Record<FlowStep, FlowStep>;
+  handlers: Record<FlowStep, (context: any, input: string) => any>;
+}
+
+export class ConversationManager {
+  private supabase: any;
+  private flows: Record<FlowType, FlowDefinition>;
+
+  constructor(supabaseUrl: string, supabaseServiceKey: string) {
+    this.supabase = createClient(supabaseUrl, supabaseServiceKey);
+    this.flows = this.initializeFlows();
+  }
+
+  private initializeFlows(): Record<FlowType, FlowDefinition> {
+    return {
+      new_loan: {
+        steps: ['init', 'awaiting_contact', 'awaiting_item', 'awaiting_due_date', 'confirming', 'complete'],
+        validations: {
+          init: () => true,
+          awaiting_contact: (context, input) => this.validateContact(input),
+          awaiting_item: (context, input) => input.trim().length > 3,
+          awaiting_due_date: (context, input) => this.validateDate(input),
+          awaiting_confirmation: (context, input) => ['si', 'sí', 'yes', 'confirmar', 'ok'].includes(input.toLowerCase()),
+          confirming: () => true,
+          complete: () => true,
+          cancelled: () => true,
+          awaiting_reschedule_date: () => true,
+          awaiting_service_details: () => true,
+          awaiting_recurrence: () => true
+        },
+        transitions: {
+          init: 'awaiting_contact',
+          awaiting_contact: 'awaiting_item',
+          awaiting_item: 'awaiting_due_date',
+          awaiting_due_date: 'confirming',
+          confirming: 'complete',
+          complete: 'complete',
+          cancelled: 'cancelled',
+          awaiting_confirmation: 'confirming',
+          awaiting_reschedule_date: 'confirming',
+          awaiting_service_details: 'confirming',
+          awaiting_recurrence: 'confirming'
+        },
+        handlers: {
+          init: () => ({ message: '¡Perfecto! Vamos a crear un nuevo préstamo. ¿A quién se lo vas a prestar? Puedes escribir su nombre o número de teléfono.' }),
+          awaiting_contact: (context, input) => ({ contact_info: input }),
+          awaiting_item: (context, input) => ({ item_description: input }),
+          awaiting_due_date: (context, input) => ({ due_date: this.parseDate(input) }),
+          confirming: (context) => ({ confirmed: true }),
+          complete: () => ({}),
+          cancelled: () => ({}),
+          awaiting_confirmation: () => ({}),
+          awaiting_reschedule_date: () => ({}),
+          awaiting_service_details: () => ({}),
+          awaiting_recurrence: () => ({})
+        }
+      },
+      reschedule: {
+        steps: ['init', 'awaiting_reschedule_date', 'confirming', 'complete'],
+        validations: {
+          init: () => true,
+          awaiting_reschedule_date: (context, input) => this.validateDate(input),
+          confirming: (context, input) => ['si', 'sí', 'yes', 'confirmar', 'ok'].includes(input.toLowerCase()),
+          complete: () => true,
+          cancelled: () => true,
+          awaiting_contact: () => true,
+          awaiting_item: () => true,
+          awaiting_due_date: () => true,
+          awaiting_confirmation: () => true,
+          awaiting_service_details: () => true,
+          awaiting_recurrence: () => true
+        },
+        transitions: {
+          init: 'awaiting_reschedule_date',
+          awaiting_reschedule_date: 'confirming',
+          confirming: 'complete',
+          complete: 'complete',
+          cancelled: 'cancelled',
+          awaiting_contact: 'awaiting_reschedule_date',
+          awaiting_item: 'awaiting_reschedule_date',
+          awaiting_due_date: 'awaiting_reschedule_date',
+          awaiting_confirmation: 'confirming',
+          awaiting_service_details: 'awaiting_reschedule_date',
+          awaiting_recurrence: 'awaiting_reschedule_date'
+        },
+        handlers: {
+          init: () => ({ message: '¿Para qué fecha quieres reprogramar? Puedes escribir algo como "mañana", "15 de enero" o "en una semana".' }),
+          awaiting_reschedule_date: (context, input) => ({ new_date: this.parseDate(input) }),
+          confirming: (context) => ({ confirmed: true }),
+          complete: () => ({}),
+          cancelled: () => ({}),
+          awaiting_contact: () => ({}),
+          awaiting_item: () => ({}),
+          awaiting_due_date: () => ({}),
+          awaiting_confirmation: () => ({}),
+          awaiting_service_details: () => ({}),
+          awaiting_recurrence: () => ({})
+        }
+      },
+      new_service: {
+        steps: ['init', 'awaiting_contact', 'awaiting_service_details', 'awaiting_recurrence', 'confirming', 'complete'],
+        validations: {
+          init: () => true,
+          awaiting_contact: (context, input) => this.validateContact(input),
+          awaiting_service_details: (context, input) => input.trim().length > 3,
+          awaiting_recurrence: (context, input) => ['mensual', 'semanal', 'quincenal', 'diario'].includes(input.toLowerCase()),
+          confirming: (context, input) => ['si', 'sí', 'yes', 'confirmar', 'ok'].includes(input.toLowerCase()),
+          complete: () => true,
+          cancelled: () => true,
+          awaiting_item: () => true,
+          awaiting_due_date: () => true,
+          awaiting_confirmation: () => true,
+          awaiting_reschedule_date: () => true
+        },
+        transitions: {
+          init: 'awaiting_contact',
+          awaiting_contact: 'awaiting_service_details',
+          awaiting_service_details: 'awaiting_recurrence',
+          awaiting_recurrence: 'confirming',
+          confirming: 'complete',
+          complete: 'complete',
+          cancelled: 'cancelled',
+          awaiting_item: 'awaiting_service_details',
+          awaiting_due_date: 'awaiting_recurrence',
+          awaiting_confirmation: 'confirming',
+          awaiting_reschedule_date: 'confirming'
+        },
+        handlers: {
+          init: () => ({ message: '¡Perfecto! Vamos a configurar un servicio recurrente. ¿Para quién es este servicio? Puedes escribir su nombre o número de teléfono.' }),
+          awaiting_contact: (context, input) => ({ contact_info: input }),
+          awaiting_service_details: (context, input) => ({ service_description: input }),
+          awaiting_recurrence: (context, input) => ({ recurrence: input }),
+          confirming: (context) => ({ confirmed: true }),
+          complete: () => ({}),
+          cancelled: () => ({}),
+          awaiting_item: () => ({}),
+          awaiting_due_date: () => ({}),
+          awaiting_confirmation: () => ({}),
+          awaiting_reschedule_date: () => ({})
+        }
+      },
+      confirm_return: {
+        steps: ['init', 'confirming', 'complete'],
+        validations: {
+          init: () => true,
+          confirming: (context, input) => ['si', 'sí', 'yes', 'confirmar', 'devuelto', 'entregado'].includes(input.toLowerCase()),
+          complete: () => true,
+          cancelled: () => true,
+          awaiting_contact: () => true,
+          awaiting_item: () => true,
+          awaiting_due_date: () => true,
+          awaiting_confirmation: () => true,
+          awaiting_reschedule_date: () => true,
+          awaiting_service_details: () => true,
+          awaiting_recurrence: () => true
+        },
+        transitions: {
+          init: 'confirming',
+          confirming: 'complete',
+          complete: 'complete',
+          cancelled: 'cancelled',
+          awaiting_contact: 'confirming',
+          awaiting_item: 'confirming',
+          awaiting_due_date: 'confirming',
+          awaiting_confirmation: 'confirming',
+          awaiting_reschedule_date: 'confirming',
+          awaiting_service_details: 'confirming',
+          awaiting_recurrence: 'confirming'
+        },
+        handlers: {
+          init: () => ({ message: '¿Confirmas que ya te devolvieron el artículo prestado?' }),
+          confirming: (context) => ({ confirmed: true }),
+          complete: () => ({}),
+          cancelled: () => ({}),
+          awaiting_contact: () => ({}),
+          awaiting_item: () => ({}),
+          awaiting_due_date: () => ({}),
+          awaiting_confirmation: () => ({}),
+          awaiting_reschedule_date: () => ({}),
+          awaiting_service_details: () => ({}),
+          awaiting_recurrence: () => ({})
+        }
+      },
+      confirm_payment: {
+        steps: ['init', 'confirming', 'complete'],
+        validations: {
+          init: () => true,
+          confirming: (context, input) => ['si', 'sí', 'yes', 'confirmar', 'pagado', 'completado'].includes(input.toLowerCase()),
+          complete: () => true,
+          cancelled: () => true,
+          awaiting_contact: () => true,
+          awaiting_item: () => true,
+          awaiting_due_date: () => true,
+          awaiting_confirmation: () => true,
+          awaiting_reschedule_date: () => true,
+          awaiting_service_details: () => true,
+          awaiting_recurrence: () => true
+        },
+        transitions: {
+          init: 'confirming',
+          confirming: 'complete',
+          complete: 'complete',
+          cancelled: 'cancelled',
+          awaiting_contact: 'confirming',
+          awaiting_item: 'confirming',
+          awaiting_due_date: 'confirming',
+          awaiting_confirmation: 'confirming',
+          awaiting_reschedule_date: 'confirming',
+          awaiting_service_details: 'confirming',
+          awaiting_recurrence: 'confirming'
+        },
+        handlers: {
+          init: () => ({ message: '¿Confirmas que ya realizaste el pago?' }),
+          confirming: (context) => ({ confirmed: true }),
+          complete: () => ({}),
+          cancelled: () => ({}),
+          awaiting_contact: () => ({}),
+          awaiting_item: () => ({}),
+          awaiting_due_date: () => ({}),
+          awaiting_confirmation: () => ({}),
+          awaiting_reschedule_date: () => ({}),
+          awaiting_service_details: () => ({}),
+          awaiting_recurrence: () => ({})
+        }
+      },
+      general_inquiry: {
+        steps: ['init', 'complete'],
+        validations: {
+          init: () => true,
+          complete: () => true,
+          cancelled: () => true,
+          awaiting_contact: () => true,
+          awaiting_item: () => true,
+          awaiting_due_date: () => true,
+          awaiting_confirmation: () => true,
+          awaiting_reschedule_date: () => true,
+          awaiting_service_details: () => true,
+          awaiting_recurrence: () => true,
+          confirming: () => true
+        },
+        transitions: {
+          init: 'complete',
+          complete: 'complete',
+          cancelled: 'cancelled',
+          awaiting_contact: 'complete',
+          awaiting_item: 'complete',
+          awaiting_due_date: 'complete',
+          awaiting_confirmation: 'complete',
+          awaiting_reschedule_date: 'complete',
+          awaiting_service_details: 'complete',
+          awaiting_recurrence: 'complete',
+          confirming: 'complete'
+        },
+        handlers: {
+          init: () => ({ message: 'Entiendo que tienes una consulta general. ¿En qué puedo ayudarte específicamente?' }),
+          complete: () => ({}),
+          cancelled: () => ({}),
+          awaiting_contact: () => ({}),
+          awaiting_item: () => ({}),
+          awaiting_due_date: () => ({}),
+          awaiting_confirmation: () => ({}),
+          awaiting_reschedule_date: () => ({}),
+          awaiting_service_details: () => ({}),
+          awaiting_recurrence: () => ({}),
+          confirming: () => ({})
+        }
+      }
+    };
+  }
+
+  // Obtener o crear estado de conversación
+  async getOrCreateConversationState(tenantId: string, contactId: string, flowType: FlowType): Promise<ConversationState> {
+    // Buscar estado existente no expirado
+    const { data: existingState } = await this.supabase
+      .from('conversation_states')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .eq('contact_id', contactId)
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingState) {
+      return existingState;
+    }
+
+    // Obtener información del contacto (necesitamos phone_number)
+    const { data: contact, error: contactError } = await this.supabase
+      .from('contacts')
+      .select('phone_e164, telegram_id')
+      .eq('id', contactId)
+      .single();
+
+    if (contactError || !contact) {
+      throw new Error(`Contact not found: ${contactError?.message || 'Unknown error'}`);
+    }
+
+    // Usar phone_e164 o telegram_id como identificador
+    const phoneNumber = contact.phone_e164 || contact.telegram_id || 'unknown';
+
+    // Crear nuevo estado
+    const newState: ConversationState = {
+      tenant_id: tenantId,
+      contact_id: contactId,
+      phone_number: phoneNumber,
+      flow_type: flowType,
+      current_step: 'init',
+      context: {},
+      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString() // 30 minutos
+    };
+
+    const { data: createdState, error } = await this.supabase
+      .from('conversation_states')
+      .insert(newState)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating conversation state:', error);
+      throw new Error(`Failed to create conversation state: ${error.message}`);
+    }
+
+    return createdState;
+  }
+
+  // Procesar entrada del usuario
+  async processInput(tenantId: string, contactId: string, input: string, flowType?: FlowType): Promise<{
+    success: boolean;
+    message?: string;
+    nextStep?: FlowStep;
+    completed?: boolean;
+    context?: any;
+    error?: string;
+  }> {
+    try {
+      // Si no se especifica flowType, detectar intención
+      if (!flowType) {
+        flowType = this.detectIntent(input);
+      }
+
+      const state = await this.getOrCreateConversationState(tenantId, contactId, flowType);
+
+      if (!state) {
+        return { success: false, error: 'No se pudo crear el estado de conversación' };
+      }
+
+      const flow = this.flows[state.flow_type];
+
+      if (!flow) {
+        return { success: false, error: 'Flujo no encontrado' };
+      }
+
+      // Validar entrada
+      const isValid = flow.validations[state.current_step](state.context, input);
+      if (!isValid) {
+        return {
+          success: false,
+          message: this.getValidationMessage(state.current_step)
+        };
+      }
+
+      // Procesar entrada
+      const handlerResult = flow.handlers[state.current_step](state.context, input);
+      const updatedContext = { ...state.context, ...handlerResult };
+
+      // Obtener siguiente paso
+      const nextStep = flow.transitions[state.current_step];
+      const isCompleted = nextStep === 'complete';
+
+      // Actualizar estado
+      if (!isCompleted) {
+        await this.supabase
+          .from('conversation_states')
+          .update({
+            current_step: nextStep,
+            context: updatedContext,
+            expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+          })
+          .eq('id', state.id);
+      } else {
+        // Marcar como completado
+        await this.supabase
+          .from('conversation_states')
+          .update({
+            current_step: 'complete',
+            context: updatedContext
+          })
+          .eq('id', state.id);
+      }
+
+      return {
+        success: true,
+        message: this.getStepMessage(state.flow_type, nextStep, updatedContext),
+        nextStep,
+        completed: isCompleted,
+        context: updatedContext
+      };
+
+    } catch (error) {
+      console.error('Error processing conversation input:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Detectar intención del usuario
+  private detectIntent(input: string): FlowType {
+    const text = input.toLowerCase().trim();
+
+    // Palabras clave para nuevo préstamo
+    if (text.includes('prestar') || text.includes('préstamo') || text.includes('nuevo préstamo') ||
+        text.includes('crear préstamo') || text.includes('registrar préstamo')) {
+      return 'new_loan';
+    }
+
+    // Palabras clave para reprogramar
+    if (text.includes('reprogramar') || text.includes('cambiar fecha') || text.includes('posponer') ||
+        text.includes('mover fecha') || text.includes('nueva fecha')) {
+      return 'reschedule';
+    }
+
+    // Palabras clave para servicio recurrente
+    if (text.includes('servicio') || text.includes('mensual') || text.includes('recurrente') ||
+        text.includes('cobro mensual') || text.includes('suscripción')) {
+      return 'new_service';
+    }
+
+    // Palabras clave para confirmación de devolución
+    if (text.includes('devolvieron') || text.includes('entregaron') || text.includes('regresaron') ||
+        text.includes('ya me dieron') || text.includes('ya tengo')) {
+      return 'confirm_return';
+    }
+
+    // Palabras clave para confirmación de pago
+    if (text.includes('pagué') || text.includes('pagado') || text.includes('ya pagué') ||
+        text.includes('transferí') || text.includes('depósito')) {
+      return 'confirm_payment';
+    }
+
+    // Por defecto, consulta general
+    return 'general_inquiry';
+  }
+
+  // Obtener mensaje de validación
+  private getValidationMessage(step: FlowStep): string {
+    const messages = {
+      awaiting_contact: 'Por favor proporciona un nombre válido o número de teléfono.',
+      awaiting_item: 'Por favor describe qué vas a prestar (mínimo 3 caracteres).',
+      awaiting_due_date: 'Por favor proporciona una fecha válida. Puedes escribir "mañana", "15 de enero", "en una semana", etc.',
+      awaiting_reschedule_date: 'Por favor proporciona una fecha válida para reprogramar.',
+      awaiting_service_details: 'Por favor describe el servicio (mínimo 3 caracteres).',
+      awaiting_recurrence: 'Por favor especifica la frecuencia: mensual, semanal, quincenal o diario.',
+      confirming: 'Por favor responde "sí" o "no" para confirmar.',
+      init: 'Iniciando conversación...',
+      complete: 'Conversación completada.',
+      cancelled: 'Conversación cancelada.',
+      awaiting_confirmation: 'Por favor confirma tu respuesta.'
+    };
+
+    return messages[step] || 'Por favor proporciona una respuesta válida.';
+  }
+
+  // Obtener mensaje para el siguiente paso
+  private getStepMessage(flowType: FlowType, step: FlowStep, context: any): string {
+    if (step === 'complete') {
+      return this.getCompletionMessage(flowType, context);
+    }
+
+    const messages = {
+      new_loan: {
+        awaiting_contact: '¡Perfecto! Vamos a crear un nuevo préstamo. ¿A quién se lo vas a prestar?',
+        awaiting_item: `¿Qué le vas a prestar a ${context.contact_info}?`,
+        awaiting_due_date: `¿Para cuándo debe devolver "${context.item_description}"?`,
+        confirming: `Perfecto, voy a registrar:\n\n📝 **Préstamo a:** ${context.contact_info}\n🎯 **Artículo:** ${context.item_description}\n📅 **Fecha límite:** ${context.due_date}\n\n¿Confirmas que todo está correcto?`
+      },
+      reschedule: {
+        awaiting_reschedule_date: '¿Para qué fecha quieres reprogramar?',
+        confirming: `¿Confirmas que quieres reprogramar para el ${context.new_date}?`
+      },
+      new_service: {
+        awaiting_contact: '¡Perfecto! Vamos a configurar un servicio recurrente. ¿Para quién es?',
+        awaiting_service_details: `¿Qué servicio le vas a cobrar a ${context.contact_info}?`,
+        awaiting_recurrence: `¿Con qué frecuencia quieres cobrar "${context.service_description}"? (mensual, semanal, quincenal, diario)`,
+        confirming: `Voy a configurar:\n\n👤 **Cliente:** ${context.contact_info}\n💼 **Servicio:** ${context.service_description}\n🔄 **Frecuencia:** ${context.recurrence}\n\n¿Confirmas?`
+      }
+    };
+
+    return messages[flowType]?.[step] || 'Continuemos...';
+  }
+
+  // Obtener mensaje de completación
+  private getCompletionMessage(flowType: FlowType, context: any): string {
+    const messages = {
+      new_loan: `✅ **Préstamo registrado exitosamente**\n\nTe avisaré cuando se acerque la fecha de vencimiento. El préstamo aparecerá en tu lista de acuerdos activos.`,
+      reschedule: `✅ **Fecha reprogramada exitosamente**\n\nHe actualizado la fecha del acuerdo. Te enviaré recordatorios para la nueva fecha.`,
+      new_service: `✅ **Servicio recurrente configurado**\n\nHe programado los cobros automáticos. Te notificaré cada vez que sea momento de enviar el recordatorio.`,
+      confirm_return: `✅ **Devolución confirmada**\n\nHe marcado el préstamo como completado. ¡Gracias por mantener tus registros actualizados!`,
+      confirm_payment: `✅ **Pago confirmado**\n\nHe registrado el pago. El acuerdo se ha marcado como completado.`,
+      general_inquiry: `Gracias por tu consulta. Si necesitas ayuda específica, puedes escribir comandos como "nuevo préstamo", "reprogramar" o "estado".`
+    };
+
+    return messages[flowType] || '✅ Proceso completado exitosamente.';
+  }
+
+  // Validaciones auxiliares
+  private validateContact(input: string): boolean {
+    const trimmed = input.trim();
+    // Debe tener al menos 2 caracteres y no ser solo números (a menos que sea un teléfono válido)
+    if (trimmed.length < 2) return false;
+
+    // Si es solo números, debe parecer un teléfono
+    if (/^\d+$/.test(trimmed)) {
+      return trimmed.length >= 10;
+    }
+
+    return true;
+  }
+
+  private validateDate(input: string): boolean {
+    const text = input.toLowerCase().trim();
+
+    // Palabras clave para fechas relativas
+    const relativeKeywords = ['mañana', 'hoy', 'pasado', 'próximo', 'siguiente', 'semana', 'mes', 'día'];
+    if (relativeKeywords.some(keyword => text.includes(keyword))) {
+      return true;
+    }
+
+    // Intentar parsear como fecha
+    try {
+      const parsed = this.parseDate(input);
+      return parsed !== null;
+    } catch {
+      return false;
+    }
+  }
+
+  private parseDate(input: string): string | null {
+    const text = input.toLowerCase().trim();
+    const now = new Date();
+
+    // Fechas relativas comunes
+    if (text === 'mañana') {
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      return tomorrow.toISOString().split('T')[0];
+    }
+
+    if (text === 'hoy') {
+      return now.toISOString().split('T')[0];
+    }
+
+    if (text.includes('semana')) {
+      const nextWeek = new Date(now);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      return nextWeek.toISOString().split('T')[0];
+    }
+
+    if (text.includes('mes')) {
+      const nextMonth = new Date(now);
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+      return nextMonth.toISOString().split('T')[0];
+    }
+
+    // Intentar parsear fecha específica (formato flexible)
+    try {
+      const date = new Date(input);
+      if (!isNaN(date.getTime())) {
+        return date.toISOString().split('T')[0];
+      }
+    } catch {
+      // Fallar silenciosamente
+    }
+
+    return null;
+  }
+
+  // Limpiar estados expirados
+  async cleanupExpiredStates(): Promise<number> {
+    const { data } = await this.supabase
+      .from('conversation_states')
+      .delete()
+      .lt('expires_at', new Date().toISOString())
+      .select('id');
+
+    return data?.length || 0;
+  }
+
+  // Obtener estado actual de conversación
+  async getCurrentState(tenantId: string, contactId: string): Promise<ConversationState | null> {
+    const { data } = await this.supabase
+      .from('conversation_states')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .eq('contact_id', contactId)
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return data;
+  }
+
+  // Cancelar conversación actual
+  async cancelCurrentConversation(tenantId: string, contactId: string): Promise<boolean> {
+    const { error } = await this.supabase
+      .from('conversation_states')
+      .update({ current_step: 'cancelled' })
+      .eq('tenant_id', tenantId)
+      .eq('contact_id', contactId)
+      .gt('expires_at', new Date().toISOString());
+
+    return !error;
+  }
+}
