@@ -28,9 +28,11 @@ CREATE TABLE telegram_conversation_states (
 CREATE INDEX idx_telegram_conv_states_tenant_chat
   ON telegram_conversation_states(tenant_id, chat_id);
 
-CREATE INDEX idx_telegram_conv_states_active
-  ON telegram_conversation_states(tenant_id, chat_id)
-  WHERE expires_at > NOW();
+-- Índice parcial removido debido a que NOW() no es IMMUTABLE
+-- Si se necesita, considerar usar un índice completo o una columna calculada
+-- CREATE INDEX idx_telegram_conv_states_active
+--   ON telegram_conversation_states(tenant_id, chat_id)
+--   WHERE expires_at > NOW();
 
 CREATE INDEX idx_telegram_conv_states_user
   ON telegram_conversation_states(tenant_id, user_id);

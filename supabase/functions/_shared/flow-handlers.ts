@@ -63,9 +63,11 @@ export class FlowHandlers {
       // 2. Buscar o crear contacto
       let contact = null;
       const contactInfo = context.contact_info;
+      console.log('Creating/finding contact for:', contactInfo);
 
       // Si contactInfo parece un teléfono, buscar por teléfono
       if (/^\+?\d+$/.test(contactInfo.replace(/[\s\-()]/g, ''))) {
+        console.log('Contact info looks like a phone number');
         const formattedPhone = parsePhoneNumber(contactInfo);
 
         const { data: existingContact } = await this.supabase
@@ -93,9 +95,11 @@ export class FlowHandlers {
             .single();
 
           contact = newContact;
+          console.log('Created new contact with phone:', contact?.id);
         }
       } else {
         // Buscar por nombre
+        console.log('Searching contact by name:', contactInfo);
         const { data: existingContact } = await this.supabase
           .from('contacts')
           .select('*')
@@ -105,28 +109,46 @@ export class FlowHandlers {
 
         if (existingContact) {
           contact = existingContact;
+          console.log('Found existing contact by name:', contact.id);
         } else {
-          // Crear nuevo contacto sin teléfono (requiere configuración manual)
-          const { data: newContact } = await this.supabase
+          console.log('Contact not found, creating new one without phone');
+          // Crear nuevo contacto sin teléfono (genera placeholder único)
+          const uniquePlaceholder = `+52PENDING${Date.now()}${Math.floor(Math.random() * 1000)}`;
+
+          const { data: newContact, error: createError } = await this.supabase
             .from('contacts')
             .insert({
               tenant_id: tenantId,
-              phone_e164: '+52PENDING', // Placeholder temporal
+              phone_e164: uniquePlaceholder, // Placeholder temporal único
               name: contactInfo,
               opt_in_status: 'pending',
               preferred_language: 'es',
-              metadata: { created_from: 'new_loan_flow', needs_phone: true }
+              metadata: { created_from: 'new_loan_flow', needs_phone: true, original_name: contactInfo }
             })
             .select()
             .single();
 
+          if (createError) {
+            console.error('Error creating contact:', createError);
+            throw new Error(`Failed to create contact: ${createError.message}`);
+          }
+
+          if (!newContact) {
+            console.error('newContact is null after insert');
+            throw new Error('Contact insert returned null');
+          }
+
           contact = newContact;
+          console.log('Created new contact without phone:', contact.id);
         }
       }
 
       if (!contact) {
+        console.error('Contact is still null after all attempts');
         throw new Error('Failed to create or find contact');
       }
+
+      console.log('Final contact selected:', contact.id);
 
       // 3. Crear el acuerdo de préstamo
       const dueDate = context.due_date;

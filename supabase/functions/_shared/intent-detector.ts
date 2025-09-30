@@ -34,13 +34,11 @@ export class IntentDetector {
     return [
       {
         name: 'new_loan',
-        minConfidence: 0.6,
+        minConfidence: 0.15,
         patterns: [
-          { keywords: ['prestar', 'préstamo', 'presto', 'prestado'], weight: 0.8, required: true },
-          { keywords: ['nuevo', 'crear', 'registrar', 'anotar'], weight: 0.3 },
-          { keywords: ['dinero', 'plata', 'efectivo', 'pesos'], weight: 0.2 },
-          { keywords: ['artículo', 'objeto', 'cosa', 'herramienta'], weight: 0.2 },
-          { keywords: ['devolver', 'regresar', 'entregar'], weight: 0.1 }
+          { keywords: ['prestamo'], weight: 1.0, required: true }, // Simplificado para mejor score
+          { keywords: ['nuevo', 'crear', 'registrar'], weight: 0.3 },
+          { keywords: ['dinero', 'plata', 'efectivo', 'pesos'], weight: 0.1 }
         ],
         examples: [
           'quiero crear un nuevo préstamo',

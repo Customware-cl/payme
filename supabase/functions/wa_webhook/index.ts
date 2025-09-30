@@ -148,16 +148,91 @@ async function processInboundMessage(
 
     // 4. Procesar según tipo de mensaje usando flujos conversacionales
     let responseMessage = null;
+    let interactiveResponse = null;
 
     if (message.type === 'text') {
       const text = message.text?.body?.trim() || '';
 
+      console.log('Processing text message:', { text: text.substring(0, 100), type: message.type });
+
+      // Detectar textos de botones (pueden incluir emojis)
+      // Normalizar eliminando emojis y limpiando espacios
+      const cleanText = text.replace(/[\u{1F600}-\u{1F6FF}]/gu, '').trim().toLowerCase();
+
       // Comandos especiales que no requieren flujos
       const lowerText = text.toLowerCase();
-      if (lowerText === 'hola' || lowerText === 'hi') {
-        responseMessage = '¡Hola! 👋 Soy tu asistente de recordatorios.\n\nPuedes escribir cosas como:\n• "Nuevo préstamo" - Para registrar algo que prestaste\n• "Reprogramar" - Para cambiar una fecha\n• "Servicio mensual" - Para cobros recurrentes\n• "Estado" - Ver tus acuerdos activos\n\n¿En qué puedo ayudarte?';
+
+      // Detectar si es un texto de botón (con o sin emoji)
+      if (cleanText.includes('nuevo prestamo') || cleanText.includes('nuevo préstamo')) {
+        // Convertir a comando para iniciar flujo
+        console.log('Detected button text for new_loan, converting to command');
+        // Procesar como si fuera el comando directo - continuar con flujo conversacional
+      } else if (lowerText === 'hola' || lowerText === 'hi' || lowerText === 'menu' || lowerText === 'inicio') {
+        // Mensaje de bienvenida con botones
+        interactiveResponse = {
+          type: 'button',
+          body: {
+            text: '¡Hola! 👋 Soy tu asistente de recordatorios.\n\n¿En qué puedo ayudarte hoy?'
+          },
+          action: {
+            buttons: [
+              {
+                type: 'reply',
+                reply: {
+                  id: 'new_loan',
+                  title: '💰 Nuevo préstamo'
+                }
+              },
+              {
+                type: 'reply',
+                reply: {
+                  id: 'check_status',
+                  title: '📋 Ver estado'
+                }
+              },
+              {
+                type: 'reply',
+                reply: {
+                  id: 'help',
+                  title: '❓ Ayuda'
+                }
+              }
+            ]
+          }
+        };
       } else if (lowerText === 'ayuda' || lowerText === 'help') {
-        responseMessage = '🤖 *Comandos disponibles:*\n\n• *Nuevo préstamo* - Registrar algo prestado\n• *Reprogramar* - Cambiar fecha de vencimiento\n• *Servicio mensual* - Configurar cobros recurrentes\n• *Estado* - Ver acuerdos activos\n• *Cancelar* - Cancelar conversación actual\n\nTambién puedes responder a los recordatorios con los botones.';
+        // Mensaje de ayuda con botones
+        interactiveResponse = {
+          type: 'button',
+          body: {
+            text: '🤖 *Comandos disponibles:*\n\nPuedes usar los botones o escribir:\n• Nuevo préstamo\n• Reprogramar\n• Servicio mensual\n• Estado\n• Cancelar'
+          },
+          action: {
+            buttons: [
+              {
+                type: 'reply',
+                reply: {
+                  id: 'new_loan',
+                  title: '💰 Nuevo préstamo'
+                }
+              },
+              {
+                type: 'reply',
+                reply: {
+                  id: 'reschedule',
+                  title: '📅 Reprogramar'
+                }
+              },
+              {
+                type: 'reply',
+                reply: {
+                  id: 'new_service',
+                  title: '🔄 Servicio mensual'
+                }
+              }
+            ]
+          }
+        };
       } else if (lowerText === 'estado' || lowerText === 'status') {
         const { data: agreements } = await supabase
           .from('agreements')
@@ -203,8 +278,16 @@ async function processInboundMessage(
             const intentResult = intentDetector.detectIntent(text);
             flowType = intentResult.intent;
 
-            // Si la confianza es baja, ofrecer ayuda
-            if (intentResult.confidence < 0.6) {
+            // Log para debug
+            console.log('Intent detection:', {
+              text: text.substring(0, 50),
+              intent: intentResult.intent,
+              confidence: intentResult.confidence,
+              reasoning: intentResult.reasoning
+            });
+
+            // Si la confianza es baja, ofrecer ayuda (umbral consistente con IntentDetector)
+            if (intentResult.confidence < 0.15) {
               const suggestions = intentDetector.getSuggestions(text);
               responseMessage = `No estoy seguro de lo que necesitas. ¿Te refieres a alguno de estos?\n\n${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n\nO escribe "ayuda" para ver todas las opciones.`;
             }
@@ -279,6 +362,132 @@ async function processInboundMessage(
 
       // Procesar según botón
       switch (buttonId) {
+        case 'new_loan':
+          // Iniciar flujo de nuevo préstamo - ir directo sin IntentDetector
+          console.log('Button new_loan clicked, starting flow directly');
+          try {
+            const conversationManager = new ConversationManager(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+
+            // Crear el estado directamente sin pasar por detección de intención
+            await conversationManager.getOrCreateConversationState(tenant.id, contact.id, 'new_loan');
+
+            // Procesar el primer paso (init) del flujo
+            const result = await conversationManager.processInput(tenant.id, contact.id, 'inicio', 'new_loan');
+
+            console.log('new_loan flow result:', { success: result.success, message: result.message?.substring(0, 50) });
+
+            if (result.success) {
+              responseMessage = result.message || '💰 Perfecto, vamos a registrar un nuevo préstamo.\n\n¿A quién se lo vas a prestar? Puedes escribir su nombre o número de teléfono.';
+            } else {
+              console.error('Flow initialization failed:', result.error);
+              responseMessage = result.error || 'Hubo un problema al iniciar el flujo. Por favor intenta de nuevo.';
+            }
+          } catch (error) {
+            console.error('Error starting new_loan flow:', error);
+            responseMessage = '💰 Perfecto, vamos a registrar un nuevo préstamo.\n\n¿A quién se lo vas a prestar? Puedes escribir su nombre o número de teléfono.';
+          }
+          break;
+
+        case 'check_status':
+          // Mostrar estado de acuerdos
+          const { data: agreements } = await supabase
+            .from('agreements')
+            .select('*')
+            .eq('contact_id', contact.id)
+            .eq('status', 'active');
+
+          if (!agreements || agreements.length === 0) {
+            responseMessage = 'No tienes acuerdos activos en este momento.\n\n¿Quieres registrar algo? Escribe "nuevo préstamo".';
+          } else {
+            let statusText = '*📋 Tus acuerdos activos:*\n\n';
+            agreements.forEach((agreement: any, index: number) => {
+              statusText += `${index + 1}. *${agreement.title}*\n`;
+              statusText += `   Tipo: ${agreement.type === 'loan' ? 'Préstamo' : 'Servicio'}\n`;
+              if (agreement.due_date) {
+                statusText += `   Vence: ${new Date(agreement.due_date).toLocaleDateString()}\n`;
+              }
+              if (agreement.amount) {
+                statusText += `   Monto: $${agreement.amount} ${agreement.currency}\n`;
+              }
+              statusText += '\n';
+            });
+            responseMessage = statusText;
+          }
+          break;
+
+        case 'help':
+          // Mostrar ayuda con botones
+          interactiveResponse = {
+            type: 'button',
+            body: {
+              text: '🤖 *¿Qué puedo hacer?*\n\n• Registrar préstamos y cobros\n• Programar recordatorios\n• Configurar servicios mensuales\n• Ver el estado de tus acuerdos\n\n¿Qué te gustaría hacer?'
+            },
+            action: {
+              buttons: [
+                {
+                  type: 'reply',
+                  reply: {
+                    id: 'new_loan',
+                    title: '💰 Nuevo préstamo'
+                  }
+                },
+                {
+                  type: 'reply',
+                  reply: {
+                    id: 'reschedule',
+                    title: '📅 Reprogramar'
+                  }
+                },
+                {
+                  type: 'reply',
+                  reply: {
+                    id: 'check_status',
+                    title: '📋 Ver estado'
+                  }
+                }
+              ]
+            }
+          };
+          break;
+
+        case 'reschedule':
+          // Iniciar flujo de reprogramación - ir directo sin IntentDetector
+          console.log('Button reschedule clicked, starting flow directly');
+          try {
+            const conversationManager = new ConversationManager(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+            await conversationManager.getOrCreateConversationState(tenant.id, contact.id, 'reschedule');
+            const result = await conversationManager.processInput(tenant.id, contact.id, 'inicio', 'reschedule');
+
+            if (result.success) {
+              responseMessage = result.message || '📅 Vamos a reprogramar una fecha.\n\n¿Qué acuerdo quieres reprogramar?';
+            } else {
+              responseMessage = result.error || 'Hubo un problema al iniciar el flujo. Por favor intenta de nuevo.';
+            }
+          } catch (error) {
+            console.error('Error starting reschedule flow:', error);
+            responseMessage = '📅 Vamos a reprogramar una fecha.\n\n¿Qué acuerdo quieres reprogramar?';
+          }
+          break;
+
+        case 'new_service':
+          // Iniciar flujo de servicio mensual - ir directo sin IntentDetector
+          console.log('Button new_service clicked, starting flow directly');
+          try {
+            const conversationManager = new ConversationManager(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+            await conversationManager.getOrCreateConversationState(tenant.id, contact.id, 'new_service');
+            const result = await conversationManager.processInput(tenant.id, contact.id, 'inicio', 'new_service');
+
+            if (result.success) {
+              responseMessage = result.message || '🔄 Perfecto, vamos a configurar un servicio mensual.\n\n¿Qué servicio es?';
+            } else {
+              responseMessage = result.error || 'Hubo un problema al iniciar el flujo. Por favor intenta de nuevo.';
+            }
+          } catch (error) {
+            console.error('Error starting new_service flow:', error);
+            responseMessage = '🔄 Perfecto, vamos a configurar un servicio mensual.\n\n¿Qué servicio es? (Ej: "arriendo", "plan celular", "gym")';
+          }
+          break;
+
         case 'opt_in_yes':
           await supabase
             .from('contacts')
@@ -376,8 +585,57 @@ async function processInboundMessage(
       }
     }
 
-    // 5. Enviar respuesta usando Window Manager para respetar ventana 24h
-    if (responseMessage) {
+    // 5. Enviar respuesta
+    if (interactiveResponse) {
+      // Enviar mensaje interactivo con botones directamente
+      try {
+        const accessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+        const payload = {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: contact.phone_e164.replace('+', ''),
+          type: 'interactive',
+          interactive: interactiveResponse
+        };
+
+        const response = await fetch(
+          `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+          }
+        );
+
+        const result = await response.json();
+
+        if (response.ok) {
+          // Registrar mensaje en base de datos
+          await supabase
+            .from('whatsapp_messages')
+            .insert({
+              tenant_id: tenant.id,
+              contact_id: contact.id,
+              wa_message_id: result.messages[0].id,
+              direction: 'outbound',
+              message_type: 'interactive',
+              content: { interactive: interactiveResponse },
+              status: 'sent',
+              sent_at: new Date().toISOString()
+            });
+
+          console.log('Interactive message sent successfully:', result.messages[0].id);
+        } else {
+          console.error('Failed to send interactive message:', result);
+        }
+      } catch (error) {
+        console.error('Error sending interactive message:', error);
+      }
+    } else if (responseMessage) {
+      // Enviar mensaje de texto usando Window Manager para respetar ventana 24h
       try {
         const windowManager = new WhatsAppWindowManager(supabase.supabaseUrl, supabase.supabaseKey);
 

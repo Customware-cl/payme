@@ -308,6 +308,14 @@ export class ConversationManager {
       return existingState;
     }
 
+    // Si no hay estado activo, eliminar cualquier estado anterior (expirado o cancelado)
+    // para evitar violación del constraint UNIQUE(contact_id)
+    await this.supabase
+      .from('conversation_states')
+      .delete()
+      .eq('tenant_id', tenantId)
+      .eq('contact_id', contactId);
+
     // Obtener información del contacto (necesitamos phone_number)
     const { data: contact, error: contactError } = await this.supabase
       .from('contacts')
@@ -428,11 +436,20 @@ export class ConversationManager {
 
   // Detectar intención del usuario
   private detectIntent(input: string): FlowType {
-    const text = input.toLowerCase().trim();
+    // Normalizar texto: lowercase y remover tildes
+    const text = input
+      .toLowerCase()
+      .replace(/[áà]/g, 'a')
+      .replace(/[éè]/g, 'e')
+      .replace(/[íì]/g, 'i')
+      .replace(/[óò]/g, 'o')
+      .replace(/[úù]/g, 'u')
+      .replace(/ñ/g, 'n')
+      .trim();
 
     // Palabras clave para nuevo préstamo
-    if (text.includes('prestar') || text.includes('préstamo') || text.includes('nuevo préstamo') ||
-        text.includes('crear préstamo') || text.includes('registrar préstamo')) {
+    if (text.includes('prestar') || text.includes('prestamo') || text.includes('nuevo prestamo') ||
+        text.includes('crear prestamo') || text.includes('registrar prestamo')) {
       return 'new_loan';
     }
 
@@ -444,7 +461,7 @@ export class ConversationManager {
 
     // Palabras clave para servicio recurrente
     if (text.includes('servicio') || text.includes('mensual') || text.includes('recurrente') ||
-        text.includes('cobro mensual') || text.includes('suscripción')) {
+        text.includes('cobro mensual') || text.includes('suscripcion')) {
       return 'new_service';
     }
 
@@ -455,8 +472,8 @@ export class ConversationManager {
     }
 
     // Palabras clave para confirmación de pago
-    if (text.includes('pagué') || text.includes('pagado') || text.includes('ya pagué') ||
-        text.includes('transferí') || text.includes('depósito')) {
+    if (text.includes('pague') || text.includes('pagado') || text.includes('ya pague') ||
+        text.includes('transferi') || text.includes('deposito')) {
       return 'confirm_payment';
     }
 
