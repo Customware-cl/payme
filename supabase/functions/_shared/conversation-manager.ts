@@ -41,6 +41,16 @@ export class ConversationManager {
         validations: {
           init: () => true,
           awaiting_contact: (context, input) => this.validateContact(input),
+          awaiting_phone_for_new_contact: (context, input) => {
+            const text = input.toLowerCase().trim();
+            // Aceptar "sin teléfono" o números de teléfono válidos
+            if (['sin telefono', 'sin teléfono', 'no tengo', 'skip', 'saltar'].includes(text)) {
+              return true;
+            }
+            // Validar que sea un teléfono (al menos 8 dígitos)
+            const digitsOnly = input.replace(/\D/g, '');
+            return digitsOnly.length >= 8;
+          },
           awaiting_item: (context, input) => input.trim().length > 3,
           awaiting_due_date: (context, input) => this.validateDate(input),
           awaiting_confirmation: (context, input) => ['si', 'sí', 'yes', 'confirmar', 'ok'].includes(input.toLowerCase()),
@@ -53,7 +63,8 @@ export class ConversationManager {
         },
         transitions: {
           init: 'awaiting_contact',
-          awaiting_contact: 'awaiting_item',
+          awaiting_contact: 'awaiting_item', // Esta transición será modificada dinámicamente
+          awaiting_phone_for_new_contact: 'awaiting_item',
           awaiting_item: 'awaiting_due_date',
           awaiting_due_date: 'confirming',
           confirming: 'complete',
@@ -67,6 +78,15 @@ export class ConversationManager {
         handlers: {
           init: () => ({ message: '¡Perfecto! Vamos a crear un nuevo préstamo. ¿A quién se lo vas a prestar? Puedes escribir su nombre o número de teléfono.' }),
           awaiting_contact: (context, input) => ({ contact_info: input }),
+          awaiting_phone_for_new_contact: (context, input) => {
+            const text = input.toLowerCase().trim();
+            // Si dice "sin teléfono", no guardar el teléfono
+            if (['sin telefono', 'sin teléfono', 'no tengo', 'skip', 'saltar'].includes(text)) {
+              return { new_contact_phone: null };
+            }
+            // Guardar el teléfono
+            return { new_contact_phone: input.trim() };
+          },
           awaiting_item: (context, input) => ({ item_description: input }),
           awaiting_due_date: (context, input) => ({ due_date: this.parseDate(input) }),
           confirming: (context) => ({ confirmed: true }),
@@ -293,6 +313,11 @@ export class ConversationManager {
 
   // Obtener o crear estado de conversación
   async getOrCreateConversationState(tenantId: string, contactId: string, flowType: FlowType): Promise<ConversationState> {
+    console.log('====== getOrCreateConversationState START ======');
+    console.log('Tenant ID:', tenantId);
+    console.log('Contact ID:', contactId);
+    console.log('Requested flowType:', flowType);
+
     // Buscar estado existente no expirado
     const { data: existingState } = await this.supabase
       .from('conversation_states')
@@ -304,8 +329,29 @@ export class ConversationManager {
       .limit(1)
       .maybeSingle();
 
+    console.log('Existing state found:', existingState ? {
+      id: existingState.id,
+      flow_type: existingState.flow_type,
+      current_step: existingState.current_step
+    } : 'null');
+
     if (existingState) {
-      return existingState;
+      // Si el flowType coincide, reutilizar el estado existente
+      if (existingState.flow_type === flowType) {
+        console.log('Reusing existing state with matching flow_type:', flowType);
+        return existingState;
+      }
+
+      // Si el flowType es diferente, eliminar el estado anterior y crear uno nuevo
+      console.log('CONFLICT: Existing state has flow_type:', existingState.flow_type, 'but requested:', flowType);
+      console.log('Deleting old state and creating new one...');
+
+      await this.supabase
+        .from('conversation_states')
+        .delete()
+        .eq('id', existingState.id);
+
+      console.log('Old state deleted, will create new one');
     }
 
     // Si no hay estado activo, eliminar cualquier estado anterior (expirado o cancelado)
@@ -341,6 +387,8 @@ export class ConversationManager {
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString() // 30 minutos
     };
 
+    console.log('Creating new conversation state:', newState);
+
     const { data: createdState, error } = await this.supabase
       .from('conversation_states')
       .insert(newState)
@@ -351,6 +399,13 @@ export class ConversationManager {
       console.error('Error creating conversation state:', error);
       throw new Error(`Failed to create conversation state: ${error.message}`);
     }
+
+    console.log('Created state successfully:', {
+      id: createdState.id,
+      flow_type: createdState.flow_type,
+      current_step: createdState.current_step
+    });
+    console.log('====== getOrCreateConversationState END ======');
 
     return createdState;
   }
@@ -365,12 +420,41 @@ export class ConversationManager {
     error?: string;
   }> {
     try {
-      // Si no se especifica flowType, detectar intención
+      console.log('====== CONVERSATION MANAGER processInput START ======');
+      console.log('Input:', input);
+      console.log('FlowType param:', flowType);
+
+      // Si no se especifica flowType, buscar estado activo primero antes de detectar intención
       if (!flowType) {
-        flowType = this.detectIntent(input);
+        // Buscar si hay un estado de conversación activo
+        const { data: activeState } = await this.supabase
+          .from('conversation_states')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .eq('contact_id', contactId)
+          .gt('expires_at', new Date().toISOString())
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (activeState && activeState.current_step !== 'complete' && activeState.current_step !== 'cancelled') {
+          // Hay un flujo activo no completado, continuar con ese flujo
+          flowType = activeState.flow_type;
+          console.log('Found active flow, continuing with:', flowType);
+        } else {
+          // No hay flujo activo, detectar intención del usuario
+          flowType = this.detectIntent(input);
+          console.log('No active flow, detected new intent:', flowType);
+        }
       }
 
       const state = await this.getOrCreateConversationState(tenantId, contactId, flowType);
+      console.log('State retrieved:', {
+        id: state?.id,
+        flow_type: state?.flow_type,
+        current_step: state?.current_step,
+        context: state?.context
+      });
 
       if (!state) {
         return { success: false, error: 'No se pudo crear el estado de conversación' };
@@ -393,10 +477,37 @@ export class ConversationManager {
 
       // Procesar entrada
       const handlerResult = flow.handlers[state.current_step](state.context, input);
-      const updatedContext = { ...state.context, ...handlerResult };
+      let updatedContext = { ...state.context, ...handlerResult };
 
-      // Obtener siguiente paso
-      const nextStep = flow.transitions[state.current_step];
+      // Lógica especial para verificación de contacto en new_loan
+      let nextStep = flow.transitions[state.current_step];
+
+      if (state.flow_type === 'new_loan' && state.current_step === 'awaiting_contact') {
+        console.log('Verifying if contact exists in database...');
+
+        // Buscar si el contacto existe
+        const { data: existingContact } = await this.supabase
+          .from('contacts')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .ilike('name', `%${updatedContext.contact_info}%`)
+          .maybeSingle();
+
+        if (existingContact) {
+          // Contacto existe, guardar contact_id
+          console.log('Contact found:', existingContact.id, existingContact.name);
+          updatedContext.contact_id = existingContact.id;
+          updatedContext.contact_info = existingContact.name; // Usar nombre exacto de BD
+          // nextStep queda como awaiting_item (por defecto)
+        } else {
+          // Contacto NO existe, pedir teléfono
+          console.log('Contact not found, asking for phone');
+          updatedContext.temp_contact_name = updatedContext.contact_info;
+          delete updatedContext.contact_info;
+          nextStep = 'awaiting_phone_for_new_contact'; // Override
+        }
+      }
+
       const isCompleted = nextStep === 'complete';
 
       // Actualizar estado
@@ -420,16 +531,26 @@ export class ConversationManager {
           .eq('id', state.id);
       }
 
+      const finalMessage = this.getStepMessage(state.flow_type, nextStep, updatedContext);
+
+      console.log('====== CONVERSATION MANAGER processInput END ======');
+      console.log('Next step:', nextStep);
+      console.log('Is completed:', isCompleted);
+      console.log('Final message:', finalMessage.substring(0, 100));
+      console.log('Flow type used:', state.flow_type);
+
       return {
         success: true,
-        message: this.getStepMessage(state.flow_type, nextStep, updatedContext),
+        message: finalMessage,
         nextStep,
         completed: isCompleted,
         context: updatedContext
       };
 
     } catch (error) {
+      console.error('====== CONVERSATION MANAGER ERROR ======');
       console.error('Error processing conversation input:', error);
+      console.error('Error stack:', error.stack);
       return { success: false, error: error.message };
     }
   }
@@ -485,6 +606,7 @@ export class ConversationManager {
   private getValidationMessage(step: FlowStep): string {
     const messages = {
       awaiting_contact: 'Por favor proporciona un nombre válido o número de teléfono.',
+      awaiting_phone_for_new_contact: 'Por favor proporciona un número de teléfono válido (mínimo 8 dígitos) o escribe "sin teléfono".',
       awaiting_item: 'Por favor describe qué vas a prestar (mínimo 3 caracteres).',
       awaiting_due_date: 'Por favor proporciona una fecha válida. Puedes escribir "mañana", "15 de enero", "en una semana", etc.',
       awaiting_reschedule_date: 'Por favor proporciona una fecha válida para reprogramar.',
@@ -509,9 +631,10 @@ export class ConversationManager {
     const messages = {
       new_loan: {
         awaiting_contact: '¡Perfecto! Vamos a crear un nuevo préstamo. ¿A quién se lo vas a prestar?',
-        awaiting_item: `¿Qué le vas a prestar a ${context.contact_info}?`,
+        awaiting_phone_for_new_contact: `No encontré a "${context.temp_contact_name}" en tus contactos.\n\n¿Puedes compartir su número de teléfono o enviar el contacto?\n\n(También puedes escribir "sin teléfono" si no lo tienes)`,
+        awaiting_item: `¿Qué le vas a prestar a ${context.contact_info || context.temp_contact_name}?`,
         awaiting_due_date: `¿Para cuándo debe devolver "${context.item_description}"?`,
-        confirming: `Perfecto, voy a registrar:\n\n📝 **Préstamo a:** ${context.contact_info}\n🎯 **Artículo:** ${context.item_description}\n📅 **Fecha límite:** ${context.due_date}\n\n¿Confirmas que todo está correcto?`
+        confirming: `Perfecto, voy a registrar:\n\n📝 **Préstamo a:** ${context.contact_info || context.temp_contact_name}\n🎯 **Artículo:** ${context.item_description}\n📅 **Fecha límite:** ${context.due_date}\n\n¿Confirmas que todo está correcto?`
       },
       reschedule: {
         awaiting_reschedule_date: '¿Para qué fecha quieres reprogramar?',

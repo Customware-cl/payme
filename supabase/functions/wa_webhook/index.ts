@@ -86,7 +86,11 @@ async function processInboundMessage(
   supabase: any
 ) {
   try {
-    console.log('Processing message:', message.id, 'from:', message.from);
+    console.log('====== PROCESSING MESSAGE START ======');
+    console.log('Message ID:', message.id);
+    console.log('From:', message.from);
+    console.log('Message Type:', message.type);
+    console.log('Full Message Object:', JSON.stringify(message, null, 2));
 
     // 1. Obtener tenant por phone_number_id
     const { data: tenant } = await supabase
@@ -143,12 +147,18 @@ async function processInboundMessage(
         wa_message_id: message.id,
         direction: 'inbound',
         message_type: message.type,
-        content: { text: message.text, interactive: message.interactive, button: message.button }
+        content: { text: message.text, interactive: message.interactive, button: message.button, contacts: message.contacts }
       });
 
     // 4. Procesar según tipo de mensaje usando flujos conversacionales
     let responseMessage = null;
     let interactiveResponse = null;
+
+    console.log('====== MESSAGE TYPE ROUTING ======');
+    console.log('Checking message.type:', message.type);
+    console.log('Is text?', message.type === 'text');
+    console.log('Is interactive?', message.type === 'interactive');
+    console.log('Is button?', message.type === 'button');
 
     if (message.type === 'text') {
       const text = message.text?.body?.trim() || '';
@@ -340,14 +350,22 @@ async function processInboundMessage(
         }
       }
     } else if (message.type === 'interactive' || message.type === 'button') {
+      console.log('====== PROCESSING INTERACTIVE/BUTTON MESSAGE ======');
+      console.log('Interactive object:', JSON.stringify(message.interactive, null, 2));
+      console.log('Button object:', JSON.stringify(message.button, null, 2));
+
       // Procesar respuestas de botones
       let buttonId = '';
 
       if (message.interactive?.button_reply) {
         buttonId = message.interactive.button_reply.id;
+        console.log('Extracted buttonId from interactive.button_reply:', buttonId);
       } else if (message.button) {
         buttonId = message.button.payload;
+        console.log('Extracted buttonId from button.payload:', buttonId);
       }
+
+      console.log('Final buttonId:', buttonId);
 
       // Registrar evento de click
       await supabase
@@ -583,6 +601,38 @@ async function processInboundMessage(
         default:
           responseMessage = 'No reconozco esa opción. Por favor usa los botones disponibles.';
       }
+    } else if (message.type === 'contacts') {
+      // Procesar contactos compartidos
+      console.log('====== PROCESSING SHARED CONTACT ======');
+      console.log('Contacts:', JSON.stringify(message.contacts, null, 2));
+
+      if (message.contacts && message.contacts.length > 0) {
+        const sharedContact = message.contacts[0];
+        const contactPhone = sharedContact.phones?.[0]?.phone || sharedContact.phones?.[0]?.wa_id;
+
+        if (contactPhone) {
+          // Procesar el teléfono compartido como si fuera un mensaje de texto
+          console.log('Extracted phone from shared contact:', contactPhone);
+
+          try {
+            const conversationManager = new ConversationManager(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+            const result = await conversationManager.processInput(tenant.id, contact.id, contactPhone);
+
+            if (result.success) {
+              responseMessage = result.message || 'Contacto recibido correctamente.';
+            } else {
+              responseMessage = result.error || 'Hubo un problema procesando el contacto compartido.';
+            }
+          } catch (error) {
+            console.error('Error processing shared contact:', error);
+            responseMessage = 'Hubo un error procesando el contacto. Por favor intenta de nuevo.';
+          }
+        } else {
+          responseMessage = 'No pude obtener el teléfono del contacto compartido. Por favor escribe el número manualmente.';
+        }
+      } else {
+        responseMessage = 'No recibí información del contacto. Por favor intenta de nuevo.';
+      }
     }
 
     // 5. Enviar respuesta
@@ -670,10 +720,17 @@ async function processInboundMessage(
       }
     }
 
+    console.log('====== PROCESSING MESSAGE END ======');
+    console.log('Response Message:', responseMessage ? responseMessage.substring(0, 100) : 'null');
+    console.log('Interactive Response:', interactiveResponse ? 'YES' : 'NO');
+
     return { success: true };
 
   } catch (error) {
-    console.error('Error processing message:', error);
+    console.error('====== ERROR PROCESSING MESSAGE ======');
+    console.error('Error details:', error);
+    console.error('Error message:', error.message);
+    console.error('Stack:', error.stack);
     return { success: false, error: error.message };
   }
 }

@@ -60,87 +60,74 @@ export class FlowHandlers {
         throw new Error('Owner user not found');
       }
 
-      // 2. Buscar o crear contacto
+      // 2. Obtener o crear contacto
       let contact = null;
-      const contactInfo = context.contact_info;
-      console.log('Creating/finding contact for:', contactInfo);
 
-      // Si contactInfo parece un teléfono, buscar por teléfono
-      if (/^\+?\d+$/.test(contactInfo.replace(/[\s\-()]/g, ''))) {
-        console.log('Contact info looks like a phone number');
-        const formattedPhone = parsePhoneNumber(contactInfo);
-
+      if (context.contact_id) {
+        // Caso 1: Ya tenemos contact_id (contacto existente)
+        console.log('Using existing contact_id:', context.contact_id);
         const { data: existingContact } = await this.supabase
           .from('contacts')
           .select('*')
-          .eq('tenant_id', tenantId)
-          .eq('phone_e164', formattedPhone)
-          .maybeSingle();
+          .eq('id', context.contact_id)
+          .single();
 
-        if (existingContact) {
-          contact = existingContact;
-        } else {
-          // Crear nuevo contacto con teléfono
-          const { data: newContact } = await this.supabase
-            .from('contacts')
-            .insert({
-              tenant_id: tenantId,
-              phone_e164: formattedPhone,
-              name: `Contacto ${formattedPhone}`,
-              opt_in_status: 'pending',
-              preferred_language: 'es',
-              metadata: { created_from: 'new_loan_flow' }
-            })
-            .select()
-            .single();
-
-          contact = newContact;
-          console.log('Created new contact with phone:', contact?.id);
+        if (!existingContact) {
+          throw new Error('Contact with id ' + context.contact_id + ' not found');
         }
+
+        contact = existingContact;
+        console.log('Found existing contact:', contact.name);
+
+      } else if (context.temp_contact_name) {
+        // Caso 2: Nuevo contacto que necesita ser creado
+        console.log('Creating new contact:', context.temp_contact_name);
+
+        const contactName = context.temp_contact_name;
+        let phoneNumber;
+
+        if (context.new_contact_phone) {
+          // Caso 2a: Tiene teléfono proporcionado
+          phoneNumber = parsePhoneNumber(context.new_contact_phone);
+          console.log('Using provided phone:', phoneNumber);
+        } else {
+          // Caso 2b: Sin teléfono, usar placeholder
+          const timestamp = Date.now().toString().slice(-10);
+          const random = Math.floor(Math.random() * 100).toString().padStart(2, '0');
+          phoneNumber = `+PEND${timestamp}${random}`;
+          console.log('Using placeholder phone:', phoneNumber);
+        }
+
+        const { data: newContact, error: createError } = await this.supabase
+          .from('contacts')
+          .insert({
+            tenant_id: tenantId,
+            phone_e164: phoneNumber,
+            name: contactName,
+            opt_in_status: 'pending',
+            preferred_language: 'es',
+            metadata: {
+              created_from: 'new_loan_flow',
+              needs_phone: !context.new_contact_phone
+            }
+          })
+          .select()
+          .single();
+
+        if (createError) {
+          console.error('Error creating contact:', createError);
+          throw new Error(`Failed to create contact: ${createError.message}`);
+        }
+
+        if (!newContact) {
+          throw new Error('Contact insert returned null');
+        }
+
+        contact = newContact;
+        console.log('Created new contact:', contact.id);
+
       } else {
-        // Buscar por nombre
-        console.log('Searching contact by name:', contactInfo);
-        const { data: existingContact } = await this.supabase
-          .from('contacts')
-          .select('*')
-          .eq('tenant_id', tenantId)
-          .ilike('name', `%${contactInfo}%`)
-          .maybeSingle();
-
-        if (existingContact) {
-          contact = existingContact;
-          console.log('Found existing contact by name:', contact.id);
-        } else {
-          console.log('Contact not found, creating new one without phone');
-          // Crear nuevo contacto sin teléfono (genera placeholder único)
-          const uniquePlaceholder = `+52PENDING${Date.now()}${Math.floor(Math.random() * 1000)}`;
-
-          const { data: newContact, error: createError } = await this.supabase
-            .from('contacts')
-            .insert({
-              tenant_id: tenantId,
-              phone_e164: uniquePlaceholder, // Placeholder temporal único
-              name: contactInfo,
-              opt_in_status: 'pending',
-              preferred_language: 'es',
-              metadata: { created_from: 'new_loan_flow', needs_phone: true, original_name: contactInfo }
-            })
-            .select()
-            .single();
-
-          if (createError) {
-            console.error('Error creating contact:', createError);
-            throw new Error(`Failed to create contact: ${createError.message}`);
-          }
-
-          if (!newContact) {
-            console.error('newContact is null after insert');
-            throw new Error('Contact insert returned null');
-          }
-
-          contact = newContact;
-          console.log('Created new contact without phone:', contact.id);
-        }
+        throw new Error('Neither contact_id nor temp_contact_name provided in context');
       }
 
       if (!contact) {
