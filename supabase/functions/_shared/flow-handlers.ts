@@ -213,6 +213,17 @@ export class FlowHandlers {
 
       console.log('New loan flow completed successfully:', { agreementId, contactId: contact.id });
 
+      // 7. Enviar mensaje de confirmación al contacto (borrower)
+      if (contact && agreement) {
+        try {
+          await this.sendLoanConfirmationToContact(tenantId, contact, agreement, context);
+          console.log('Loan confirmation message sent to contact');
+        } catch (notificationError) {
+          console.error('Failed to send confirmation to contact:', notificationError);
+          // No fallar el flujo si falla el envío de mensaje
+        }
+      }
+
       return {
         success: true,
         agreementId: agreementId
@@ -587,6 +598,129 @@ export class FlowHandlers {
       });
     } catch (error) {
       console.error('Error updating daily metrics:', error);
+    }
+  }
+
+  // Función para formatear fecha en formato dd/mm/aa (formato chileno)
+  private formatDate(dateString: string): string {
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = String(date.getFullYear()).slice(-2);
+    return `${day}/${month}/${year}`;
+  }
+
+  // Enviar mensaje de confirmación al contacto (borrower) después de crear el préstamo
+  private async sendLoanConfirmationToContact(
+    tenantId: string,
+    borrowerContact: any,
+    agreement: any,
+    context: any
+  ): Promise<void> {
+    try {
+      console.log('[NOTIFICATION] Sending loan confirmation to borrower:', borrowerContact.id);
+
+      // 1. Verificar que el contacto tenga WhatsApp ID o teléfono válido
+      if (!borrowerContact.phone_e164 || borrowerContact.phone_e164.startsWith('+PEND')) {
+        console.log('[NOTIFICATION] Borrower has no valid phone number, skipping notification');
+        return;
+      }
+
+      // 2. Obtener información del tenant (phone_number_id para enviar mensaje)
+      const { data: tenant } = await this.supabase
+        .from('tenants')
+        .select('whatsapp_phone_number_id')
+        .eq('id', tenantId)
+        .single();
+
+      if (!tenant || !tenant.whatsapp_phone_number_id) {
+        console.error('[NOTIFICATION] Tenant has no WhatsApp phone number ID configured');
+        return;
+      }
+
+      // 3. Obtener información del prestamista (lender)
+      let lenderName = 'Alguien';
+      if (context.lender_contact_id) {
+        const { data: lenderContact } = await this.supabase
+          .from('contacts')
+          .select('name')
+          .eq('id', context.lender_contact_id)
+          .single();
+
+        if (lenderContact) {
+          lenderName = lenderContact.name;
+        }
+      }
+
+      // 4. Construir mensaje según tipo de préstamo
+      let messageText = '';
+      if (context.amount) {
+        // Préstamo de dinero
+        messageText = `Hola ${borrowerContact.name} 👋\n\n` +
+          `${lenderName} te ha prestado *$${formatMoney(context.amount)}*.\n\n` +
+          `📅 Fecha de devolución: ${this.formatDate(agreement.due_date)}\n\n` +
+          `Te enviaremos recordatorios cuando se acerque la fecha. ¡Gracias!`;
+      } else {
+        // Préstamo de objeto u otro
+        messageText = `Hola ${borrowerContact.name} 👋\n\n` +
+          `${lenderName} te ha prestado: *${context.item_description}*.\n\n` +
+          `📅 Fecha de devolución: ${this.formatDate(agreement.due_date)}\n\n` +
+          `Te enviaremos recordatorios cuando se acerque la fecha. ¡Gracias!`;
+      }
+
+      // 5. Construir payload con botones para confirmación futura
+      const payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: borrowerContact.phone_e164.replace('+', ''),
+        type: 'text',
+        text: {
+          body: messageText
+        }
+      };
+
+      // 6. Enviar mensaje a través de WhatsApp API
+      const accessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+      const response = await fetch(
+        `https://graph.facebook.com/v18.0/${tenant.whatsapp_phone_number_id}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      const result = await response.json();
+
+      if (response.ok) {
+        console.log('[NOTIFICATION] Message sent successfully:', result.messages[0].id);
+
+        // 7. Registrar mensaje en base de datos
+        await this.supabase
+          .from('whatsapp_messages')
+          .insert({
+            tenant_id: tenantId,
+            contact_id: borrowerContact.id,
+            wa_message_id: result.messages[0].id,
+            direction: 'outbound',
+            message_type: 'text',
+            content: { text: messageText },
+            status: 'sent',
+            sent_at: new Date().toISOString()
+          });
+
+        console.log('[NOTIFICATION] Message logged in database');
+      } else {
+        console.error('[NOTIFICATION] Failed to send message:', result);
+        throw new Error(`WhatsApp API error: ${JSON.stringify(result)}`);
+      }
+
+    } catch (error) {
+      console.error('[NOTIFICATION] Error sending loan confirmation:', error);
+      throw error;
     }
   }
 }
