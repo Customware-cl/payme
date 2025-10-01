@@ -220,7 +220,7 @@ sequenceDiagram
 | 2.4 | Parser de fechas con timezone Chile | ✅ Implementado |
 | 2.5 | Formato de montos ($x.xxx) | ✅ Implementado |
 | 2.6 | Formato de fechas (dd/mm/aa) | ✅ Implementado |
-| 2.7 | Notificación automática al contacto | ✅ Implementado |
+| 2.7 | Notificación automática al contacto | ⏳ En Desarrollo |
 | 3 | Consulta de estado de préstamos | ✅ Implementado |
 | 3.1 | Ordenamiento por fecha próxima | ✅ Implementado |
 | 3.2 | Agrupación y suma de montos | ✅ Implementado |
