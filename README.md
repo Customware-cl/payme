@@ -152,6 +152,7 @@ sequenceDiagram
     U->>B: Sí
 
     B-->>BE: Crear agreement en BD con status='active'
+    BE->>C: 📩 Notificación automática al contacto<br/>Hola {contacto}, {usuario} te ha prestado<br/>$45.900. Fecha de devolución: 01/10/25
     B->>U: ✅ ¡Préstamo registrado exitosamente!<br/>Te avisaré cuando se acerque la fecha
 
     Note over U,BE: ✅ FASE 3: Consulta de Estado (IMPLEMENTADO)
@@ -219,6 +220,7 @@ sequenceDiagram
 | 2.4 | Parser de fechas con timezone Chile | ✅ Implementado |
 | 2.5 | Formato de montos ($x.xxx) | ✅ Implementado |
 | 2.6 | Formato de fechas (dd/mm/aa) | ✅ Implementado |
+| 2.7 | Notificación automática al contacto | ✅ Implementado |
 | 3 | Consulta de estado de préstamos | ✅ Implementado |
 | 3.1 | Ordenamiento por fecha próxima | ✅ Implementado |
 | 3.2 | Agrupación y suma de montos | ✅ Implementado |
