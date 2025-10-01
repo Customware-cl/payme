@@ -21,6 +21,11 @@ function generateUUID(): string {
   });
 }
 
+// Función auxiliar para formatear monto con separador de miles
+function formatMoney(amount: number): string {
+  return amount.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
 export class FlowHandlers {
   private supabase: any;
 
@@ -141,18 +146,24 @@ export class FlowHandlers {
       const dueDate = context.due_date;
       const agreementId = generateUUID();
 
+      // Preparar título y descripción según el tipo de préstamo
+      const title = context.amount
+        ? `Préstamo de $${formatMoney(context.amount)}`
+        : `Préstamo: ${context.item_description}`;
+
       const { data: agreement } = await this.supabase
         .from('agreements')
         .insert({
           id: agreementId,
           tenant_id: tenantId,
           contact_id: contact.id,
+          lender_contact_id: context.lender_contact_id || null, // Quien presta (quien habla por WhatsApp)
           created_by: ownerUser.id,
           type: 'loan',
-          title: `Préstamo: ${context.item_description}`,
+          title: title,
           description: `Préstamo creado mediante flujo conversacional`,
-          item_description: context.item_description,
-          amount: null, // No se especifica monto en el flujo básico
+          item_description: context.item_description || 'Dinero',
+          amount: context.amount || null, // Monto si es dinero
           currency: 'MXN',
           start_date: new Date().toISOString().split('T')[0],
           due_date: dueDate,
@@ -165,6 +176,7 @@ export class FlowHandlers {
           },
           metadata: {
             created_from: 'new_loan_flow',
+            loan_type: context.loan_type || 'unknown',
             original_context: context
           },
           exdates: [],

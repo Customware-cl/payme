@@ -34,7 +34,11 @@ export type FlowType =
 export type FlowStep =
   | 'init'
   | 'awaiting_contact'
+  | 'awaiting_phone_for_new_contact'
   | 'awaiting_item'
+  | 'awaiting_money_amount'
+  | 'awaiting_object_description'
+  | 'awaiting_other_description'
   | 'awaiting_due_date'
   | 'awaiting_confirmation'
   | 'awaiting_reschedule_date'
