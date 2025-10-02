@@ -673,7 +673,7 @@ export class FlowHandlers {
               { type: 'text', text: borrowerContact.name },           // {{1}}
               { type: 'text', text: lenderName },                     // {{2}}
               { type: 'text', text: loanItem },                       // {{3}}
-              { type: 'text', text: this.formatDateLong(agreement.due_date) } // {{4}}
+              { type: 'text', text: this.formatDate(agreement.due_date) } // {{4}} - dd/mm/aa
             ]
           }
         ]
