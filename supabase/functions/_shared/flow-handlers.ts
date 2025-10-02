@@ -652,31 +652,39 @@ export class FlowHandlers {
         }
       }
 
-      // 4. Construir mensaje según tipo de préstamo
-      let messageText = '';
+      // 4. Preparar variable {{3}} según tipo de préstamo
+      let loanItem = '';
       if (context.amount) {
-        // Préstamo de dinero
-        messageText = `Hola ${borrowerContact.name} 👋\n\n` +
-          `${lenderName} te ha prestado *$${formatMoney(context.amount)}*.\n\n` +
-          `📅 Fecha de devolución: ${this.formatDate(agreement.due_date)}\n\n` +
-          `Te enviaremos recordatorios cuando se acerque la fecha. ¡Gracias!`;
+        // Préstamo de dinero: "$49.000"
+        loanItem = `$${formatMoney(context.amount)}`;
       } else {
-        // Préstamo de objeto u otro
-        messageText = `Hola ${borrowerContact.name} 👋\n\n` +
-          `${lenderName} te ha prestado: *${context.item_description}*.\n\n` +
-          `📅 Fecha de devolución: ${this.formatDate(agreement.due_date)}\n\n` +
-          `Te enviaremos recordatorios cuando se acerque la fecha. ¡Gracias!`;
+        // Préstamo de objeto: "un HP Pavilion", "una bicicleta", etc.
+        loanItem = context.item_description;
       }
 
-      // 5. Construir payload con botones para confirmación futura
+      // 5. Enviar template de WhatsApp con botones
+      const templateParams = {
+        name: 'loan_confirmation_request_v1',
+        language: { code: 'es' },
+        components: [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: borrowerContact.name },           // {{1}}
+              { type: 'text', text: lenderName },                     // {{2}}
+              { type: 'text', text: loanItem },                       // {{3}}
+              { type: 'text', text: this.formatDateLong(agreement.due_date) } // {{4}}
+            ]
+          }
+        ]
+      };
+
       const payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
         to: borrowerContact.phone_e164.replace('+', ''),
-        type: 'text',
-        text: {
-          body: messageText
-        }
+        type: 'template',
+        template: templateParams
       };
 
       // 6. Enviar mensaje a través de WhatsApp API
@@ -696,7 +704,7 @@ export class FlowHandlers {
       const result = await response.json();
 
       if (response.ok) {
-        console.log('[NOTIFICATION] Message sent successfully:', result.messages[0].id);
+        console.log('[NOTIFICATION] Template message sent successfully:', result.messages[0].id);
 
         // 7. Registrar mensaje en base de datos
         await this.supabase
@@ -706,15 +714,15 @@ export class FlowHandlers {
             contact_id: borrowerContact.id,
             wa_message_id: result.messages[0].id,
             direction: 'outbound',
-            message_type: 'text',
-            content: { text: messageText },
+            message_type: 'template',
+            content: { template: templateParams },
             status: 'sent',
             sent_at: new Date().toISOString()
           });
 
-        console.log('[NOTIFICATION] Message logged in database');
+        console.log('[NOTIFICATION] Template message logged in database');
       } else {
-        console.error('[NOTIFICATION] Failed to send message:', result);
+        console.error('[NOTIFICATION] Failed to send template:', result);
         throw new Error(`WhatsApp API error: ${JSON.stringify(result)}`);
       }
 
@@ -722,5 +730,20 @@ export class FlowHandlers {
       console.error('[NOTIFICATION] Error sending loan confirmation:', error);
       throw error;
     }
+  }
+
+  // Función para formatear fecha en formato largo (31 de octubre 2025)
+  private formatDateLong(dateString: string): string {
+    const date = new Date(dateString);
+    const months = [
+      'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+    ];
+
+    const day = date.getDate();
+    const month = months[date.getMonth()];
+    const year = date.getFullYear();
+
+    return `${day} de ${month} ${year}`;
   }
 }
