@@ -665,7 +665,7 @@ export class FlowHandlers {
       // 5. Enviar template de WhatsApp con botones
       const templateParams = {
         name: 'loan_confirmation_request_v1',
-        language: { code: 'es' },
+        language: { code: 'es_CL' },
         components: [
           {
             type: 'body',
