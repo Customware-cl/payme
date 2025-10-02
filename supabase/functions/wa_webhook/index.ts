@@ -1095,6 +1095,105 @@ async function processInboundMessage(
           responseMessage = '✅ Pago en efectivo registrado. ¡Gracias!';
           break;
 
+        case 'Sí, confirmo':
+        case '✅ Sí, confirmo':
+          // Botón de confirmación del template loan_confirmation_request_v1
+          console.log('Loan confirmation button clicked: confirmed');
+          try {
+            // Buscar el acuerdo más reciente del contacto en estado pending_confirmation o active
+            const { data: agreement } = await supabase
+              .from('agreements')
+              .select('*')
+              .eq('contact_id', contact.id)
+              .in('status', ['pending_confirmation', 'active'])
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (agreement) {
+              // Actualizar acuerdo a activo y confirmado
+              await supabase
+                .from('agreements')
+                .update({
+                  status: 'active',
+                  borrower_confirmed: true,
+                  borrower_confirmed_at: new Date().toISOString()
+                })
+                .eq('id', agreement.id);
+
+              // Notificar al lender (prestamista)
+              if (agreement.lender_contact_id) {
+                const lenderMessage = `✅ ${contact.name} confirmó el préstamo de ${agreement.amount ? '$' + formatMoney(agreement.amount) : agreement.item_description}.\n\nLos recordatorios están activos.`;
+
+                // Enviar mensaje al lender
+                const windowManager = new WhatsAppWindowManager(supabase.supabaseUrl, supabase.supabaseKey);
+                await windowManager.sendMessage(
+                  tenant.id,
+                  agreement.lender_contact_id,
+                  lenderMessage,
+                  { priority: 'high' }
+                );
+              }
+
+              responseMessage = '✅ ¡Préstamo confirmado!\n\nTe enviaremos recordatorios cuando se acerque la fecha de devolución.';
+            } else {
+              responseMessage = 'No encontré un préstamo pendiente de confirmación.';
+            }
+          } catch (error) {
+            console.error('Error confirming loan:', error);
+            responseMessage = 'Hubo un error al confirmar. Por favor contacta directamente.';
+          }
+          break;
+
+        case 'No, rechazar':
+        case '❌ No, rechazar':
+          // Botón de rechazo del template loan_confirmation_request_v1
+          console.log('Loan confirmation button clicked: rejected');
+          try {
+            // Buscar el acuerdo más reciente del contacto
+            const { data: agreement } = await supabase
+              .from('agreements')
+              .select('*, lender:lender_contact_id(name)')
+              .eq('contact_id', contact.id)
+              .in('status', ['pending_confirmation', 'active'])
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (agreement) {
+              // Actualizar acuerdo a rechazado
+              await supabase
+                .from('agreements')
+                .update({
+                  status: 'rejected',
+                  borrower_confirmed: false,
+                  borrower_rejection_reason: 'user_rejected'
+                })
+                .eq('id', agreement.id);
+
+              // Notificar al lender
+              if (agreement.lender_contact_id) {
+                const lenderMessage = `❌ ${contact.name} rechazó el préstamo de ${agreement.amount ? '$' + formatMoney(agreement.amount) : agreement.item_description}.\n\nSe ha cancelado el recordatorio.`;
+
+                const windowManager = new WhatsAppWindowManager(supabase.supabaseUrl, supabase.supabaseKey);
+                await windowManager.sendMessage(
+                  tenant.id,
+                  agreement.lender_contact_id,
+                  lenderMessage,
+                  { priority: 'high' }
+                );
+              }
+
+              responseMessage = 'Entendido, el préstamo ha sido rechazado.\n\n¿Puedes decirnos el motivo?\n\n1️⃣ No recibí el dinero/objeto\n2️⃣ El monto es incorrecto\n3️⃣ No conozco a esta persona';
+            } else {
+              responseMessage = 'No encontré un préstamo pendiente de confirmación.';
+            }
+          } catch (error) {
+            console.error('Error rejecting loan:', error);
+            responseMessage = 'Hubo un error al procesar el rechazo. Por favor contacta directamente.';
+          }
+          break;
+
         default:
           responseMessage = 'No reconozco esa opción. Por favor usa los botones disponibles.';
       }

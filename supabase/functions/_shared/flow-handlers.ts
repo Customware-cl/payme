@@ -167,7 +167,7 @@ export class FlowHandlers {
           currency: 'MXN',
           start_date: new Date().toISOString().split('T')[0],
           due_date: dueDate,
-          status: 'active',
+          status: 'pending_confirmation',
           reminder_config: {
             enabled: true,
             before_24h: true,
