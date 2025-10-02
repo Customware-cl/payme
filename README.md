@@ -151,9 +151,28 @@ sequenceDiagram
     B->>U: Perfecto, voy a registrar:<br/>📝 Préstamo a: {contacto}<br/>💰 Monto: $45.900<br/>📅 Fecha límite: 01/10/25<br/><br/>¿Confirmas que todo está correcto?
     U->>B: Sí
 
-    B-->>BE: Crear agreement en BD con status='active'
+    B-->>BE: Crear agreement en BD con status='pending_confirmation'
     BE->>C: 📩 Notificación automática al contacto<br/>Hola {contacto}, {usuario} te ha prestado<br/>$45.900. Fecha de devolución: 01/10/25
-    B->>U: ✅ ¡Préstamo registrado exitosamente!<br/>Te avisaré cuando se acerque la fecha
+    B->>U: ✅ ¡Préstamo registrado exitosamente!<br/>Esperando confirmación del contacto...
+
+    Note over U,BE: ❌ FASE 2.1: Confirmación del Contacto (PENDIENTE)
+
+    rect rgb(200, 200, 200)
+        B->>C: ¿Confirmas esta solicitud de préstamo?<br/>[✅ Sí, confirmo] [❌ No, rechazar]
+
+        alt Contacto confirma
+            C->>B: [✅ Sí, confirmo]
+            B-->>BE: Actualizar status='active' y borrower_confirmed=true
+            BE-->>BE: Activar recordatorios automáticos
+            B->>U: ✅ {contacto} confirmó el préstamo<br/>Los recordatorios están activos
+        else Contacto rechaza
+            C->>B: [❌ No, rechazar]
+            B->>C: ¿Por qué rechazas esta solicitud?<br/>[No conozco al {usuario}] [Está mal la solicitud] [Otro motivo]
+            C->>B: [Selecciona motivo]
+            B-->>BE: Actualizar status='rejected' y guardar motivo
+            B->>U: ❌ {contacto} rechazó el préstamo<br/>Motivo: {motivo_rechazo}
+        end
+    end
 
     Note over U,BE: ✅ FASE 3: Consulta de Estado (IMPLEMENTADO)
 
@@ -214,19 +233,20 @@ sequenceDiagram
 |------|--------------|--------|
 | 1 | Registro automático de usuarios | ✅ Implementado |
 | 2 | Flujo conversacional de nuevo préstamo | ✅ Implementado |
-| 2.1 | Selección/creación de contactos | ✅ Implementado |
-| 2.2 | Tipos de préstamo (dinero/objeto/otro) | ✅ Implementado |
-| 2.3 | Botones rápidos para fechas | ✅ Implementado |
-| 2.4 | Parser de fechas con timezone Chile | ✅ Implementado |
-| 2.5 | Formato de montos ($x.xxx) | ✅ Implementado |
-| 2.6 | Formato de fechas (dd/mm/aa) | ✅ Implementado |
-| 2.7 | Notificación automática al contacto | ⏳ En Desarrollo |
+| 2.1 | Confirmación del borrower (contacto) | ❌ Pendiente |
+| 2.2 | Selección/creación de contactos | ✅ Implementado |
+| 2.3 | Tipos de préstamo (dinero/objeto/otro) | ✅ Implementado |
+| 2.4 | Botones rápidos para fechas | ✅ Implementado |
+| 2.5 | Parser de fechas con timezone Chile | ✅ Implementado |
+| 2.6 | Formato de montos ($x.xxx) | ✅ Implementado |
+| 2.7 | Formato de fechas (dd/mm/aa) | ✅ Implementado |
+| 2.8 | Notificación automática al contacto | ⏳ En Desarrollo |
 | 3 | Consulta de estado de préstamos | ✅ Implementado |
 | 3.1 | Ordenamiento por fecha próxima | ✅ Implementado |
 | 3.2 | Agrupación y suma de montos | ✅ Implementado |
 | 4 | Recordatorios automáticos programados | ❌ Pendiente |
 | 5 | Sistema de seguimiento (día +1, +3) | ❌ Pendiente |
-| 5.1 | Confirmación del contacto | ❌ Pendiente |
+| 5.1 | Confirmación de devolución del contacto | ❌ Pendiente |
 | 5.2 | Notificaciones al usuario | ❌ Pendiente |
 
 ## Funcionalidades Telegram
