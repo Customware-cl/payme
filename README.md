@@ -163,6 +163,13 @@ sequenceDiagram
         C->>B: [✅ Sí, confirmo]
         B-->>BE: Actualizar status='active' y borrower_confirmed=true
         B->>C: ✅ ¡Préstamo confirmado!<br/>Te enviaremos recordatorios cuando se acerque la fecha
+
+        Note over B,C: ⏳ FASE 2.11: Engagement Post-Confirmación (EN DESARROLLO)
+
+        alt Es primera confirmación del contacto
+            B->>C: Confirmado! 🎉 Como a ti te prestaron,<br/>probablemente tú también prestas a amigos o familia.<br/>Registra esos préstamos acá y te ayudamos con recordatorios<br/>[➕ Registrar uno mío] [📋 Ver préstamos] [💬 Ver ayuda]
+        end
+
         B->>U: ✅ {contacto} confirmó el préstamo de $45.900<br/>Los recordatorios están activos
     else Contacto rechaza
         C->>B: [❌ No, rechazar]
@@ -238,8 +245,9 @@ sequenceDiagram
 | 2.6 | Formato de montos ($x.xxx) | ✅ Implementado |
 | 2.7 | Formato de fechas (dd/mm/aa) | ✅ Implementado |
 | 2.8 | Notificación automática al contacto | ✅ Implementado |
-| 2.9 | Notificación al lender de confirmación/rechazo | ⏳ En Desarrollo |
+| 2.9 | Notificación al lender de confirmación/rechazo | ✅ Implementado |
 | 2.10 | Solicitud de motivo de rechazo | ⏳ En Desarrollo |
+| 2.11 | Mensaje de engagement post-confirmación | ⏳ En Desarrollo |
 | 3 | Consulta de estado de préstamos | ✅ Implementado |
 | 3.1 | Ordenamiento por fecha próxima | ✅ Implementado |
 | 3.2 | Agrupación y suma de montos | ✅ Implementado |
