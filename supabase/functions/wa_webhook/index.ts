@@ -1136,6 +1136,60 @@ async function processInboundMessage(
               }
 
               responseMessage = '✅ ¡Préstamo confirmado!\n\nTe enviaremos recordatorios cuando se acerque la fecha de devolución.';
+
+              // Verificar si es primera confirmación para enviar mensaje de engagement
+              try {
+                const { count } = await supabase
+                  .from('agreements')
+                  .select('*', { count: 'exact', head: true })
+                  .eq('contact_id', contact.id)
+                  .eq('borrower_confirmed', true);
+
+                console.log('[ENGAGEMENT] Total confirmations for contact:', count);
+
+                // Solo enviar engagement en primera confirmación
+                if (count === 1) {
+                  console.log('[ENGAGEMENT] First confirmation detected, sending engagement message');
+
+                  // Preparar mensaje de engagement con botones (Variante C)
+                  interactiveResponse = {
+                    type: 'button',
+                    body: {
+                      text: 'Confirmado! 🎉\n\nComo a ti te prestaron, probablemente tú también prestas a amigos o familia. Registra esos préstamos acá y te ayudamos con recordatorios para que no se olviden.\n\n¿Qué hacemos?'
+                    },
+                    action: {
+                      buttons: [
+                        {
+                          type: 'reply',
+                          reply: {
+                            id: 'new_loan',
+                            title: '➕ Registrar uno mío'
+                          }
+                        },
+                        {
+                          type: 'reply',
+                          reply: {
+                            id: 'check_status',
+                            title: '📋 Ver préstamos'
+                          }
+                        },
+                        {
+                          type: 'reply',
+                          reply: {
+                            id: 'help',
+                            title: '💬 Ver ayuda'
+                          }
+                        }
+                      ]
+                    }
+                  };
+                } else {
+                  console.log('[ENGAGEMENT] Not first confirmation, skipping engagement message');
+                }
+              } catch (engagementError) {
+                console.error('[ENGAGEMENT] Error checking confirmations:', engagementError);
+                // No bloquear flujo si falla el engagement
+              }
             } else {
               responseMessage = 'No encontré un préstamo pendiente de confirmación.';
             }
