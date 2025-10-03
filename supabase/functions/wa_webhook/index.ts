@@ -7,6 +7,7 @@ import { ConversationManager } from "../_shared/conversation-manager.ts";
 import { FlowHandlers } from "../_shared/flow-handlers.ts";
 import { IntentDetector } from "../_shared/intent-detector.ts";
 import { WhatsAppWindowManager } from "../_shared/whatsapp-window-manager.ts";
+import { FlowDataProvider } from "../_shared/flow-data-provider.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -261,8 +262,8 @@ async function processInboundMessage(
               {
                 type: 'reply',
                 reply: {
-                  id: 'help',
-                  title: '❓ Ayuda'
+                  id: 'user_profile',
+                  title: '👤 Mi Perfil'
                 }
               }
             ]
@@ -401,6 +402,12 @@ async function processInboundMessage(
             const result = await conversationManager.processInput(tenant.id, contact.id, text, flowType);
 
             if (result.success) {
+              // Si el mensaje es null, es un duplicado - no enviar respuesta
+              if (result.message === null) {
+                console.log('[DUPLICATE] Skipping response for duplicate message');
+                return { success: true, skipped: true, reason: 'duplicate_message' };
+              }
+
               if (result.completed && result.context) {
                 // Flujo completado - ejecutar handler específico
                 const flowHandlers = new FlowHandlers(supabase.supabaseUrl, supabase.supabaseKey);
@@ -1000,6 +1007,53 @@ async function processInboundMessage(
           } catch (error) {
             console.error('Error starting new_service flow:', error);
             responseMessage = '🔄 Perfecto, vamos a configurar un servicio mensual.\n\n¿Qué servicio es? (Ej: "arriendo", "plan celular", "gym")';
+          }
+          break;
+
+        case 'user_profile':
+          // Enviar mensaje con WhatsApp Flow para gestionar perfil
+          console.log('Button user_profile clicked, sending Flow message');
+          try {
+            const flowDataProvider = new FlowDataProvider(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+
+            // Generar flow_token único para este usuario
+            const flowToken = await flowDataProvider.generateFlowToken('profile', tenant.id, contact.id);
+
+            // Obtener datos del perfil para prellenar
+            const profileData = await flowDataProvider.getProfileData(contact.id);
+
+            // Enviar mensaje con Flow Button
+            interactiveResponse = {
+              type: 'flow',
+              header: {
+                type: 'text',
+                text: '👤 Mi Perfil'
+              },
+              body: {
+                text: 'Gestiona tu información personal para recibir recordatorios personalizados.'
+              },
+              footer: {
+                text: '🔒 Tus datos están protegidos'
+              },
+              action: {
+                name: 'flow',
+                parameters: {
+                  flow_message_version: '3',
+                  flow_token: flowToken,
+                  flow_id: Deno.env.get('WHATSAPP_PROFILE_FLOW_ID') || '',
+                  flow_cta: 'Abrir perfil',
+                  flow_action: 'navigate',
+                  flow_action_payload: {
+                    screen: 'PROFILE_FORM',
+                    data: profileData
+                  }
+                }
+              }
+            };
+
+          } catch (error) {
+            console.error('Error sending profile flow:', error);
+            responseMessage = 'Hubo un error al abrir tu perfil. Por favor intenta de nuevo.';
           }
           break;
 

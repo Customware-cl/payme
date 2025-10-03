@@ -1,0 +1,289 @@
+{
+  "version": "7.2",
+  "data_api_version": "3.0",
+  "routing_model": {
+    "ACCOUNTS_LIST": ["ACCOUNT_FORM", "DELETE_CONFIRM"],
+    "ACCOUNT_FORM": ["ACCOUNTS_LIST"],
+    "DELETE_CONFIRM": ["ACCOUNTS_LIST"]
+  },
+  "screens": [
+    {
+      "id": "ACCOUNTS_LIST",
+      "title": "Datos de Transferencia",
+      "terminal": false,
+      "data": {
+        "accounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "main_content": {
+                "type": "object",
+                "properties": {
+                  "title": {"type": "string"},
+                  "description": {"type": "string"}
+                }
+              },
+              "end": {
+                "type": "object",
+                "properties": {
+                  "title": {"type": "string"}
+                }
+              },
+              "on_click_action": {"type": "object"}
+            }
+          },
+          "__example__": []
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "accounts_list_form",
+            "children": [
+              {
+                "type": "If",
+                "condition": "${data.accounts.length == 0}",
+                "then": [
+                  {
+                    "type": "TextHeading",
+                    "text": "Tus Cuentas Bancarias"
+                  },
+                  {
+                    "type": "TextBody",
+                    "text": "Aún no has registrado ninguna cuenta bancaria."
+                  },
+                  {
+                    "type": "Footer",
+                    "label": "Agregar nueva cuenta",
+                    "on-click-action": {
+                      "name": "navigate",
+                      "next": {
+                        "type": "screen",
+                        "name": "ACCOUNT_FORM"
+                      },
+                      "payload": {
+                        "edit_mode": false
+                      }
+                    }
+                  }
+                ],
+                "else": [
+                  {
+                    "type": "NavigationList",
+                    "name": "accounts_nav",
+                    "label": "Tus Cuentas Bancarias",
+                    "list_items": "${data.accounts}",
+                    "on-click-action": {
+                      "name": "navigate"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "ACCOUNT_FORM",
+      "title": "Cuenta Bancaria",
+      "terminal": true,
+      "data": {
+        "edit_mode": {
+          "type": "boolean",
+          "__example__": false
+        },
+        "account_id": {
+          "type": "string",
+          "__example__": ""
+        },
+        "alias": {
+          "type": "string",
+          "__example__": ""
+        },
+        "bank_name": {
+          "type": "string",
+          "__example__": ""
+        },
+        "account_type": {
+          "type": "string",
+          "__example__": ""
+        },
+        "account_number": {
+          "type": "string",
+          "__example__": ""
+        },
+        "is_default": {
+          "type": "boolean",
+          "__example__": false
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "account_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "${data.edit_mode ? 'Editar Cuenta' : 'Nueva Cuenta Bancaria'}"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Ingresa los datos exactos de tu cuenta bancaria"
+              },
+              {
+                "type": "TextInput",
+                "name": "alias",
+                "label": "Alias de la cuenta",
+                "input-type": "text",
+                "required": true,
+                "helper-text": "Ej: Cuenta Principal, Cuenta Ahorro, etc."
+              },
+              {
+                "type": "Dropdown",
+                "name": "bank_name",
+                "label": "Banco",
+                "required": true,
+                "data-source": [
+                  {"id": "banco_estado", "title": "BancoEstado"},
+                  {"id": "banco_chile", "title": "Banco de Chile"},
+                  {"id": "santander", "title": "Banco Santander"},
+                  {"id": "bci", "title": "Banco BCI"},
+                  {"id": "scotiabank", "title": "Scotiabank Chile"},
+                  {"id": "itau", "title": "Banco Itaú"},
+                  {"id": "security", "title": "Banco Security"},
+                  {"id": "falabella", "title": "Banco Falabella"},
+                  {"id": "ripley", "title": "Banco Ripley"},
+                  {"id": "consorcio", "title": "Banco Consorcio"},
+                  {"id": "bice", "title": "Banco BICE"},
+                  {"id": "internacional", "title": "Banco Internacional"}
+                ]
+              },
+              {
+                "type": "Dropdown",
+                "name": "account_type",
+                "label": "Tipo de cuenta",
+                "required": true,
+                "data-source": [
+                  {"id": "corriente", "title": "Cuenta Corriente"},
+                  {"id": "ahorro", "title": "Cuenta de Ahorro"},
+                  {"id": "vista", "title": "Cuenta Vista"},
+                  {"id": "rut", "title": "Cuenta RUT"}
+                ]
+              },
+              {
+                "type": "TextInput",
+                "name": "account_number",
+                "label": "Número de cuenta",
+                "input-type": "number",
+                "required": true,
+                "helper-text": "Sin puntos ni guiones, solo números"
+              },
+              {
+                "type": "CheckboxGroup",
+                "name": "is_default",
+                "label": "Configuración",
+                "data-source": [
+                  {
+                    "id": "default",
+                    "title": "⭐ Usar como cuenta principal",
+                    "metadata": "Esta cuenta se mostrará por defecto en los recordatorios"
+                  }
+                ]
+              },
+              {
+                "type": "If",
+                "condition": "${data.edit_mode}",
+                "then": [
+                  {
+                    "type": "EmbeddedLink",
+                    "text": "🗑️ Eliminar esta cuenta",
+                    "on-click-action": {
+                      "name": "navigate",
+                      "next": {
+                        "type": "screen",
+                        "name": "DELETE_CONFIRM"
+                      },
+                      "payload": {
+                        "account_id": "${data.account_id}",
+                        "alias": "${form.alias}"
+                      }
+                    }
+                  }
+                ],
+                "else": []
+              },
+              {
+                "type": "Footer",
+                "label": "${data.edit_mode ? 'Guardar cambios' : 'Guardar cuenta'}",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "action": "${data.edit_mode ? 'update' : 'create'}",
+                    "account_id": "${data.account_id}",
+                    "alias": "${form.alias}",
+                    "bank_name": "${form.bank_name}",
+                    "account_type": "${form.account_type}",
+                    "account_number": "${form.account_number}",
+                    "is_default": "${form.is_default.includes('default')}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "DELETE_CONFIRM",
+      "title": "Confirmar Eliminación",
+      "terminal": true,
+      "data": {
+        "account_id": {
+          "type": "string",
+          "__example__": ""
+        },
+        "alias": {
+          "type": "string",
+          "__example__": ""
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "delete_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "¿Eliminar cuenta?"
+              },
+              {
+                "type": "TextBody",
+                "text": "Estás por eliminar la cuenta:\n\n*${data.alias}*\n\nEsta acción no se puede deshacer."
+              },
+              {
+                "type": "Footer",
+                "label": "Sí, eliminar cuenta",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "action": "delete",
+                    "account_id": "${data.account_id}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

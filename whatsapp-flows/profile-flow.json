@@ -1,0 +1,95 @@
+{
+  "version": "7.2",
+  "data_api_version": "3.0",
+  "routing_model": {},
+  "screens": [
+    {
+      "id": "PROFILE_FORM",
+      "title": "Tu Perfil",
+      "terminal": true,
+      "data": {
+        "first_name": {
+          "type": "string",
+          "__example__": "Juan"
+        },
+        "last_name": {
+          "type": "string",
+          "__example__": "Pérez"
+        },
+        "phone": {
+          "type": "string",
+          "__example__": "+56912345678"
+        },
+        "email": {
+          "type": "string",
+          "__example__": "juan.perez@gmail.com"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "profile_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Completa tus datos personales"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Esta información te identifica en los recordatorios que envíes"
+              },
+              {
+                "type": "TextInput",
+                "name": "first_name",
+                "label": "Nombre",
+                "input-type": "text",
+                "required": true,
+                "helper-text": "Tu primer nombre"
+              },
+              {
+                "type": "TextInput",
+                "name": "last_name",
+                "label": "Apellido",
+                "input-type": "text",
+                "required": true,
+                "helper-text": "Tu apellido paterno"
+              },
+              {
+                "type": "TextInput",
+                "name": "phone",
+                "label": "Teléfono",
+                "input-type": "phone",
+                "required": true,
+                "enabled": false,
+                "helper-text": "Número asociado a esta cuenta de WhatsApp"
+              },
+              {
+                "type": "TextInput",
+                "name": "email",
+                "label": "Correo electrónico",
+                "input-type": "email",
+                "required": true,
+                "helper-text": "Para notificaciones importantes"
+              },
+              {
+                "type": "Footer",
+                "label": "Guardar perfil",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "first_name": "${form.first_name}",
+                    "last_name": "${form.last_name}",
+                    "phone": "${form.phone}",
+                    "email": "${form.email}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
