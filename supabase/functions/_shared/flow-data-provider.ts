@@ -206,19 +206,55 @@ export class FlowDataProvider {
     contactId: string
   ): Promise<string> {
     try {
-      // Obtener contact_profile_id
+      // Obtener contact_profile_id y phone del tenant_contact
       const { data: tenantContact } = await this.supabase
         .from('tenant_contacts')
-        .select('contact_profile_id')
+        .select('contact_profile_id, phone_e164')
         .eq('id', contactId)
         .single();
 
-      if (!tenantContact || !tenantContact.contact_profile_id) {
-        throw new Error('Contact profile not found');
+      if (!tenantContact) {
+        throw new Error('Contact not found');
+      }
+
+      let contactProfileId = tenantContact.contact_profile_id;
+
+      // Si no tiene contact_profile, crear uno automáticamente
+      if (!contactProfileId) {
+        console.log('Contact profile not found, creating new one for contact:', contactId);
+
+        const { data: newProfile, error: createError } = await this.supabase
+          .from('contact_profiles')
+          .insert({
+            phone_e164: tenantContact.phone_e164,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .select('id')
+          .single();
+
+        if (createError || !newProfile) {
+          console.error('Error creating contact profile:', createError);
+          throw new Error('Failed to create contact profile');
+        }
+
+        contactProfileId = newProfile.id;
+
+        // Actualizar tenant_contact con el nuevo contact_profile_id
+        const { error: updateError } = await this.supabase
+          .from('tenant_contacts')
+          .update({ contact_profile_id: contactProfileId })
+          .eq('id', contactId);
+
+        if (updateError) {
+          console.error('Error updating tenant_contact:', updateError);
+        }
+
+        console.log('Contact profile created and linked:', contactProfileId);
       }
 
       const timestamp = Date.now();
-      return `${flowType}_${tenantId}_${contactId}_${tenantContact.contact_profile_id}_${timestamp}`;
+      return `${flowType}_${tenantId}_${contactId}_${contactProfileId}_${timestamp}`;
 
     } catch (error) {
       console.error('Error generating flow token:', error);
