@@ -51,7 +51,11 @@ export class ConversationManager {
             const digitsOnly = input.replace(/\D/g, '');
             return digitsOnly.length >= 8;
           },
-          awaiting_item: () => true, // Los botones siempre son válidos
+          awaiting_item: (context, input) => {
+            // Solo aceptar valores válidos de loan_type (money, object, other)
+            const validTypes = ['money', 'object', 'other'];
+            return validTypes.includes(input.toLowerCase().trim());
+          },
           awaiting_money_amount: (context, input) => this.validateMoneyAmount(input),
           awaiting_object_description: (context, input) => input.trim().length >= 3,
           awaiting_other_description: (context, input) => input.trim().length >= 3,
@@ -494,6 +498,26 @@ export class ConversationManager {
       }
 
       const state = await this.getOrCreateConversationState(tenantId, contactId, flowType);
+
+      // ===== DETECCIÓN DE MENSAJES DUPLICADOS =====
+      // Verificar si el mensaje es idéntico al último procesado (dentro de 5 segundos)
+      const lastMessage = state.context?.last_message;
+      const lastMessageTime = state.context?.last_message_time;
+      const currentTime = Date.now();
+
+      if (lastMessage === input.trim() && lastMessageTime) {
+        const timeDiff = (currentTime - lastMessageTime) / 1000; // en segundos
+        if (timeDiff < 5) {
+          console.log(`[DUPLICATE] Ignoring duplicate message within ${timeDiff.toFixed(1)}s:`, input);
+          return {
+            success: true,
+            message: null, // No responder a mensajes duplicados
+            nextStep: state.current_step,
+            completed: false,
+            context: state.context
+          };
+        }
+      }
       console.log('State retrieved:', {
         id: state?.id,
         flow_type: state?.flow_type,
@@ -523,7 +547,12 @@ export class ConversationManager {
       // Procesar entrada
       const handlerResult = flow.handlers[state.current_step](state.context, input);
       console.log('[CONTEXT] Step:', state.current_step, '| Handler result:', JSON.stringify(handlerResult));
-      let updatedContext = { ...state.context, ...handlerResult };
+      let updatedContext = {
+        ...state.context,
+        ...handlerResult,
+        last_message: input.trim(),
+        last_message_time: Date.now()
+      };
       console.log('[CONTEXT] Updated:', JSON.stringify(updatedContext));
 
       // Lógica especial para verificación de contacto en new_loan
@@ -710,7 +739,7 @@ export class ConversationManager {
     const messages = {
       awaiting_contact: 'Por favor proporciona un nombre válido o número de teléfono.',
       awaiting_phone_for_new_contact: 'Por favor proporciona un número de teléfono válido (mínimo 8 dígitos) o escribe "sin teléfono".',
-      awaiting_item: 'Por favor selecciona una opción usando los botones.',
+      awaiting_item: 'Por favor selecciona una opción usando los botones:\n💰 Dinero\n📦 Un objeto\n✏️ Otra cosa',
       awaiting_money_amount: 'Por favor ingresa un monto válido (solo números). Ejemplo: 5000, $5,000, etc.',
       awaiting_object_description: 'Por favor describe qué objeto vas a prestar (mínimo 3 caracteres).',
       awaiting_other_description: 'Por favor describe qué vas a prestar (mínimo 3 caracteres).',
