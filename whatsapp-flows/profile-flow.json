@@ -16,10 +16,6 @@
           "type": "string",
           "__example__": "Pérez"
         },
-        "phone": {
-          "type": "string",
-          "__example__": "+56912345678"
-        },
         "email": {
           "type": "string",
           "__example__": "juan.perez@gmail.com"
@@ -31,6 +27,11 @@
           {
             "type": "Form",
             "name": "profile_form",
+            "init-values": {
+              "first_name": "${data.first_name}",
+              "last_name": "${data.last_name}",
+              "email": "${data.email}"
+            },
             "children": [
               {
                 "type": "TextHeading",
@@ -58,15 +59,6 @@
               },
               {
                 "type": "TextInput",
-                "name": "phone",
-                "label": "Teléfono",
-                "input-type": "phone",
-                "required": true,
-                "enabled": false,
-                "helper-text": "Número asociado a esta cuenta de WhatsApp"
-              },
-              {
-                "type": "TextInput",
                 "name": "email",
                 "label": "Correo electrónico",
                 "input-type": "email",
@@ -77,11 +69,10 @@
                 "type": "Footer",
                 "label": "Guardar perfil",
                 "on-click-action": {
-                  "name": "complete",
+                  "name": "data_exchange",
                   "payload": {
                     "first_name": "${form.first_name}",
                     "last_name": "${form.last_name}",
-                    "phone": "${form.phone}",
                     "email": "${form.email}"
                   }
                 }

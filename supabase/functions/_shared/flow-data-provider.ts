@@ -16,18 +16,17 @@ export class FlowDataProvider {
   async getProfileData(contactId: string): Promise<{
     first_name: string;
     last_name: string;
-    phone: string;
     email: string;
   }> {
     try {
-      // Obtener tenant_contact para acceder al contact_profile_id
-      const { data: tenantContact } = await this.supabase
-        .from('tenant_contacts')
+      // Obtener contact para acceder al contact_profile_id
+      const { data: contact } = await this.supabase
+        .from('contacts')
         .select('contact_profile_id')
         .eq('id', contactId)
         .single();
 
-      if (!tenantContact || !tenantContact.contact_profile_id) {
+      if (!contact || !contact.contact_profile_id) {
         throw new Error('Contact profile not found');
       }
 
@@ -35,13 +34,12 @@ export class FlowDataProvider {
       const { data: profile } = await this.supabase
         .from('contact_profiles')
         .select('first_name, last_name, phone_e164, email')
-        .eq('id', tenantContact.contact_profile_id)
+        .eq('id', contact.contact_profile_id)
         .single();
 
       return {
         first_name: profile?.first_name || "",
         last_name: profile?.last_name || "",
-        phone: profile?.phone_e164 || "",
         email: profile?.email || ""
       };
 
@@ -51,7 +49,6 @@ export class FlowDataProvider {
       return {
         first_name: "",
         last_name: "",
-        phone: "",
         email: ""
       };
     }
@@ -88,14 +85,14 @@ export class FlowDataProvider {
     };
   }>> {
     try {
-      // Obtener tenant_contact para acceder al contact_profile_id
-      const { data: tenantContact } = await this.supabase
-        .from('tenant_contacts')
+      // Obtener contact para acceder al contact_profile_id
+      const { data: contact } = await this.supabase
+        .from('contacts')
         .select('contact_profile_id')
         .eq('id', contactId)
         .single();
 
-      if (!tenantContact || !tenantContact.contact_profile_id) {
+      if (!contact || !contact.contact_profile_id) {
         throw new Error('Contact profile not found');
       }
 
@@ -103,7 +100,7 @@ export class FlowDataProvider {
       const { data: accounts } = await this.supabase
         .from('bank_transfer_accounts')
         .select('id, alias, bank_name, account_type, account_number, is_default')
-        .eq('contact_profile_id', tenantContact.contact_profile_id)
+        .eq('contact_profile_id', contact.contact_profile_id)
         .eq('is_active', true)
         .order('is_default', { ascending: false }) // Cuenta default primero
         .order('created_at', { ascending: true });
@@ -206,27 +203,34 @@ export class FlowDataProvider {
     contactId: string
   ): Promise<string> {
     try {
-      // Obtener contact_profile_id y phone del tenant_contact
-      const { data: tenantContact } = await this.supabase
-        .from('tenant_contacts')
+      console.log('[FLOW_TOKEN] Querying contact with ID:', contactId);
+
+      // Obtener contact_profile_id y phone del contact
+      const { data: contact, error: contactError } = await this.supabase
+        .from('contacts')
         .select('contact_profile_id, phone_e164')
         .eq('id', contactId)
         .single();
 
-      if (!tenantContact) {
+      console.log('[FLOW_TOKEN] Query result - data:', contact);
+      console.log('[FLOW_TOKEN] Query result - error:', contactError);
+
+      if (!contact) {
+        console.error('[FLOW_TOKEN] Contact not found for contactId:', contactId);
+        console.error('[FLOW_TOKEN] Error details:', contactError);
         throw new Error('Contact not found');
       }
 
-      let contactProfileId = tenantContact.contact_profile_id;
+      let contactProfileId = contact.contact_profile_id;
 
       // Si no tiene contact_profile, crear uno automáticamente
       if (!contactProfileId) {
-        console.log('Contact profile not found, creating new one for contact:', contactId);
+        console.log('[AUTO-CREATE] Contact profile not found, creating new one for contact:', contactId);
 
         const { data: newProfile, error: createError } = await this.supabase
           .from('contact_profiles')
           .insert({
-            phone_e164: tenantContact.phone_e164,
+            phone_e164: contact.phone_e164,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           })
@@ -240,9 +244,9 @@ export class FlowDataProvider {
 
         contactProfileId = newProfile.id;
 
-        // Actualizar tenant_contact con el nuevo contact_profile_id
+        // Actualizar contact con el nuevo contact_profile_id
         const { error: updateError } = await this.supabase
-          .from('tenant_contacts')
+          .from('contacts')
           .update({ contact_profile_id: contactProfileId })
           .eq('id', contactId);
 

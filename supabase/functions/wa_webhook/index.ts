@@ -1012,15 +1012,24 @@ async function processInboundMessage(
 
         case 'user_profile':
           // Enviar mensaje con WhatsApp Flow para gestionar perfil
-          console.log('Button user_profile clicked, sending Flow message');
+          console.log('[PROFILE_FLOW] Button user_profile clicked, sending Flow message');
+          console.log('[PROFILE_FLOW] Contact ID:', contact.id);
+          console.log('[PROFILE_FLOW] Tenant ID:', tenant.id);
           try {
             const flowDataProvider = new FlowDataProvider(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
+            console.log('[PROFILE_FLOW] Generating flow token...');
             // Generar flow_token único para este usuario
             const flowToken = await flowDataProvider.generateFlowToken('profile', tenant.id, contact.id);
+            console.log('[PROFILE_FLOW] Flow token generated:', flowToken);
 
+            console.log('[PROFILE_FLOW] Getting profile data...');
             // Obtener datos del perfil para prellenar
             const profileData = await flowDataProvider.getProfileData(contact.id);
+            console.log('[PROFILE_FLOW] Profile data retrieved:', JSON.stringify(profileData));
+
+            const flowId = Deno.env.get('WHATSAPP_PROFILE_FLOW_ID') || '';
+            console.log('[PROFILE_FLOW] Flow ID from env:', flowId);
 
             // Enviar mensaje con Flow Button
             interactiveResponse = {
@@ -1040,19 +1049,24 @@ async function processInboundMessage(
                 parameters: {
                   flow_message_version: '3',
                   flow_token: flowToken,
-                  flow_id: Deno.env.get('WHATSAPP_PROFILE_FLOW_ID') || '',
+                  flow_id: flowId,
                   flow_cta: 'Abrir perfil',
                   flow_action: 'navigate',
                   flow_action_payload: {
                     screen: 'PROFILE_FORM',
                     data: profileData
                   }
+                  // mode: 'draft' // Solo cuando Flow está en DRAFT, ahora está PUBLICADO
                 }
               }
             };
 
+            console.log('[PROFILE_FLOW] Interactive response prepared, will send to WhatsApp');
+
           } catch (error) {
-            console.error('Error sending profile flow:', error);
+            console.error('[PROFILE_FLOW] ❌ ERROR:', error);
+            console.error('[PROFILE_FLOW] Error message:', error.message);
+            console.error('[PROFILE_FLOW] Error stack:', error.stack);
             responseMessage = 'Hubo un error al abrir tu perfil. Por favor intenta de nuevo.';
           }
           break;
