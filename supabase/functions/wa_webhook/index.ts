@@ -263,8 +263,8 @@ async function processInboundMessage(
               {
                 type: 'reply',
                 reply: {
-                  id: 'user_profile',
-                  title: '👤 Mi Perfil'
+                  id: 'web_menu',
+                  title: '🌐 Menú Web'
                 }
               }
             ]
@@ -375,6 +375,33 @@ async function processInboundMessage(
         const conversationManager = new ConversationManager(supabase.supabaseUrl, supabase.supabaseKey);
         await conversationManager.cancelCurrentConversation(tenant.id, contact.id);
         responseMessage = '❌ Conversación cancelada. Puedes iniciar una nueva cuando gustes.';
+      } else if (lowerText === 'menú web' || lowerText === 'menu web' || lowerText === 'acceso web') {
+        // Enviar plantilla de menú web
+        console.log('[MENU_WEB] Sending menu web template');
+        try {
+          const { WhatsAppTemplates } = await import('../_shared/whatsapp-templates.ts');
+          const templates = new WhatsAppTemplates(
+            phoneNumberId,
+            Deno.env.get('WHATSAPP_ACCESS_TOKEN')!
+          );
+
+          const result = await templates.generateAndSendMenuAccess(
+            Deno.env.get('SUPABASE_URL')!,
+            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+            tenant.id,
+            contact.id,
+            contact.phone_e164,
+            contact.name
+          );
+
+          if (!result.success) {
+            responseMessage = 'Hubo un error al generar el link del menú. Por favor intenta de nuevo.';
+          }
+          // Si es exitoso, la plantilla se envió automáticamente, no necesitamos responseMessage
+        } catch (error) {
+          console.error('[MENU_WEB] Error:', error);
+          responseMessage = 'Hubo un error al enviar el menú. Por favor intenta de nuevo.';
+        }
       }
 
       // Si no se asignó responseMessage, procesar con sistema de flujos conversacionales
@@ -1090,6 +1117,35 @@ async function processInboundMessage(
           } catch (error) {
             console.error('Error starting new_service flow:', error);
             responseMessage = '🔄 Perfecto, vamos a configurar un servicio mensual.\n\n¿Qué servicio es? (Ej: "arriendo", "plan celular", "gym")';
+          }
+          break;
+
+        case 'web_menu':
+          // Enviar plantilla de menú web
+          console.log('[MENU_WEB] Button web_menu clicked, sending menu web template');
+          try {
+            const { WhatsAppTemplates } = await import('../_shared/whatsapp-templates.ts');
+            const templates = new WhatsAppTemplates(
+              phoneNumberId,
+              Deno.env.get('WHATSAPP_ACCESS_TOKEN')!
+            );
+
+            const result = await templates.generateAndSendMenuAccess(
+              Deno.env.get('SUPABASE_URL')!,
+              Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+              tenant.id,
+              contact.id,
+              contact.phone_e164,
+              contact.name
+            );
+
+            if (!result.success) {
+              responseMessage = 'Hubo un error al generar el link del menú. Por favor intenta de nuevo.';
+            }
+            // Si es exitoso, la plantilla se envió automáticamente, no necesitamos responseMessage
+          } catch (error) {
+            console.error('[MENU_WEB] Error:', error);
+            responseMessage = 'Hubo un error al enviar el menú. Por favor intenta de nuevo.';
           }
           break;
 

@@ -2,6 +2,99 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-09] - Plantilla de WhatsApp para acceso al Menú Web
+
+### ✨ Añadido
+
+#### Plantilla de WhatsApp `menu_web_access`
+- **Categoría:** UTILITY
+- **Idioma:** Español (es)
+- **Componentes:**
+  - **Header:** "¡Hola {{1}}! 👋" (variable: nombre del usuario)
+  - **Body:** Descripción del menú personal (Ver perfil, Datos bancarios, Crear préstamos)
+  - **Footer:** "🔒 Link válido por 1 hora"
+  - **Button:** "Abrir Menú" con URL dinámica {{1}}
+
+#### Helper Class `WhatsAppTemplates`
+- **Archivo:** `supabase/functions/_shared/whatsapp-templates.ts`
+- **Métodos:**
+  - `sendMenuWebAccessTemplate()` - Envía plantilla de menú web
+  - `generateAndSendMenuAccess()` - Genera token + envía plantilla
+- **Integración con WhatsApp Graph API v18.0**
+- **Gestión automática de errores y logging**
+
+#### Comandos de WhatsApp
+- **Comando de texto:** "menú web", "menu web", "acceso web"
+  - Genera token único de acceso
+  - Envía plantilla de WhatsApp con link personalizado
+  - Manejo de errores con mensajes amigables
+
+- **Botón en menú principal:** "🌐 Menú Web"
+  - Agregado al menú de bienvenida (junto a "Nuevo préstamo" y "Ver estado")
+  - Mismo flujo que comando de texto
+  - Respuesta inmediata al usuario
+
+### 📝 Documentación
+- **`docs/PLANTILLA_MENU_WEB.md`** - Guía completa:
+  - Configuración paso a paso en Meta Business Manager
+  - Estructura de la plantilla con variables
+  - Código de ejemplo para envío
+  - Vista previa del mensaje
+  - Casos de uso y troubleshooting
+  - Referencias a docs oficiales de WhatsApp
+
+### 🔄 Modificado
+- **`wa_webhook/index.ts`:**
+  - Líneas 378-405: Nuevo comando "menú web" / "menu web" / "acceso web"
+  - Líneas 263-268: Botón "🌐 Menú Web" en mensaje de bienvenida
+  - Líneas 1123-1150: Handler del botón `web_menu`
+  - Importación de WhatsAppTemplates desde `_shared/`
+
+### 🚀 Flujo Completo
+```
+Usuario escribe "menú web" o presiona botón "🌐 Menú Web"
+     ↓
+Webhook llama a WhatsAppTemplates.generateAndSendMenuAccess()
+     ↓
+1. Genera token: menu_[tenant_id]_[contact_id]_[timestamp]
+2. Llama a /functions/v1/generate-menu-token
+3. Obtiene URL: https://[netlify]/menu?token=xxx
+     ↓
+Envía plantilla de WhatsApp con:
+  - Header personalizado con nombre del usuario
+  - Botón "Abrir Menú" con URL dinámica
+  - Footer con expiración (1 hora)
+     ↓
+Usuario recibe mensaje en WhatsApp
+     ↓
+Click en "Abrir Menú" → Abre navegador con menú web
+```
+
+### 📁 Archivos Creados
+- `supabase/functions/_shared/whatsapp-templates.ts` - Helper class (~182 líneas)
+- `docs/PLANTILLA_MENU_WEB.md` - Documentación completa (~230 líneas)
+
+### 📦 Deploy Info
+- **Pendiente:** Deploy de `wa_webhook` con nueva funcionalidad
+- **Pendiente:** Crear y aprobar plantilla en Meta Business Manager
+  - Nombre exacto: `menu_web_access`
+  - Tiempo de aprobación estimado: 1-24 horas
+  - Requiere configuración en https://business.facebook.com/
+
+### ⚠️ Requisitos Previos
+1. ✅ Edge Function `generate-menu-token` debe estar desplegada
+2. ⏳ Plantilla `menu_web_access` debe estar aprobada en Meta Business
+3. ✅ Variable `NETLIFY_MENU_URL` configurada (o usar fallback)
+4. ✅ Variable `WHATSAPP_ACCESS_TOKEN` actualizada
+
+### 💡 Casos de Uso
+1. **Bienvenida inicial:** Enviar al crear nuevo contacto
+2. **Recordatorio:** Enviar si usuario no completa perfil
+3. **Comando manual:** Al escribir "menú web" en WhatsApp
+4. **Botón en menú:** Opción en el menú principal de WhatsApp
+
+---
+
 ## [2025-10-09] - Sistema completo de menú web con Perfil y Datos bancarios
 
 ### ✨ Añadido
