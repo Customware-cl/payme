@@ -143,10 +143,23 @@ contact_profiles {
 }
 ```
 
+### 📦 Deploy Info
+- **Edge Function desplegada:** `menu-data`
+  - Script size: 71.01kB
+  - Estado: ✅ Desplegado correctamente
+  - Comando: `npx supabase functions deploy menu-data --no-verify-jwt`
+  - Endpoint: `https://qgjxkszfdoolaxmsupil.supabase.co/functions/v1/menu-data`
+
+- **Edge Function desplegada:** `generate-menu-token`
+  - Script size: 69.35kB
+  - Estado: ✅ Desplegado correctamente
+  - Comando: `npx supabase functions deploy generate-menu-token`
+  - Endpoint: `https://qgjxkszfdoolaxmsupil.supabase.co/functions/v1/generate-menu-token`
+
 ### 📝 Próximos pasos
-1. Deploy de Edge Functions: `menu-data` y `generate-menu-token`
+1. ✅ Deploy de Edge Functions - Completado
 2. Deploy del frontend en Netlify (carpeta `public/menu/`)
-3. Configurar variable de entorno `NETLIFY_MENU_URL`
+3. Configurar variable de entorno `NETLIFY_MENU_URL` (opcional)
 4. Integrar generación de token desde WhatsApp (opcional)
 
 ---
