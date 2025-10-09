@@ -1,5 +1,6 @@
 // Edge Function: WhatsApp Webhook Handler
 // Versión con flujos conversacionales integrados
+// v2.0.2 - Force redeploy 2025-10-09
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -308,14 +309,14 @@ async function processInboundMessage(
           .from('agreements')
           .select('*, borrower:contact_id(name)')
           .eq('lender_contact_id', contact.id)
-          .eq('status', 'active');
+          .in('status', ['active', 'pending_confirmation']);
 
         // Buscar préstamos que me hicieron (borrower)
         const { data: borrowedAgreements } = await supabase
           .from('agreements')
           .select('*, lender:lender_contact_id(name)')
           .eq('contact_id', contact.id)
-          .eq('status', 'active');
+          .in('status', ['active', 'pending_confirmation']);
 
         const hasLent = lentAgreements && lentAgreements.length > 0;
         const hasBorrowed = borrowedAgreements && borrowedAgreements.length > 0;
@@ -331,12 +332,16 @@ async function processInboundMessage(
             const groupedLent = sortAndGroupAgreements(lentAgreements);
             groupedLent.forEach((agreement: any, index: number) => {
               const borrowerName = agreement.borrower?.name || 'Desconocido';
+              const isPending = agreement.status === 'pending_confirmation';
               statusText += `${index + 1}. A *${borrowerName}*: ${agreement.item_description || agreement.title}\n`;
               if (agreement.due_date) {
                 statusText += `   Vence: ${formatDate(agreement.due_date)}\n`;
               }
               if (agreement.amount) {
                 statusText += `   Monto: $${formatMoney(agreement.amount)}\n`;
+              }
+              if (isPending) {
+                statusText += `   ⏳ _Pendiente de confirmación_\n`;
               }
               statusText += '\n';
             });
@@ -348,12 +353,16 @@ async function processInboundMessage(
             const groupedBorrowed = sortAndGroupAgreements(borrowedAgreements);
             groupedBorrowed.forEach((agreement: any, index: number) => {
               const lenderName = agreement.lender?.name || 'Desconocido';
+              const isPending = agreement.status === 'pending_confirmation';
               statusText += `${index + 1}. De *${lenderName}*: ${agreement.item_description || agreement.title}\n`;
               if (agreement.due_date) {
                 statusText += `   Vence: ${formatDate(agreement.due_date)}\n`;
               }
               if (agreement.amount) {
                 statusText += `   Monto: $${formatMoney(agreement.amount)}\n`;
+              }
+              if (isPending) {
+                statusText += `   ⏳ _Pendiente de confirmación_\n`;
               }
               statusText += '\n';
             });
@@ -804,8 +813,37 @@ async function processInboundMessage(
           break;
 
         case 'new_loan':
-          // Iniciar flujo de nuevo préstamo - ir directo sin IntentDetector
-          console.log('Button new_loan clicked, starting flow directly');
+          // Mostrar opciones: WhatsApp conversacional o Formulario Web
+          console.log('Button new_loan clicked, showing options');
+          interactiveResponse = {
+            type: 'button',
+            body: {
+              text: '💰 *Nuevo préstamo*\n\n¿Cómo prefieres crearlo?'
+            },
+            action: {
+              buttons: [
+                {
+                  type: 'reply',
+                  reply: {
+                    id: 'new_loan_chat',
+                    title: '💬 Por WhatsApp'
+                  }
+                },
+                {
+                  type: 'reply',
+                  reply: {
+                    id: 'new_loan_web',
+                    title: '🌐 Formulario web'
+                  }
+                }
+              ]
+            }
+          };
+          break;
+
+        case 'new_loan_chat':
+          // Iniciar flujo de nuevo préstamo conversacional
+          console.log('Button new_loan_chat clicked, starting conversational flow');
           try {
             const conversationManager = new ConversationManager(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
@@ -875,6 +913,43 @@ async function processInboundMessage(
           }
           break;
 
+        case 'new_loan_web':
+          // Generar link del formulario web
+          console.log('Button new_loan_web clicked, generating web form link');
+          try {
+            const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+            const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+
+            // Llamar a la edge function generate-loan-web-link
+            const generateLinkResponse = await fetch(
+              `${supabaseUrl}/functions/v1/generate-loan-web-link`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${supabaseAnonKey}`
+                },
+                body: JSON.stringify({
+                  tenant_id: tenant.id,
+                  contact_id: contact.id
+                })
+              }
+            );
+
+            const linkData = await generateLinkResponse.json();
+
+            if (linkData.success && linkData.data.url) {
+              responseMessage = `🌐 *Formulario Web de Préstamo*\n\nAquí está tu link personal para crear un préstamo:\n\n${linkData.data.url}\n\n⏱️ Este link expira en 1 hora.\n\n📱 Ábrelo en tu navegador para registrar el préstamo de forma visual.`;
+            } else {
+              console.error('Error generating web form link:', linkData);
+              responseMessage = 'Hubo un error al generar el link del formulario. Por favor intenta de nuevo o usa la opción "Por WhatsApp".';
+            }
+          } catch (error) {
+            console.error('Error calling generate-loan-web-link:', error);
+            responseMessage = 'Hubo un error al generar el link del formulario. Por favor intenta de nuevo o usa la opción "Por WhatsApp".';
+          }
+          break;
+
         case 'check_status':
           // Mostrar estado de acuerdos
           // Buscar préstamos que YO hice (lender)
@@ -882,14 +957,14 @@ async function processInboundMessage(
             .from('agreements')
             .select('*, borrower:contact_id(name)')
             .eq('lender_contact_id', contact.id)
-            .eq('status', 'active');
+            .in('status', ['active', 'pending_confirmation']);
 
           // Buscar préstamos que me hicieron (borrower)
           const { data: borrowedAgreementsBtn } = await supabase
             .from('agreements')
             .select('*, lender:lender_contact_id(name)')
             .eq('contact_id', contact.id)
-            .eq('status', 'active');
+            .in('status', ['active', 'pending_confirmation']);
 
           const hasLentBtn = lentAgreementsBtn && lentAgreementsBtn.length > 0;
           const hasBorrowedBtn = borrowedAgreementsBtn && borrowedAgreementsBtn.length > 0;
@@ -905,12 +980,16 @@ async function processInboundMessage(
               const groupedLentBtn = sortAndGroupAgreements(lentAgreementsBtn);
               groupedLentBtn.forEach((agreement: any, index: number) => {
                 const borrowerName = agreement.borrower?.name || 'Desconocido';
+                const isPending = agreement.status === 'pending_confirmation';
                 statusText += `${index + 1}. A *${borrowerName}*: ${agreement.item_description || agreement.title}\n`;
                 if (agreement.due_date) {
                   statusText += `   Vence: ${formatDate(agreement.due_date)}\n`;
                 }
                 if (agreement.amount) {
                   statusText += `   Monto: $${formatMoney(agreement.amount)}\n`;
+                }
+                if (isPending) {
+                  statusText += `   ⏳ _Pendiente de confirmación_\n`;
                 }
                 statusText += '\n';
               });
@@ -922,12 +1001,16 @@ async function processInboundMessage(
               const groupedBorrowedBtn = sortAndGroupAgreements(borrowedAgreementsBtn);
               groupedBorrowedBtn.forEach((agreement: any, index: number) => {
                 const lenderName = agreement.lender?.name || 'Desconocido';
+                const isPending = agreement.status === 'pending_confirmation';
                 statusText += `${index + 1}. De *${lenderName}*: ${agreement.item_description || agreement.title}\n`;
                 if (agreement.due_date) {
                   statusText += `   Vence: ${formatDate(agreement.due_date)}\n`;
                 }
                 if (agreement.amount) {
                   statusText += `   Monto: $${formatMoney(agreement.amount)}\n`;
+                }
+                if (isPending) {
+                  statusText += `   ⏳ _Pendiente de confirmación_\n`;
                 }
                 statusText += '\n';
               });
