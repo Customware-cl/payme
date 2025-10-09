@@ -46,6 +46,7 @@ body {
     color: white;
     padding: 48px 24px 32px;
     text-align: center;
+    position: relative;
 }
 
 .header h1 {
@@ -59,6 +60,24 @@ body {
     font-size: 15px;
     opacity: 0.9;
     font-weight: 400;
+}
+
+/* Botón volver */
+.btn-back {
+    position: absolute;
+    top: 48px;
+    left: 16px;
+    background: none;
+    border: none;
+    font-size: 28px;
+    color: white;
+    cursor: pointer;
+    padding: 8px;
+    transition: opacity var(--transition);
+}
+
+.btn-back:active {
+    opacity: 0.7;
 }
 
 /* Menu */
@@ -228,4 +247,122 @@ body {
 
 .menu-item:nth-child(3) {
     animation-delay: 0.3s;
+}
+
+/* Content area para formularios */
+.content {
+    flex: 1;
+    padding: 24px;
+    background: var(--bg-main);
+}
+
+/* Formularios */
+.form {
+    max-width: 100%;
+}
+
+.form-group {
+    margin-bottom: 24px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 14px 16px;
+    font-size: 16px;
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    transition: border-color var(--transition);
+    font-family: inherit;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.form-group select {
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath fill='%23667781' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+    padding-right: 40px;
+}
+
+.hint {
+    display: block;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+}
+
+/* Botón primario */
+.btn-primary {
+    width: 100%;
+    padding: 16px;
+    font-size: 16px;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    background: var(--primary-color);
+    color: white;
+    cursor: pointer;
+    transition: background var(--transition);
+    margin-top: 8px;
+}
+
+.btn-primary:hover {
+    background: var(--primary-dark);
+}
+
+.btn-primary:active {
+    transform: scale(0.98);
+}
+
+.btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Toast */
+.toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--text-primary);
+    color: white;
+    padding: 16px 24px;
+    border-radius: 8px;
+    box-shadow: var(--shadow-md);
+    z-index: 2000;
+    animation: toastIn 0.3s ease;
+    max-width: 90%;
+}
+
+.toast.hidden {
+    display: none;
+}
+
+@keyframes toastIn {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
 }

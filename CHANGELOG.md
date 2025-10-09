@@ -2,47 +2,152 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
-## [2025-10-09] - Nuevo menú web minimalista
+## [2025-10-09] - Sistema completo de menú web con Perfil y Datos bancarios
 
 ### ✨ Añadido
-- **Menú principal web inspirado en WhatsApp**
-  - Diseño minimalista con 3 opciones principales
-  - Tipografía y colores consistentes con WhatsApp (verde #25D366)
-  - Responsive y mobile-first
-  - Animaciones sutiles de entrada
 
-- **Opciones del menú:**
-  - 👤 Ver Perfil - Gestionar información personal
-  - 💳 Datos bancarios - Administrar cuentas bancarias
-  - 💰 Nuevo préstamo - Redirige al formulario loan-form existente
+#### Menú principal web
+- **Diseño minimalista inspirado en WhatsApp**
+  - 3 opciones principales con iconos y descripciones
+  - Tipografía y colores consistentes (verde #25D366)
+  - Responsive mobile-first
+  - Animaciones sutiles de entrada
+  - Sistema de tokens para seguridad (1 hora de expiración)
+
+#### Vista de Perfil (👤 Ver Perfil)
+- **Campos:**
+  - Nombre (requerido)
+  - Apellido (requerido)
+  - Correo electrónico (opcional)
+- **Funcionalidades:**
+  - Carga automática de datos existentes
+  - Guardado en contact_profiles
+  - Validación de formulario
+  - Botón volver al menú
+  - Toast de confirmación
+
+#### Vista de Datos bancarios (💳 Datos bancarios)
+- **Campos:**
+  - RUT (requerido, con validación y formato automático)
+  - Banco (selector con bancos chilenos)
+  - Tipo de cuenta (Corriente, Vista, Ahorro, RUT)
+  - Número de cuenta (solo números)
+- **Funcionalidades:**
+  - Validación de RUT con dígito verificador
+  - Formateo automático: 12.345.678-9
+  - Carga de datos existentes
+  - Guardado en contact_profiles.bank_accounts
+  - Toast de confirmación
+
+#### Edge Functions
+- **`menu-data`** - Endpoint unificado para perfil y banco
+  - GET: Cargar datos de perfil o banco
+  - POST: Guardar datos de perfil o banco
+  - Validación de tokens con expiración
+  - Auto-creación de contact_profile si no existe
+
+- **`generate-menu-token`** - Generador de tokens de acceso
+  - Genera tokens únicos: `menu_[tenant_id]_[contact_id]_[timestamp]`
+  - Validación de tenant y contact
+  - Expiración: 1 hora
+  - Registra eventos
 
 ### 🎨 Diseño
-- **Paleta de colores:** Verde WhatsApp (#25D366), grises suaves
+- **Paleta de colores:** Verde WhatsApp (#25D366), grises suaves (#667781)
 - **Tipografía:** System fonts (-apple-system, BlinkMacSystemFont, Segoe UI)
-- **Tamaños:** Inspirados en el formulario loan-form
-- **Espaciado:** Minimalista, siguiendo principios de WhatsApp
-- **Interacciones:** Efectos hover y active sutiles
+- **Componentes:**
+  - Formularios con labels y hints
+  - Inputs con focus state (borde verde)
+  - Selects personalizados con flecha
+  - Botones primarios con hover
+  - Toast de notificaciones
+  - Loader durante guardado
 
 ### 📁 Archivos Creados
-- `public/menu/index.html` - Estructura del menú (3 botones)
-- `public/menu/styles.css` - Estilos inspirados en WhatsApp (~6KB)
-- `public/menu/app.js` - Navegación y redirecciones (~2KB)
 
-### 🔄 Flujo
+**Frontend:**
+- `public/menu/index.html` - Menú principal (3 botones)
+- `public/menu/profile.html` - Vista de perfil
+- `public/menu/bank-details.html` - Vista de datos bancarios
+- `public/menu/styles.css` - Estilos compartidos (~10KB)
+- `public/menu/app.js` - Navegación del menú
+- `public/menu/profile.js` - Lógica de perfil
+- `public/menu/bank-details.js` - Lógica de datos bancarios
+
+**Backend:**
+- `supabase/functions/menu-data/index.ts` - CRUD de perfil y banco
+- `supabase/functions/generate-menu-token/index.ts` - Generador de tokens
+
+### 🔄 Flujos completos
+
+**Flujo de Perfil:**
 ```
-Usuario accede a /menu
+Usuario en /menu → Click "Ver Perfil"
      ↓
-Ve 3 opciones visuales
+Carga /menu/profile.html?token=xxx
      ↓
-Opción 1: Ver Perfil (en desarrollo)
-Opción 2: Datos bancarios (en desarrollo)
-Opción 3: Nuevo préstamo → Redirige a /loan-form
+GET /menu-data?token=xxx&type=profile
+     ↓
+Muestra formulario (prellenado si existe)
+     ↓
+Usuario edita: nombre, apellido, email
+     ↓
+POST /menu-data con type=profile
+     ↓
+Guarda en contact_profiles
+     ↓
+Toast: "Perfil guardado" → Vuelve al menú
 ```
 
-### 📝 Notas
-- El menú soporta token en URL: `/menu?token=xxx`
-- "Nuevo préstamo" redirige al formulario loan-form con el token
-- "Ver Perfil" y "Datos bancarios" están preparados para futuras implementaciones
+**Flujo de Datos bancarios:**
+```
+Usuario en /menu → Click "Datos bancarios"
+     ↓
+Carga /menu/bank-details.html?token=xxx
+     ↓
+GET /menu-data?token=xxx&type=bank
+     ↓
+Muestra formulario (prellenado si existe)
+     ↓
+Usuario ingresa: RUT, banco, tipo cuenta, nro cuenta
+  - RUT con validación automática
+  - Formateo: 12.345.678-9
+     ↓
+POST /menu-data con type=bank
+     ↓
+Guarda en contact_profiles.bank_accounts
+     ↓
+Toast: "Datos guardados" → Vuelve al menú
+```
+
+### 🔐 Seguridad
+- Tokens temporales con expiración de 1 hora
+- Validación de tenant_id y contact_id
+- RUT con validación de dígito verificador
+- CORS habilitado para Netlify ↔ Supabase
+
+### 📊 Esquema de datos
+```typescript
+contact_profiles {
+  contact_id: uuid
+  first_name: string
+  last_name: string
+  email: string (nullable)
+  bank_accounts: jsonb[] {
+    rut: string
+    bank_name: string
+    account_type: string
+    account_number: string
+    account_holder_name: string
+  }
+}
+```
+
+### 📝 Próximos pasos
+1. Deploy de Edge Functions: `menu-data` y `generate-menu-token`
+2. Deploy del frontend en Netlify (carpeta `public/menu/`)
+3. Configurar variable de entorno `NETLIFY_MENU_URL`
+4. Integrar generación de token desde WhatsApp (opcional)
 
 ---
 

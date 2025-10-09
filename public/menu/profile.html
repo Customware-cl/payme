@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="PrestaBot - Mi Perfil">
+    <title>Mi Perfil - PrestaBot</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <button class="btn-back" id="btn-back">←</button>
+            <h1>Mi Perfil</h1>
+            <p class="subtitle">Gestiona tu información personal</p>
+        </div>
+
+        <!-- Content -->
+        <main class="content">
+            <form class="form" id="profile-form">
+                <div class="form-group">
+                    <label for="first-name">Nombre</label>
+                    <input
+                        type="text"
+                        id="first-name"
+                        name="first_name"
+                        placeholder="Ej: Juan"
+                        required
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="last-name">Apellido</label>
+                    <input
+                        type="text"
+                        id="last-name"
+                        name="last_name"
+                        placeholder="Ej: Pérez"
+                        required
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="email">Correo electrónico</label>
+                    <input
+                        type="email"
+                        id="email"
+                        name="email"
+                        placeholder="Ej: juan.perez@email.com"
+                    >
+                    <span class="hint">Opcional - Para recibir notificaciones</span>
+                </div>
+
+                <button type="submit" class="btn-primary" id="btn-save">
+                    Guardar cambios
+                </button>
+            </form>
+        </main>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast hidden" id="toast">
+        <p id="toast-message"></p>
+    </div>
+
+    <!-- Loader -->
+    <div class="loader hidden" id="loader">
+        <div class="spinner"></div>
+        <p>Guardando...</p>
+    </div>
+
+    <script src="profile.js"></script>
+</body>
+</html>

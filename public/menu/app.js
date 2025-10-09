@@ -48,15 +48,33 @@ function setupEventListeners() {
 
 // Handlers
 function handleProfileClick() {
-    // TODO: Implementar vista de perfil
-    // Por ahora mostrar mensaje
-    alert('Función de perfil en desarrollo.\n\nPronto podrás gestionar tu información personal desde aquí.');
+    showLoader(true);
+
+    // Redirigir a la vista de perfil
+    const profileUrl = state.token
+        ? `/menu/profile.html?token=${state.token}`
+        : '/menu/profile.html';
+
+    console.log('Redirecting to profile:', profileUrl);
+
+    setTimeout(() => {
+        window.location.href = profileUrl;
+    }, 300);
 }
 
 function handleBankDetailsClick() {
-    // TODO: Implementar vista de datos bancarios
-    // Por ahora mostrar mensaje
-    alert('Función de datos bancarios en desarrollo.\n\nPronto podrás administrar tus cuentas bancarias desde aquí.');
+    showLoader(true);
+
+    // Redirigir a la vista de datos bancarios
+    const bankUrl = state.token
+        ? `/menu/bank-details.html?token=${state.token}`
+        : '/menu/bank-details.html';
+
+    console.log('Redirecting to bank details:', bankUrl);
+
+    setTimeout(() => {
+        window.location.href = bankUrl;
+    }, 300);
 }
 
 function handleNewLoanClick() {

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="PrestaBot - Datos Bancarios">
+    <title>Datos Bancarios - PrestaBot</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <button class="btn-back" id="btn-back">←</button>
+            <h1>Datos Bancarios</h1>
+            <p class="subtitle">Administra tu cuenta bancaria</p>
+        </div>
+
+        <!-- Content -->
+        <main class="content">
+            <form class="form" id="bank-form">
+                <div class="form-group">
+                    <label for="rut">RUT</label>
+                    <input
+                        type="text"
+                        id="rut"
+                        name="rut"
+                        placeholder="Ej: 12.345.678-9"
+                        required
+                    >
+                    <span class="hint">Formato: 12.345.678-9</span>
+                </div>
+
+                <div class="form-group">
+                    <label for="bank">Banco</label>
+                    <select id="bank" name="bank_name" required>
+                        <option value="">Selecciona tu banco</option>
+                        <option value="Banco de Chile">Banco de Chile</option>
+                        <option value="Banco Estado">Banco Estado</option>
+                        <option value="Scotiabank">Scotiabank</option>
+                        <option value="BCI">BCI</option>
+                        <option value="Santander">Santander</option>
+                        <option value="Itaú">Itaú</option>
+                        <option value="Banco Falabella">Banco Falabella</option>
+                        <option value="Banco Ripley">Banco Ripley</option>
+                        <option value="Banco Security">Banco Security</option>
+                        <option value="Banco BICE">Banco BICE</option>
+                        <option value="Otro">Otro</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="account-type">Tipo de cuenta</label>
+                    <select id="account-type" name="account_type" required>
+                        <option value="">Selecciona el tipo</option>
+                        <option value="Cuenta Corriente">Cuenta Corriente</option>
+                        <option value="Cuenta Vista">Cuenta Vista</option>
+                        <option value="Cuenta de Ahorro">Cuenta de Ahorro</option>
+                        <option value="Cuenta RUT">Cuenta RUT</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="account-number">Número de cuenta</label>
+                    <input
+                        type="text"
+                        id="account-number"
+                        name="account_number"
+                        placeholder="Ej: 1234567890"
+                        required
+                    >
+                    <span class="hint">Solo números, sin guiones ni espacios</span>
+                </div>
+
+                <button type="submit" class="btn-primary" id="btn-save">
+                    Guardar datos bancarios
+                </button>
+            </form>
+        </main>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast hidden" id="toast">
+        <p id="toast-message"></p>
+    </div>
+
+    <!-- Loader -->
+    <div class="loader hidden" id="loader">
+        <div class="spinner"></div>
+        <p>Guardando...</p>
+    </div>
+
+    <script src="bank-details.js"></script>
+</body>
+</html>
