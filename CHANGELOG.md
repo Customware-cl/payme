@@ -2,6 +2,50 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-09] - Nuevo menú web minimalista
+
+### ✨ Añadido
+- **Menú principal web inspirado en WhatsApp**
+  - Diseño minimalista con 3 opciones principales
+  - Tipografía y colores consistentes con WhatsApp (verde #25D366)
+  - Responsive y mobile-first
+  - Animaciones sutiles de entrada
+
+- **Opciones del menú:**
+  - 👤 Ver Perfil - Gestionar información personal
+  - 💳 Datos bancarios - Administrar cuentas bancarias
+  - 💰 Nuevo préstamo - Redirige al formulario loan-form existente
+
+### 🎨 Diseño
+- **Paleta de colores:** Verde WhatsApp (#25D366), grises suaves
+- **Tipografía:** System fonts (-apple-system, BlinkMacSystemFont, Segoe UI)
+- **Tamaños:** Inspirados en el formulario loan-form
+- **Espaciado:** Minimalista, siguiendo principios de WhatsApp
+- **Interacciones:** Efectos hover y active sutiles
+
+### 📁 Archivos Creados
+- `public/menu/index.html` - Estructura del menú (3 botones)
+- `public/menu/styles.css` - Estilos inspirados en WhatsApp (~6KB)
+- `public/menu/app.js` - Navegación y redirecciones (~2KB)
+
+### 🔄 Flujo
+```
+Usuario accede a /menu
+     ↓
+Ve 3 opciones visuales
+     ↓
+Opción 1: Ver Perfil (en desarrollo)
+Opción 2: Datos bancarios (en desarrollo)
+Opción 3: Nuevo préstamo → Redirige a /loan-form
+```
+
+### 📝 Notas
+- El menú soporta token en URL: `/menu?token=xxx`
+- "Nuevo préstamo" redirige al formulario loan-form con el token
+- "Ver Perfil" y "Datos bancarios" están preparados para futuras implementaciones
+
+---
+
 ## [2025-10-09] - Corrección: Comando "estado" ahora muestra préstamos pendientes
 
 ### 🐛 Corregido

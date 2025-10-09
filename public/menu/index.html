@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="PrestaBot - Gestiona tus préstamos de forma simple">
+    <title>PrestaBot - Menú Principal</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>PrestaBot</h1>
+            <p class="subtitle">Gestiona tus préstamos de forma simple</p>
+        </header>
+
+        <!-- Menu Options -->
+        <main class="menu">
+            <button class="menu-item" id="btn-profile">
+                <div class="menu-icon">👤</div>
+                <div class="menu-content">
+                    <div class="menu-title">Ver Perfil</div>
+                    <div class="menu-description">Gestiona tu información personal</div>
+                </div>
+                <div class="menu-arrow">›</div>
+            </button>
+
+            <button class="menu-item" id="btn-bank">
+                <div class="menu-icon">💳</div>
+                <div class="menu-content">
+                    <div class="menu-title">Datos bancarios</div>
+                    <div class="menu-description">Administra tus cuentas bancarias</div>
+                </div>
+                <div class="menu-arrow">›</div>
+            </button>
+
+            <button class="menu-item" id="btn-loan">
+                <div class="menu-icon">💰</div>
+                <div class="menu-content">
+                    <div class="menu-title">Nuevo préstamo</div>
+                    <div class="menu-description">Registra un préstamo rápidamente</div>
+                </div>
+                <div class="menu-arrow">›</div>
+            </button>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Powered by PrestaBot</p>
+        </footer>
+    </div>
+
+    <!-- Loader -->
+    <div class="loader hidden" id="loader">
+        <div class="spinner"></div>
+        <p>Cargando...</p>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
