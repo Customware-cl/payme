@@ -1424,8 +1424,59 @@ async function processInboundMessage(
                     console.error('[ENGAGEMENT] Exception generating menu token:', engagementTokenError);
                     // Si falla, no bloquear - el mensaje de confirmación ya se envió
                   }
+                } else if (count > 1) {
+                  console.log('[CONTINUITY] Returning user detected, sending continuity message');
+
+                  // Generar token del menú web para continuidad
+                  try {
+                    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+                    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+                    const continuityTokenResponse = await fetch(
+                      `${supabaseUrl}/functions/v1/generate-menu-token`,
+                      {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${supabaseServiceKey}`
+                        },
+                        body: JSON.stringify({
+                          tenant_id: tenant.id,
+                          contact_id: contact.id
+                        })
+                      }
+                    );
+
+                    const continuityTokenData = await continuityTokenResponse.json();
+
+                    if (continuityTokenData.success && continuityTokenData.data.url) {
+                      const continuityMenuUrl = continuityTokenData.data.url;
+                      console.log('[CONTINUITY] Menu URL generated:', continuityMenuUrl);
+
+                      // Preparar mensaje de continuidad con botón CTA URL
+                      interactiveResponse = {
+                        type: 'cta_url',
+                        body: {
+                          text: 'Confirmado! ✅\n\nTu préstamo está activo. Gestiona todos tus acuerdos desde la app.\n\n⏱️ Válido por 1 hora.'
+                        },
+                        action: {
+                          name: 'cta_url',
+                          parameters: {
+                            display_text: 'Ir a la app',
+                            url: continuityMenuUrl
+                          }
+                        }
+                      };
+                    } else {
+                      console.error('[CONTINUITY] Error generating menu token:', continuityTokenData);
+                      // Si falla, no bloquear - el mensaje de confirmación ya se envió
+                    }
+                  } catch (continuityTokenError) {
+                    console.error('[CONTINUITY] Exception generating menu token:', continuityTokenError);
+                    // Si falla, no bloquear - el mensaje de confirmación ya se envió
+                  }
                 } else {
-                  console.log('[ENGAGEMENT] Not first confirmation, skipping engagement message');
+                  console.log('[ENGAGEMENT] Count is 0 or invalid, skipping post-confirmation message');
                 }
               } catch (engagementError) {
                 console.error('[ENGAGEMENT] Error checking confirmations:', engagementError);

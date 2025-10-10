@@ -49,6 +49,35 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
 - Tasa de creación de primer préstamo propio post-confirmación
 - Tiempo entre confirmación y primera acción en la app
 
+### ➕ Añadido en esta versión
+- **Mensaje de continuidad para usuarios antiguos**
+  - Ahora también se envía mensaje post-confirmación para usuarios con historial (count > 1)
+  - **Trigger:** Se envía cuando count > 1 (usuarios que ya confirmaron préstamos anteriormente)
+  - **Formato:** Mismo sistema (botón CTA URL), diferente tono
+  - **Texto:** "Confirmado! ✅\n\nTu préstamo está activo. Gestiona todos tus acuerdos desde la app.\n\n⏱️ Válido por 1 hora."
+  - **Diferencias con engagement:**
+    - Engagement (count === 1): Tono de invitación/descubrimiento
+    - Continuidad (count > 1): Tono de confirmación/gestión activa
+
+### 🔄 Lógica Completa Post-Confirmación
+```typescript
+if (count === 1) {
+  // Usuarios nuevos → Mensaje de engagement
+  // "Como a ti te prestaron, probablemente tú también prestas..."
+  // Invitación a descubrir la funcionalidad de registro
+} else if (count > 1) {
+  // Usuarios antiguos → Mensaje de continuidad
+  // "Tu préstamo está activo. Gestiona todos tus acuerdos..."
+  // Refuerzo del valor y recordatorio de la app
+}
+```
+
+### 📍 Ubicación Técnica
+- **Archivo:** `wa_webhook/index.ts`
+- **Líneas engagement:** 1376-1426
+- **Líneas continuidad:** 1427-1477
+- **Logs:** `[ENGAGEMENT]` para nuevos, `[CONTINUITY]` para antiguos
+
 ---
 
 ## [2025-10-09] - FIX CRÍTICO: Duplicación de código de país + Formato teléfono
