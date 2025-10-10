@@ -57,9 +57,7 @@ function handleProfileClick() {
 
     console.log('Redirecting to profile:', profileUrl);
 
-    setTimeout(() => {
-        window.location.href = profileUrl;
-    }, 300);
+    window.location.href = profileUrl;
 }
 
 function handleBankDetailsClick() {
@@ -72,9 +70,7 @@ function handleBankDetailsClick() {
 
     console.log('Redirecting to bank details:', bankUrl);
 
-    setTimeout(() => {
-        window.location.href = bankUrl;
-    }, 300);
+    window.location.href = bankUrl;
 }
 
 function handleNewLoanClick() {
@@ -87,10 +83,7 @@ function handleNewLoanClick() {
 
     console.log('Redirecting to loan form:', loanFormUrl);
 
-    // Pequeño delay para que se vea el loader
-    setTimeout(() => {
-        window.location.href = loanFormUrl;
-    }, 300);
+    window.location.href = loanFormUrl;
 }
 
 // Iniciar app cuando el DOM esté listo

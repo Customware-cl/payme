@@ -2,6 +2,33 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-09] - Mejora: Navegación instantánea en menú web
+
+### ⚡ Optimizado
+- **Problema:** Los botones del menú web tenían un delay artificial de 300ms al hacer click
+- **Causa raíz:** Código JavaScript incluía `setTimeout(..., 300)` innecesario en cada handler de botón
+  - `handleProfileClick()` - línea 60
+  - `handleBankDetailsClick()` - línea 73
+  - `handleNewLoanClick()` - línea 86
+  - Comentario original: "para que se vea el loader"
+
+- **Solución:** Eliminación de los delays artificiales
+  - Navegación ahora es **instantánea**
+  - Los navegadores modernos cargan páginas rápidamente sin necesidad de delay
+  - El loader aún se muestra correctamente durante la transición natural
+
+### 🔄 Modificado
+- **`public/menu/app.js`:**
+  - Eliminados 3 `setTimeout` de 300ms
+  - Navegación directa con `window.location.href` sin delays
+
+### ✅ Impacto
+- Mejora de **~300ms** en tiempo de respuesta al hacer click
+- Experiencia de usuario más fluida y rápida
+- Cumple con la promesa de infraestructura veloz (Netlify + Supabase)
+
+---
+
 ## [2025-10-09] - Corrección: Menú web mostraba pantalla en blanco
 
 ### 🐛 Corregido
