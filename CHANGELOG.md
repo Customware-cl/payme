@@ -2,6 +2,77 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-09] - Corrección: Menú web mostraba pantalla en blanco
+
+### 🐛 Corregido
+- **Problema:** Al hacer click en "Ingresar al menú" desde WhatsApp, el navegador mostraba solo el fondo degradado sin ningún contenido
+- **Causa raíz:** Los archivos del menú (`public/menu/*`) no se copiaban al directorio `dist/` durante el build de Netlify
+  - El comando de build solo incluía: `cp -r public/loan-form dist/`
+  - Faltaba: `cp -r public/menu dist/`
+  - Archivos afectados: `index.html`, `app.js`, `styles.css`, `profile.html`, `bank-details.html`, etc.
+  - No existía regla de redirect para `/menu/*` paths
+
+- **Solución:** Actualizar `netlify.toml`
+  - **Build command:** Agregado `&& cp -r public/menu dist/` al comando de build
+  - **Redirects:** Agregada regla específica para `/menu/*` antes del catch-all
+  - Ahora ambos directorios se copian: loan-form Y menu
+
+### 🔄 Modificado
+- **`netlify.toml`:**
+  - Línea 2: Build command ahora copia también `public/menu/`
+  - Líneas 10-13: Nueva regla de redirect para `/menu/*` → `/menu/:splat`
+
+### ✅ Impacto
+- Menú web ahora se muestra correctamente con todos sus elementos:
+  - Header "PrestaBot"
+  - Botón "👤 Ver Perfil"
+  - Botón "💳 Datos bancarios"
+  - Botón "💰 Nuevo préstamo"
+  - Footer con branding
+- Usuarios pueden acceder y navegar el menú sin errores
+- Flujo completo WhatsApp → CTA URL → Menú Web funcional
+
+### 📦 Deploy Info
+- **Archivos modificados:** `netlify.toml`
+- **Próximo paso:** Deploy a Netlify para aplicar cambios
+- **Verificación:** Acceder desde WhatsApp usando botón "Ingresar al menú"
+
+---
+
+## [2025-10-09] - Corrección: Doble mensaje en comando "hola"
+
+### 🐛 Corregido
+- **Problema:** El comando "hola" enviaba DOS mensajes en lugar de uno:
+  1. Mensaje interactivo con botón CTA URL (correcto)
+  2. Mensaje de texto genérico "Gracias por tu consulta..." (incorrecto)
+
+- **Causa raíz:** El flujo de control no verificaba si `interactiveResponse` estaba establecido antes de ejecutar el sistema de flujos conversacionales
+  - El código asignaba `interactiveResponse` en línea 270 ✓
+  - Pero en línea 426 solo verificaba `if (!responseMessage)` ✗
+  - Resultado: El IntentDetector procesaba "hola" como "general_inquiry" y enviaba un segundo mensaje
+
+- **Solución:** Modificar la condición en línea 426
+  - Antes: `if (!responseMessage)`
+  - Después: `if (!responseMessage && !interactiveResponse)`
+  - Ahora el flujo conversacional NO se ejecuta si ya se preparó una respuesta interactiva
+
+### 🔄 Modificado
+- **`wa_webhook/index.ts`:**
+  - Línea 426: Agregada verificación de `!interactiveResponse` a la condición
+  - Previene procesamiento duplicado cuando se envía botón CTA URL
+
+### ✅ Impacto
+- Usuario ahora recibe SOLO el botón "Ingresar al menú" al escribir "hola"
+- Eliminado mensaje genérico que sobrescribía la experiencia del botón
+- Flujo más limpio y profesional
+
+### 📦 Deploy Info
+- **Edge Function a desplegar:** `wa_webhook`
+  - Cambio: 1 línea modificada (control flow)
+  - Comando: `npx supabase functions deploy wa_webhook --no-verify-jwt`
+
+---
+
 ## [2025-10-09] - Mensaje de bienvenida con botón directo al Menú Web
 
 ### ✨ Añadido

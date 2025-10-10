@@ -1,0 +1,21 @@
+[build]
+  command = "npm run build && cp -r public/loan-form dist/ && cp -r public/menu dist/"
+  publish = "dist"
+
+[[redirects]]
+  from = "/loan-form/*"
+  to = "/loan-form/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/menu/*"
+  to = "/menu/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[build.environment]
+  NODE_VERSION = "18"
