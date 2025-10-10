@@ -181,9 +181,10 @@ serve(async (req: Request) => {
         console.log('[LOAN_WEB_FORM] Excluding lender contact:', tokenData.lenderContactId);
 
         // Obtener contactos del tenant (excluir al lender)
+        // Con join a contact_profiles para obtener phone_e164
         const { data: contacts, error: contactsError } = await supabase
-          .from('contacts')
-          .select('id, name, phone_e164')
+          .from('tenant_contacts')
+          .select('id, name, contact_profiles(phone_e164)')
           .eq('tenant_id', tokenData.tenantId)
           .neq('id', tokenData.lenderContactId)
           .order('name', { ascending: true })
@@ -199,7 +200,7 @@ serve(async (req: Request) => {
         const contactsList = (contacts || []).map(c => ({
           id: c.id,
           name: c.name,
-          phone: c.phone_e164 || ''
+          phone: c.contact_profiles?.phone_e164 || ''
         }));
 
         console.log('[LOAN_WEB_FORM] Returning contacts list');

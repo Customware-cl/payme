@@ -78,11 +78,11 @@ export class FlowHandlers {
       let contact = null;
 
       if (context.contact_id) {
-        // Caso 1: Ya tenemos contact_id (contacto existente)
-        console.log('Using existing contact_id:', context.contact_id);
+        // Caso 1: Ya tenemos contact_id (que es tenant_contact_id)
+        console.log('Using existing tenant_contact_id:', context.contact_id);
         const { data: existingContact } = await this.supabase
-          .from('contacts')
-          .select('*')
+          .from('tenant_contacts')
+          .select('*, contact_profiles(phone_e164, telegram_id)')
           .eq('id', context.contact_id)
           .single();
 
@@ -105,19 +105,51 @@ export class FlowHandlers {
           phoneNumber = parsePhoneNumber(context.new_contact_phone);
           console.log('Using provided phone:', phoneNumber);
         } else {
-          // Caso 2b: Sin teléfono, usar placeholder
-          const timestamp = Date.now().toString().slice(-10);
-          const random = Math.floor(Math.random() * 100).toString().padStart(2, '0');
-          phoneNumber = `+PEND${timestamp}${random}`;
-          console.log('Using placeholder phone:', phoneNumber);
+          // Caso 2b: Sin teléfono, usar null (permitido en contact_profiles)
+          phoneNumber = null;
+          console.log('No phone provided, creating profile without phone');
         }
 
-        const { data: newContact, error: createError } = await this.supabase
-          .from('contacts')
+        // Primero crear o encontrar contact_profile
+        let contactProfile = null;
+        if (phoneNumber) {
+          // Buscar si ya existe un profile con este teléfono
+          const { data: existingProfile } = await this.supabase
+            .from('contact_profiles')
+            .select('*')
+            .eq('phone_e164', phoneNumber)
+            .maybeSingle();
+
+          contactProfile = existingProfile;
+        }
+
+        if (!contactProfile) {
+          // Crear nuevo contact_profile
+          const { data: newProfile, error: profileError } = await this.supabase
+            .from('contact_profiles')
+            .insert({
+              phone_e164: phoneNumber
+            })
+            .select()
+            .single();
+
+          if (profileError) {
+            console.error('Error creating contact_profile:', profileError);
+            throw new Error(`Failed to create contact_profile: ${profileError.message}`);
+          }
+
+          contactProfile = newProfile;
+          console.log('Created new contact_profile:', contactProfile.id);
+        }
+
+        // Ahora crear tenant_contact
+        const { data: newTenantContact, error: createError } = await this.supabase
+          .from('tenant_contacts')
           .insert({
             tenant_id: tenantId,
-            phone_e164: phoneNumber,
+            contact_profile_id: contactProfile.id,
             name: contactName,
+            preferred_channel: 'whatsapp',
             opt_in_status: 'pending',
             preferred_language: 'es',
             metadata: {
@@ -125,20 +157,20 @@ export class FlowHandlers {
               needs_phone: !context.new_contact_phone
             }
           })
-          .select()
+          .select('*, contact_profiles(phone_e164, telegram_id)')
           .single();
 
         if (createError) {
-          console.error('Error creating contact:', createError);
-          throw new Error(`Failed to create contact: ${createError.message}`);
+          console.error('Error creating tenant_contact:', createError);
+          throw new Error(`Failed to create tenant_contact: ${createError.message}`);
         }
 
-        if (!newContact) {
-          throw new Error('Contact insert returned null');
+        if (!newTenantContact) {
+          throw new Error('Tenant contact insert returned null');
         }
 
-        contact = newContact;
-        console.log('Created new contact:', contact.id);
+        contact = newTenantContact;
+        console.log('Created new tenant_contact:', contact.id);
 
       } else {
         throw new Error('Neither contact_id nor temp_contact_name provided in context');
@@ -165,8 +197,8 @@ export class FlowHandlers {
         .insert({
           id: agreementId,
           tenant_id: tenantId,
-          contact_id: contact.id,
-          lender_contact_id: context.lender_contact_id || null, // Quien presta (quien habla por WhatsApp)
+          tenant_contact_id: contact.id, // Borrower como tenant_contact_id
+          lender_tenant_contact_id: context.lender_contact_id || null, // Lender como tenant_contact_id
           created_by: ownerUser.id,
           type: 'loan',
           title: title,
@@ -261,7 +293,7 @@ export class FlowHandlers {
         .from('agreements')
         .select('*')
         .eq('tenant_id', tenantId)
-        .eq('contact_id', contactId)
+        .eq('tenant_contact_id', contactId) // Buscar por tenant_contact_id
         .eq('status', 'active')
         .order('created_at', { ascending: false })
         .limit(1)
@@ -370,23 +402,24 @@ export class FlowHandlers {
       if (/^\+?\d+$/.test(contactInfo.replace(/[\s\-()]/g, ''))) {
         const formattedPhone = parsePhoneNumber(contactInfo);
 
+        // Buscar por teléfono en tenant_contacts via contact_profile
         const { data: existingContact } = await this.supabase
-          .from('contacts')
-          .select('*')
+          .from('tenant_contacts')
+          .select('*, contact_profiles!inner(phone_e164)')
           .eq('tenant_id', tenantId)
-          .eq('phone_e164', formattedPhone)
+          .eq('contact_profiles.phone_e164', formattedPhone)
           .maybeSingle();
 
-        contact = existingContact || await this.createContact(tenantId, formattedPhone, `Contacto ${formattedPhone}`);
+        contact = existingContact || await this.createTenantContact(tenantId, formattedPhone, `Contacto ${formattedPhone}`);
       } else {
         const { data: existingContact } = await this.supabase
-          .from('contacts')
-          .select('*')
+          .from('tenant_contacts')
+          .select('*, contact_profiles(phone_e164)')
           .eq('tenant_id', tenantId)
           .ilike('name', `%${contactInfo}%`)
           .maybeSingle();
 
-        contact = existingContact || await this.createContact(tenantId, '+52PENDING', contactInfo);
+        contact = existingContact || await this.createTenantContact(tenantId, null, contactInfo);
       }
 
       // 3. Crear regla de recurrencia basada en la frecuencia
@@ -400,7 +433,7 @@ export class FlowHandlers {
         .insert({
           id: agreementId,
           tenant_id: tenantId,
-          contact_id: contact.id,
+          tenant_contact_id: contact.id, // Usar tenant_contact_id
           created_by: ownerUser.id,
           type: 'service',
           title: `Servicio: ${context.service_description}`,
@@ -475,21 +508,45 @@ export class FlowHandlers {
 
   // Funciones auxiliares privadas
 
-  private async createContact(tenantId: string, phone: string, name: string): Promise<any> {
-    const { data: newContact } = await this.supabase
-      .from('contacts')
+  private async createTenantContact(tenantId: string, phone: string | null, name: string): Promise<any> {
+    // Primero crear o encontrar contact_profile
+    let contactProfile = null;
+    if (phone) {
+      const { data: existingProfile } = await this.supabase
+        .from('contact_profiles')
+        .select('*')
+        .eq('phone_e164', phone)
+        .maybeSingle();
+
+      contactProfile = existingProfile;
+    }
+
+    if (!contactProfile) {
+      const { data: newProfile } = await this.supabase
+        .from('contact_profiles')
+        .insert({ phone_e164: phone })
+        .select()
+        .single();
+
+      contactProfile = newProfile;
+    }
+
+    // Crear tenant_contact
+    const { data: newTenantContact } = await this.supabase
+      .from('tenant_contacts')
       .insert({
         tenant_id: tenantId,
-        phone_e164: phone,
+        contact_profile_id: contactProfile.id,
         name: name,
+        preferred_channel: 'whatsapp',
         opt_in_status: 'pending',
         preferred_language: 'es',
         metadata: { created_from: 'conversation_flow' }
       })
-      .select()
+      .select('*, contact_profiles(phone_e164)')
       .single();
 
-    return newContact;
+    return newTenantContact;
   }
 
   private async setupDefaultReminders(agreementId: string, tenantId: string): Promise<void> {
@@ -630,7 +687,8 @@ export class FlowHandlers {
       console.log('[NOTIFICATION] Sending loan confirmation to borrower:', borrowerContact.id);
 
       // 1. Verificar que el contacto tenga WhatsApp ID o teléfono válido
-      if (!borrowerContact.phone_e164 || borrowerContact.phone_e164.startsWith('+PEND')) {
+      const phoneNumber = borrowerContact.contact_profiles?.phone_e164;
+      if (!phoneNumber) {
         console.log('[NOTIFICATION] Borrower has no valid phone number, skipping notification');
         return;
       }
@@ -647,11 +705,11 @@ export class FlowHandlers {
         return;
       }
 
-      // 3. Obtener información del prestamista (lender)
+      // 3. Obtener información del prestamista (lender) desde tenant_contacts
       let lenderName = 'Alguien';
       if (context.lender_contact_id) {
         const { data: lenderContact } = await this.supabase
-          .from('contacts')
+          .from('tenant_contacts')
           .select('name')
           .eq('id', context.lender_contact_id)
           .single();
@@ -691,7 +749,7 @@ export class FlowHandlers {
       const payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
-        to: borrowerContact.phone_e164.replace('+', ''),
+        to: phoneNumber.replace('+', ''),
         type: 'template',
         template: templateParams
       };

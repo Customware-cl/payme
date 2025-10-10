@@ -1,0 +1,605 @@
+{
+  "version": "7.2",
+  "data_api_version": "3.0",
+  "routing_model": {
+    "LOAN_TYPE_SELECT": ["LOAN_DETAILS"],
+    "LOAN_DETAILS": ["CONTACT_SELECT"],
+    "CONTACT_SELECT": ["NEW_CONTACT_FORM", "DUE_DATE_SELECT"],
+    "NEW_CONTACT_FORM": ["DUE_DATE_SELECT"],
+    "DUE_DATE_SELECT": ["SUMMARY_SCREEN"]
+  },
+  "screens": [
+    {
+      "id": "LOAN_TYPE_SELECT",
+      "title": "Nuevo préstamo",
+      "data": {
+        "contacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "main-content": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              },
+              "on-click-action": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "next": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "payload": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "__example__": [
+            {
+              "id": "add_new",
+              "main-content": {
+                "title": "➕ Agregar nuevo",
+                "description": "Registrar persona nueva"
+              },
+              "on-click-action": {
+                "name": "navigate",
+                "next": {
+                  "type": "screen",
+                  "name": "NEW_CONTACT_FORM"
+                },
+                "payload": {
+                  "loan_type": "money",
+                  "loan_detail": "15000"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "type_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "¿Qué vas a prestar?"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Registra tu préstamo para recibir recordatorios automáticos 👇"
+              },
+              {
+                "type": "RadioButtonsGroup",
+                "name": "loan_type",
+                "label": "Tipo de préstamo",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "money",
+                    "title": "💰 Dinero"
+                  },
+                  {
+                    "id": "object",
+                    "title": "📦 Un objeto"
+                  },
+                  {
+                    "id": "other",
+                    "title": "✏️ Otra cosa"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "LOAN_DETAILS"
+                  },
+                  "payload": {
+                    "loan_type": "${form.loan_type}",
+                    "contacts": "${data.contacts}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "LOAN_DETAILS",
+      "title": "Nuevo préstamo",
+      "data": {
+        "loan_type": {
+          "type": "string",
+          "__example__": "money"
+        },
+        "contacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "main-content": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              },
+              "on-click-action": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "next": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "payload": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "__example__": [
+            {
+              "id": "add_new",
+              "main-content": {
+                "title": "➕ Agregar nuevo",
+                "description": "Registrar persona nueva"
+              },
+              "on-click-action": {
+                "name": "navigate",
+                "next": {
+                  "type": "screen",
+                  "name": "NEW_CONTACT_FORM"
+                },
+                "payload": {
+                  "loan_type": "money",
+                  "loan_detail": "15000"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "details_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Detalles del préstamo"
+              },
+              {
+                "type": "TextInput",
+                "name": "loan_detail",
+                "label": "Monto u objeto",
+                "input-type": "text",
+                "required": true,
+                "helper-text": "Ingresa el monto (ej: 15000) o describe el objeto (ej: Taladro Bosch)"
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "CONTACT_SELECT"
+                  },
+                  "payload": {
+                    "loan_type": "${data.loan_type}",
+                    "loan_detail": "${form.loan_detail}",
+                    "contacts": "${data.contacts}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "CONTACT_SELECT",
+      "title": "Seleccionar contacto",
+      "data": {
+        "loan_type": {
+          "type": "string",
+          "__example__": "money"
+        },
+        "loan_detail": {
+          "type": "string",
+          "__example__": "15000"
+        },
+        "contacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "main-content": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              },
+              "on-click-action": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "next": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "payload": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "__example__": [
+            {
+              "id": "add_new",
+              "main-content": {
+                "title": "➕ Agregar nuevo",
+                "description": "Registrar persona nueva"
+              },
+              "on-click-action": {
+                "name": "navigate",
+                "next": {
+                  "type": "screen",
+                  "name": "NEW_CONTACT_FORM"
+                },
+                "payload": {
+                  "loan_type": "money",
+                  "loan_detail": "15000"
+                }
+              }
+            },
+            {
+              "id": "contact_123",
+              "main-content": {
+                "title": "Juan Pérez",
+                "description": "912345678"
+              },
+              "on-click-action": {
+                "name": "navigate",
+                "next": {
+                  "type": "screen",
+                  "name": "DUE_DATE_SELECT"
+                },
+                "payload": {
+                  "loan_type": "money",
+                  "loan_detail": "15000",
+                  "contact_id": "contact_123",
+                  "contact_name": "Juan Pérez",
+                  "contact_phone": "+56912345678",
+                  "new_contact": false
+                }
+              }
+            }
+          ]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "contacts_form",
+            "children": [
+              {
+                "type": "NavigationList",
+                "name": "contacts_list",
+                "label": "¿A quién le vas a prestar?",
+                "list-items": "${data.contacts}"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "NEW_CONTACT_FORM",
+      "title": "Nuevo préstamo",
+      "data": {
+        "loan_type": {
+          "type": "string",
+          "__example__": "money"
+        },
+        "loan_detail": {
+          "type": "string",
+          "__example__": "15000"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "contact_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Nuevo contacto"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Agrega los datos para crear el contacto"
+              },
+              {
+                "type": "TextInput",
+                "name": "contact_name",
+                "label": "Nombre completo",
+                "input-type": "text",
+                "required": true,
+                "helper-text": "Usa el nombre que usas normalmente para esta persona"
+              },
+              {
+                "type": "TextInput",
+                "name": "contact_phone",
+                "label": "Teléfono (opcional)",
+                "input-type": "phone",
+                "required": false,
+                "helper-text": "Incluye +56 9 para enviar recordatorios por WhatsApp"
+              },
+              {
+                "type": "Footer",
+                "label": "Guardar contacto",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "DUE_DATE_SELECT"
+                  },
+                  "payload": {
+                    "loan_type": "${data.loan_type}",
+                    "loan_detail": "${data.loan_detail}",
+                    "contact_name": "${form.contact_name}",
+                    "contact_phone": "${form.contact_phone}",
+                    "new_contact": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "DUE_DATE_SELECT",
+      "title": "Nuevo préstamo",
+      "data": {
+        "loan_type": {
+          "type": "string",
+          "__example__": "money"
+        },
+        "loan_detail": {
+          "type": "string",
+          "__example__": "15000"
+        },
+        "contact_id": {
+          "type": "string",
+          "__example__": ""
+        },
+        "contact_name": {
+          "type": "string",
+          "__example__": "Juan Pérez"
+        },
+        "contact_phone": {
+          "type": "string",
+          "__example__": ""
+        },
+        "new_contact": {
+          "type": "boolean",
+          "__example__": false
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "date_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "¿Cuándo debe devolvértelo?"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Te enviaremos un recordatorio en esa fecha 🔔"
+              },
+              {
+                "type": "RadioButtonsGroup",
+                "name": "date_option",
+                "label": "Fecha devolución",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "tomorrow",
+                    "title": "🗓️ Mañana"
+                  },
+                  {
+                    "id": "end_of_month",
+                    "title": "📅 Fin de mes"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "SUMMARY_SCREEN"
+                  },
+                  "payload": {
+                    "loan_type": "${data.loan_type}",
+                    "loan_detail": "${data.loan_detail}",
+                    "contact_id": "${data.contact_id}",
+                    "contact_name": "${data.contact_name}",
+                    "contact_phone": "${data.contact_phone}",
+                    "new_contact": "${data.new_contact}",
+                    "date_option": "${form.date_option}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SUMMARY_SCREEN",
+      "title": "Nuevo préstamo",
+      "terminal": true,
+      "data": {
+        "loan_type": {
+          "type": "string",
+          "__example__": "money"
+        },
+        "loan_detail": {
+          "type": "string",
+          "__example__": "15000"
+        },
+        "contact_id": {
+          "type": "string",
+          "__example__": ""
+        },
+        "contact_name": {
+          "type": "string",
+          "__example__": "Juan Pérez"
+        },
+        "contact_phone": {
+          "type": "string",
+          "__example__": ""
+        },
+        "new_contact": {
+          "type": "boolean",
+          "__example__": false
+        },
+        "date_option": {
+          "type": "string",
+          "__example__": "tomorrow"
+        },
+        "formatted_what": {
+          "type": "string",
+          "__example__": "$15.000"
+        },
+        "formatted_when": {
+          "type": "string",
+          "__example__": "Mañana (7 Oct)"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "summary_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "✅ Confirma tu préstamo"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Revisa que todo esté correcto antes de guardar"
+              },
+              {
+                "type": "TextBody",
+                "text": "📝 Resumen del préstamo:\n\n💰 Qué: ${data.formatted_what}\n\n👤 Quién: ${data.contact_name}\n\n📅 Cuándo: ${data.formatted_when}"
+              },
+              {
+                "type": "TextCaption",
+                "text": "💡 Recibirás un recordatorio en la fecha acordada"
+              },
+              {
+                "type": "Footer",
+                "label": "Crear préstamo",
+                "on-click-action": {
+                  "name": "data_exchange",
+                  "payload": {
+                    "loan_type": "${data.loan_type}",
+                    "loan_detail": "${data.loan_detail}",
+                    "contact_id": "${data.contact_id}",
+                    "contact_name": "${data.contact_name}",
+                    "contact_phone": "${data.contact_phone}",
+                    "new_contact": "${data.new_contact}",
+                    "date_option": "${data.date_option}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

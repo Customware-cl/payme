@@ -164,39 +164,81 @@ async function processInboundMessage(
       return { success: false, error: 'Tenant not found' };
     }
 
-    // 2. Obtener o crear contacto
+    // 2. Obtener o crear tenant_contact (patrón tenant_contacts)
     const formattedPhone = parsePhoneNumber(message.from);
     const contactName = contacts[0]?.profile?.name || 'Usuario';
 
-    let { data: contact } = await supabase
-      .from('contacts')
+    // 2.1. Primero buscar el contact_profile por teléfono
+    let { data: contactProfile } = await supabase
+      .from('contact_profiles')
       .select('*')
-      .eq('tenant_id', tenant.id)
       .eq('phone_e164', formattedPhone)
-      .single();
+      .maybeSingle();
 
-    if (!contact) {
-      const { data: newContact } = await supabase
-        .from('contacts')
+    // 2.2. Si encontramos el profile, buscar el tenant_contact
+    let tenantContact = null;
+    if (contactProfile) {
+      const { data: existingTenantContact } = await supabase
+        .from('tenant_contacts')
+        .select('*, contact_profiles(phone_e164, telegram_id)')
+        .eq('tenant_id', tenant.id)
+        .eq('contact_profile_id', contactProfile.id)
+        .maybeSingle();
+
+      tenantContact = existingTenantContact;
+    }
+
+    if (!tenantContact) {
+      // 2.3. No existe tenant_contact, crear contact_profile si no existe
+      if (!contactProfile) {
+        // Crear nuevo contact_profile (global)
+        const { data: newProfile, error: profileError } = await supabase
+          .from('contact_profiles')
+          .insert({
+            phone_e164: formattedPhone
+          })
+          .select()
+          .single();
+
+        if (profileError || !newProfile) {
+          console.error('Error creating contact_profile:', profileError);
+          throw new Error('Failed to create contact_profile');
+        }
+
+        contactProfile = newProfile;
+        console.log('Created new contact_profile:', contactProfile.id);
+      }
+
+      // 2.4. Crear tenant_contact (personalizado para este tenant)
+      const { data: newTenantContact, error: tenantContactError } = await supabase
+        .from('tenant_contacts')
         .insert({
           tenant_id: tenant.id,
-          phone_e164: formattedPhone,
+          contact_profile_id: contactProfile.id,
           name: contactName,
           whatsapp_id: message.from,
           opt_in_status: 'pending',
           preferred_language: 'es',
           metadata: {}
         })
-        .select()
+        .select('*, contact_profiles(phone_e164, telegram_id)')
         .single();
 
-      contact = newContact;
-      console.log('Created new contact:', contact?.id);
+      if (tenantContactError || !newTenantContact) {
+        console.error('Error creating tenant_contact:', tenantContactError);
+        throw new Error('Failed to create tenant_contact');
+      }
+
+      tenantContact = newTenantContact;
+      console.log('Created new tenant_contact:', tenantContact.id);
     }
 
-    if (!contact) {
-      throw new Error('Failed to create contact');
+    if (!tenantContact) {
+      throw new Error('Failed to get or create tenant_contact');
     }
+
+    // Usar tenantContact como 'contact' para el resto del código
+    const contact = tenantContact;
 
     // 3. Registrar mensaje entrante
     await supabase
@@ -325,15 +367,15 @@ async function processInboundMessage(
         // Buscar préstamos que YO hice (lender)
         const { data: lentAgreements } = await supabase
           .from('agreements')
-          .select('*, borrower:contact_id(name)')
-          .eq('lender_contact_id', contact.id)
+          .select('*, borrower:tenant_contacts!tenant_contact_id(name)')
+          .eq('lender_tenant_contact_id', contact.id)
           .in('status', ['active', 'pending_confirmation']);
 
         // Buscar préstamos que me hicieron (borrower)
         const { data: borrowedAgreements } = await supabase
           .from('agreements')
-          .select('*, lender:lender_contact_id(name)')
-          .eq('contact_id', contact.id)
+          .select('*, lender:tenant_contacts!lender_tenant_contact_id(name)')
+          .eq('tenant_contact_id', contact.id)
           .in('status', ['active', 'pending_confirmation']);
 
         const hasLent = lentAgreements && lentAgreements.length > 0;
@@ -408,7 +450,7 @@ async function processInboundMessage(
             Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
             tenant.id,
             contact.id,
-            contact.phone_e164,
+            contact.contact_profiles.phone_e164,
             contact.name
           );
 
@@ -667,7 +709,7 @@ async function processInboundMessage(
 
           // Buscar el nombre del contacto seleccionado
           const { data: selectedContact } = await supabase
-            .from('contacts')
+            .from('tenant_contacts')
             .select('name')
             .eq('id', selectedContactId)
             .single();
@@ -1000,15 +1042,15 @@ async function processInboundMessage(
           // Buscar préstamos que YO hice (lender)
           const { data: lentAgreementsBtn } = await supabase
             .from('agreements')
-            .select('*, borrower:contact_id(name)')
-            .eq('lender_contact_id', contact.id)
+            .select('*, borrower:tenant_contacts!tenant_contact_id(name)')
+            .eq('lender_tenant_contact_id', contact.id)
             .in('status', ['active', 'pending_confirmation']);
 
           // Buscar préstamos que me hicieron (borrower)
           const { data: borrowedAgreementsBtn } = await supabase
             .from('agreements')
-            .select('*, lender:lender_contact_id(name)')
-            .eq('contact_id', contact.id)
+            .select('*, lender:tenant_contacts!lender_tenant_contact_id(name)')
+            .eq('tenant_contact_id', contact.id)
             .in('status', ['active', 'pending_confirmation']);
 
           const hasLentBtn = lentAgreementsBtn && lentAgreementsBtn.length > 0;
@@ -1153,7 +1195,7 @@ async function processInboundMessage(
               Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
               tenant.id,
               contact.id,
-              contact.phone_e164,
+              contact.contact_profiles.phone_e164,
               contact.name
             );
 
@@ -1230,7 +1272,7 @@ async function processInboundMessage(
 
         case 'opt_in_yes':
           await supabase
-            .from('contacts')
+            .from('tenant_contacts')
             .update({
               opt_in_status: 'opted_in',
               opt_in_date: new Date().toISOString()
@@ -1251,7 +1293,7 @@ async function processInboundMessage(
 
         case 'opt_in_no':
           await supabase
-            .from('contacts')
+            .from('tenant_contacts')
             .update({
               opt_in_status: 'opted_out',
               opt_out_date: new Date().toISOString()
@@ -1266,7 +1308,7 @@ async function processInboundMessage(
           const { data: loanAgreement } = await supabase
             .from('agreements')
             .select('*')
-            .eq('contact_id', contact.id)
+            .eq('tenant_contact_id', contact.id)
             .eq('type', 'loan')
             .eq('status', 'active')
             .order('created_at', { ascending: false })
@@ -1329,7 +1371,7 @@ async function processInboundMessage(
             const { data: agreement } = await supabase
               .from('agreements')
               .select('*')
-              .eq('contact_id', contact.id)
+              .eq('tenant_contact_id', contact.id)
               .in('status', ['pending_confirmation', 'active'])
               .order('created_at', { ascending: false })
               .limit(1)
@@ -1347,14 +1389,14 @@ async function processInboundMessage(
                 .eq('id', agreement.id);
 
               // Notificar al lender (prestamista)
-              if (agreement.lender_contact_id) {
+              if (agreement.lender_tenant_contact_id) {
                 const lenderMessage = `✅ ${contact.name} confirmó el préstamo de ${agreement.amount ? '$' + formatMoney(agreement.amount) : agreement.item_description}.\n\nLos recordatorios están activos.`;
 
                 // Enviar mensaje al lender
                 const windowManager = new WhatsAppWindowManager(supabase.supabaseUrl, supabase.supabaseKey);
                 await windowManager.sendMessage(
                   tenant.id,
-                  agreement.lender_contact_id,
+                  agreement.lender_tenant_contact_id,
                   lenderMessage,
                   { priority: 'high' }
                 );
@@ -1367,7 +1409,7 @@ async function processInboundMessage(
                 const { count } = await supabase
                   .from('agreements')
                   .select('*', { count: 'exact', head: true })
-                  .eq('contact_id', contact.id)
+                  .eq('tenant_contact_id', contact.id)
                   .eq('borrower_confirmed', true);
 
                 console.log('[ENGAGEMENT] Total confirmations for contact:', count);
@@ -1499,8 +1541,8 @@ async function processInboundMessage(
             // Buscar el acuerdo más reciente del contacto
             const { data: agreement } = await supabase
               .from('agreements')
-              .select('*, lender:lender_contact_id(name)')
-              .eq('contact_id', contact.id)
+              .select('*, lender:tenant_contacts!lender_tenant_contact_id(name)')
+              .eq('tenant_contact_id', contact.id)
               .in('status', ['pending_confirmation', 'active'])
               .order('created_at', { ascending: false })
               .limit(1)
@@ -1518,13 +1560,13 @@ async function processInboundMessage(
                 .eq('id', agreement.id);
 
               // Notificar al lender
-              if (agreement.lender_contact_id) {
+              if (agreement.lender_tenant_contact_id) {
                 const lenderMessage = `❌ ${contact.name} rechazó el préstamo de ${agreement.amount ? '$' + formatMoney(agreement.amount) : agreement.item_description}.\n\nSe ha cancelado el recordatorio.`;
 
                 const windowManager = new WhatsAppWindowManager(supabase.supabaseUrl, supabase.supabaseKey);
                 await windowManager.sendMessage(
                   tenant.id,
-                  agreement.lender_contact_id,
+                  agreement.lender_tenant_contact_id,
                   lenderMessage,
                   { priority: 'high' }
                 );
@@ -1567,18 +1609,20 @@ async function processInboundMessage(
               // Estamos en un flujo que espera contacto
               console.log('Active flow waiting for contact, processing shared contact data');
 
-              // Primero, buscar si existe un contacto con ese nombre o teléfono
+              // Primero, buscar si existe un tenant_contact con ese nombre o teléfono
               const formattedPhone = parsePhoneNumber(contactPhone);
 
+              // Buscar por teléfono (join con contact_profiles)
               const { data: existingContactByPhone } = await supabase
-                .from('contacts')
-                .select('*')
+                .from('tenant_contacts')
+                .select('*, contact_profiles!inner(phone_e164)')
                 .eq('tenant_id', tenant.id)
-                .eq('phone_e164', formattedPhone)
+                .eq('contact_profiles.phone_e164', formattedPhone)
                 .maybeSingle();
 
+              // Buscar por nombre (dentro de tenant_contacts)
               const { data: existingContactByName } = await supabase
-                .from('contacts')
+                .from('tenant_contacts')
                 .select('*')
                 .eq('tenant_id', tenant.id)
                 .ilike('name', `%${contactName}%`)
@@ -1633,30 +1677,65 @@ async function processInboundMessage(
                   }
                 }
               } else {
-                // Contacto NO existe, crear el contacto con nombre y teléfono del contacto compartido
+                // Contacto NO existe, crear contact_profile + tenant_contact (patrón tenant_contacts)
                 console.log('Contact not found, creating new contact with shared data:', { name: contactName, phone: formattedPhone });
 
-                const { data: newContact, error: createError } = await supabase
-                  .from('contacts')
-                  .insert({
-                    tenant_id: tenant.id,
-                    phone_e164: formattedPhone,
-                    name: contactName,
-                    opt_in_status: 'pending',
-                    preferred_language: 'es',
-                    metadata: {
-                      created_from: 'shared_contact',
-                      original_wa_id: sharedContact.phones?.[0]?.wa_id
-                    }
-                  })
-                  .select()
-                  .single();
+                // Paso 1: Buscar o crear contact_profile
+                let { data: contactProfile } = await supabase
+                  .from('contact_profiles')
+                  .select('*')
+                  .eq('phone_e164', formattedPhone)
+                  .maybeSingle();
 
-                if (createError || !newContact) {
-                  console.error('Error creating contact from shared contact:', createError);
+                if (!contactProfile) {
+                  const { data: newProfile, error: profileError } = await supabase
+                    .from('contact_profiles')
+                    .insert({ phone_e164: formattedPhone })
+                    .select()
+                    .single();
+
+                  if (profileError || !newProfile) {
+                    console.error('Error creating contact_profile from shared contact:', profileError);
+                    responseMessage = 'Hubo un problema creando el contacto. Por favor intenta de nuevo.';
+                    contactProfile = null;
+                  } else {
+                    contactProfile = newProfile;
+                    console.log('Created new contact_profile:', contactProfile.id);
+                  }
+                }
+
+                // Paso 2: Crear tenant_contact
+                let newContact = null;
+                if (contactProfile) {
+                  const { data: newTenantContact, error: createError } = await supabase
+                    .from('tenant_contacts')
+                    .insert({
+                      tenant_id: tenant.id,
+                      contact_profile_id: contactProfile.id,
+                      name: contactName,
+                      opt_in_status: 'pending',
+                      preferred_language: 'es',
+                      metadata: {
+                        created_from: 'shared_contact',
+                        original_wa_id: sharedContact.phones?.[0]?.wa_id
+                      }
+                    })
+                    .select()
+                    .single();
+
+                  if (createError || !newTenantContact) {
+                    console.error('Error creating tenant_contact from shared contact:', createError);
+                    responseMessage = 'Hubo un problema creando el contacto. Por favor intenta de nuevo.';
+                  } else {
+                    newContact = newTenantContact;
+                    console.log('Created new tenant_contact:', newContact.id, newContact.name);
+                  }
+                }
+
+                if (!newContact) {
                   responseMessage = 'Hubo un problema creando el contacto. Por favor intenta de nuevo.';
                 } else {
-                  console.log('Created new contact:', newContact.id, newContact.name);
+                  console.log('Successfully created tenant_contact for shared contact');
 
                   // Si estamos en awaiting_phone_for_new_contact, actualizar estado directamente
                   if (currentState.current_step === 'awaiting_phone_for_new_contact') {
@@ -1764,7 +1843,7 @@ async function processInboundMessage(
         const payload = {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
-          to: contact.phone_e164.replace('+', ''),
+          to: contact.contact_profiles.phone_e164.replace('+', ''),
           type: 'interactive',
           interactive: interactiveResponse
         };

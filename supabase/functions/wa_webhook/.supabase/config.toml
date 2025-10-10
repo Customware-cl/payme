@@ -1,0 +1,3 @@
+[function]
+# WhatsApp Webhook debe ser público para que Meta/WhatsApp pueda enviarnos mensajes
+verify_jwt = false

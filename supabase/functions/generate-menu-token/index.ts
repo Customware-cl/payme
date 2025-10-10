@@ -53,7 +53,7 @@ serve(async (req: Request) => {
 
     // Validar que el contacto existe
     const { data: contact } = await supabase
-      .from('contacts')
+      .from('tenant_contacts')
       .select('id')
       .eq('id', contact_id)
       .eq('tenant_id', tenant_id)

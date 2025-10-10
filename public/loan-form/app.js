@@ -383,14 +383,12 @@ function setupEventListeners() {
     $('#btn-create-loan').addEventListener('click', createLoan);
 
     // Pantalla 5: Éxito
-    $('#btn-back-to-whatsapp').addEventListener('click', () => {
-        // Intentar cerrar la ventana/tab
-        if (window.opener) {
-            window.close();
-        } else {
-            // Si no se puede cerrar, redirigir a WhatsApp Web
-            window.location.href = 'https://web.whatsapp.com';
-        }
+    $('#btn-back-to-menu-success').addEventListener('click', () => {
+        // Volver al menú principal con el token
+        const menuUrl = state.token
+            ? `/menu?token=${state.token}`
+            : '/menu';
+        window.location.href = menuUrl;
     });
 
     $('#btn-create-another').addEventListener('click', () => {

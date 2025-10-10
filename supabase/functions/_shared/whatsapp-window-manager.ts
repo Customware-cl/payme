@@ -52,7 +52,7 @@ export class WhatsAppWindowManager {
         .from('whatsapp_messages')
         .select('created_at')
         .eq('tenant_id', tenantId)
-        .eq('contact_id', contactId)
+        .eq('tenant_contact_id', contactId)
         .eq('direction', 'inbound')
         .order('created_at', { ascending: false })
         .limit(1)
@@ -248,19 +248,19 @@ export class WhatsAppWindowManager {
         .single();
 
       const { data: contact } = await this.supabase
-        .from('contacts')
-        .select('phone_e164')
+        .from('tenant_contacts')
+        .select('*, contact_profiles(phone_e164)')
         .eq('id', contactId)
         .single();
 
-      if (!tenant?.whatsapp_access_token || !contact?.phone_e164) {
+      if (!tenant?.whatsapp_access_token || !contact?.contact_profiles?.phone_e164) {
         throw new Error('Missing WhatsApp configuration or contact phone');
       }
 
       // Preparar payload para WhatsApp API
       const payload = {
         messaging_product: 'whatsapp',
-        to: contact.phone_e164.replace('+', ''),
+        to: contact.contact_profiles.phone_e164.replace('+', ''),
         type: 'template',
         template: {
           name: templateName,
@@ -301,7 +301,7 @@ export class WhatsAppWindowManager {
         .from('whatsapp_messages')
         .insert({
           tenant_id: tenantId,
-          contact_id: contactId,
+          tenant_contact_id: contactId,
           wa_message_id: result.messages[0].id,
           direction: 'outbound',
           message_type: 'template',
@@ -342,19 +342,19 @@ export class WhatsAppWindowManager {
         .single();
 
       const { data: contact } = await this.supabase
-        .from('contacts')
-        .select('phone_e164')
+        .from('tenant_contacts')
+        .select('*, contact_profiles(phone_e164)')
         .eq('id', contactId)
         .single();
 
-      if (!tenant?.whatsapp_access_token || !contact?.phone_e164) {
+      if (!tenant?.whatsapp_access_token || !contact?.contact_profiles?.phone_e164) {
         throw new Error('Missing WhatsApp configuration or contact phone');
       }
 
       // Preparar payload para mensaje de texto
       const payload = {
         messaging_product: 'whatsapp',
-        to: contact.phone_e164.replace('+', ''),
+        to: contact.contact_profiles.phone_e164.replace('+', ''),
         type: 'text',
         text: { body: message }
       };
@@ -383,7 +383,7 @@ export class WhatsAppWindowManager {
         .from('whatsapp_messages')
         .insert({
           tenant_id: tenantId,
-          contact_id: contactId,
+          tenant_contact_id: contactId,
           wa_message_id: result.messages[0].id,
           direction: 'outbound',
           message_type: 'text',
@@ -514,7 +514,7 @@ export class WhatsAppWindowManager {
   }> {
     // Obtener todos los contactos del tenant
     const { data: contacts } = await this.supabase
-      .from('contacts')
+      .from('tenant_contacts')
       .select('id')
       .eq('tenant_id', tenantId);
 

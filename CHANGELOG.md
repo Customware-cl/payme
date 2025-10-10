@@ -2,6 +2,493 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-10] - 🎨 UX: Mejoras en formulario web de préstamos
+
+### ✨ Mejoras de Experiencia de Usuario
+
+**Pantalla de éxito post-creación:**
+- ✅ Agregado botón "Crear otro préstamo" (acción primaria)
+- ✅ Agregado botón "Volver al menú principal" (acción secundaria)
+- ✅ Eliminado contacto duplicado "Felipe" sin teléfono
+- ✅ Botones reordenados para mejor flujo UX
+
+**Archivos modificados:**
+- `public/loan-form/index.html` - Actualizada estructura de botones
+- `public/loan-form/app.js` - Actualizado handler de `#btn-back-to-menu-success`
+
+**Flujo mejorado:**
+1. Usuario crea préstamo → Pantalla de éxito ✓
+2. Usuario puede crear otro préstamo inmediatamente (reset form)
+3. Usuario puede volver al menú principal preservando el token
+
+---
+
+## [2025-10-10] - 🔧 FIX: Webhook autenticación deshabilitada
+
+### 🔓 Configuración de Webhook Público
+
+**Problema:** wa_webhook retornaba 401 Unauthorized bloqueando mensajes de WhatsApp/Meta
+
+**Solución:**
+- ✅ Creado `wa_webhook/.supabase/config.toml` con `verify_jwt = false`
+- ✅ Re-deployado con flag `--no-verify-jwt`
+- ✅ Webhook ahora es público y accesible para Meta
+
+**Deploy:**
+- ✅ `wa_webhook` (143.5kB) con autenticación JWT deshabilitada
+- **Fecha:** 2025-10-10
+
+---
+
+## [2025-10-10] - 🐛 FIX: Duplicate Key Error en wa_webhook
+
+### 🔧 Corrección Crítica
+
+**Problema:** Error de clave duplicada al recibir mensajes de contactos existentes
+```
+duplicate key value violates unique constraint "tenant_contacts_tenant_id_contact_profile_id_key"
+```
+
+**Causa Raíz:** En `wa_webhook/index.ts` líneas 171-177, se intentaba filtrar `tenant_contacts` por un campo relacionado de `contact_profiles`:
+```typescript
+// ❌ INCORRECTO - No funciona en Supabase
+.eq('contact_profiles.phone_e164', formattedPhone)
+```
+
+**Solución Implementada:** Patrón de búsqueda en dos pasos (líneas 171-189):
+```typescript
+// ✅ CORRECTO
+// 1. Buscar contact_profile por phone_e164
+let { data: contactProfile } = await supabase
+  .from('contact_profiles')
+  .select('*')
+  .eq('phone_e164', formattedPhone)
+  .maybeSingle();
+
+// 2. Si existe profile, buscar tenant_contact por contact_profile_id
+if (contactProfile) {
+  const { data: existingTenantContact } = await supabase
+    .from('tenant_contacts')
+    .select('*, contact_profiles(phone_e164, telegram_id)')
+    .eq('tenant_id', tenant.id)
+    .eq('contact_profile_id', contactProfile.id)  // Filtro directo
+    .maybeSingle();
+}
+```
+
+**Deploy:**
+- ✅ `wa_webhook` (143.5kB) re-deployado con fix
+- **Fecha:** 2025-10-10
+
+---
+
+## [2025-10-10] - 🎉 MIGRACIÓN tenant_contacts COMPLETADA Y DEPLOYADA (100%)
+
+### 🚀 Deploy Exitoso
+
+**Fecha:** 2025-10-10
+**Edge Functions deployadas:**
+- ✅ `wa_webhook` (143.4kB) - Webhook principal del sistema
+- ✅ `menu-data` (72.17kB) - Endpoint de datos del menú web
+- ✅ `generate-menu-token` (69.36kB) - Generador de tokens de acceso
+- ✅ `loan-web-form` (89.65kB) - Formulario web de préstamos
+- ✅ `flows-handler` (97.97kB) - Manejador de WhatsApp Flows
+
+**Total deployado:** 5 Edge Functions con todos los archivos `_shared` actualizados
+
+**Dashboard:** https://supabase.com/dashboard/project/qgjxkszfdoolaxmsupil/functions
+
+---
+
+## [2025-10-10] - MIGRACIÓN tenant_contacts (Desarrollo)
+
+### 🏗️ Arquitectura - Migración 022
+
+**Implementación completa del sistema de contactos multi-tenant** que permite a cada usuario (tenant) mantener nombres personalizados para sus contactos, mientras se previene duplicación de datos globales.
+
+#### Modelo de Datos
+```
+contact_profiles (global)           tenant_contacts (personalizado)
+├─ id                              ├─ id
+├─ phone_e164 (+56962081122)      ├─ tenant_id
+├─ telegram_id                     ├─ contact_profile_id → contact_profiles.id
+├─ first_name                      ├─ name ("Catita Linda", "Amor", etc.)
+└─ created_at                      ├─ opt_in_status
+                                   └─ whatsapp_id
+```
+
+**Ejemplo del sistema funcionando:**
+- Felipe (+56964943476) nombra a contacto (+56962081122) como "Catita Linda"
+- Catherine (misma persona +56962081122) tiene su profile global con "Catherine Pereira"
+- Rodrigo (+56995374930) nombra a Felipe como "Felipe TBK"
+- Cada tenant ve SOLO sus contactos con SUS nombres personalizados
+
+### ✨ Migración 022 Aplicada
+
+**Operaciones ejecutadas:**
+1. ✅ Asegurado que todos los `contacts` tienen `contact_profile_id`
+   - Creados `contact_profiles` para contacts sin profile
+   - Actualizados contacts para apuntar a su profile
+
+2. ✅ Creados `tenant_contacts` para todos los contactos existentes
+   - Migrados desde tabla legacy `contacts`
+   - Mantenidos nombres personalizados por tenant
+   - Preservado historial de opt-in y metadata
+
+3. ✅ Actualizada tabla `agreements` con nuevas foreign keys
+   - Nueva columna: `lender_tenant_contact_id`
+   - Actualizada columna: `tenant_contact_id` (borrower)
+   - Índices creados para performance
+   - Todos los agreements migrados correctamente
+
+4. ✅ Agregado mapeo temporal en `contacts.tenant_contact_id`
+   - Permite migración gradual del código
+   - Backward compatibility durante transición
+
+### 🔄 Código Refactorizado
+
+#### ✅ conversation-manager.ts
+**Cambios en 3 secciones críticas:**
+
+1. **Líneas 408-420:** Lookup de contactos
+   ```typescript
+   // ANTES:
+   .from('contacts')
+   .select('phone_e164, telegram_id')
+
+   // AHORA:
+   .from('tenant_contacts')
+   .select('id, contact_profile_id, contact_profiles(phone_e164, telegram_id)')
+   ```
+
+2. **Líneas 561-585:** Verificación de contactos
+   - Cambio de `contacts` a `tenant_contacts`
+   - Join con `contact_profiles` para datos globales
+
+3. **Líneas 656-668:** Lista de contactos
+   - Query actualizado a `tenant_contacts`
+   - Relación correcta con `contact_profiles`
+
+#### ✅ flow-handlers.ts
+**Refactorización completa del sistema de creación de préstamos:**
+
+1. **Líneas 80-94:** Lookup de contactos existentes
+   - Ahora usa `tenant_contacts` con join a `contact_profiles`
+
+2. **Líneas 96-173:** Creación de nuevos contactos (PATRÓN NUEVO)
+   ```typescript
+   // Paso 1: Crear o encontrar contact_profile (global)
+   let contactProfile = await findOrCreateContactProfile(phoneNumber);
+
+   // Paso 2: Crear tenant_contact (personalizado)
+   const newTenantContact = await createTenantContact({
+     tenant_id: tenantId,
+     contact_profile_id: contactProfile.id,
+     name: contactName, // Nombre personalizado por el tenant
+   });
+   ```
+
+3. **Líneas 195-202:** Creación de agreements
+   ```typescript
+   .insert({
+     tenant_contact_id: contact.id,           // Borrower (nuevo)
+     lender_tenant_contact_id: lenderContactId, // Lender (nuevo)
+     // ... otros campos
+   })
+   ```
+
+#### ✅ flow-data-provider.ts
+**Refactorización completa del sistema de datos para WhatsApp Flows:**
+
+1. **Líneas 16-39:** getProfileData() actualizado
+   ```typescript
+   // Cambio de 'contacts' a 'tenant_contacts' con join
+   const { data: contact } = await this.supabase
+     .from('tenant_contacts')
+     .select('contact_profile_id, contact_profiles(first_name, last_name, phone_e164, email)')
+     .eq('id', contactId)
+     .single();
+
+   // Acceso directo al profile
+   const profile = contact.contact_profiles;
+   ```
+
+2. **Líneas 82-94:** getBankAccountsData() - Query actualizada
+   - Cambio de `contacts` a `tenant_contacts`
+   - Las cuentas bancarias siguen usando `contact_profile_id` (sin cambios)
+
+3. **Líneas 219-229:** getContactsListData() - Lista con join
+   ```typescript
+   // Lista de contactos con join a contact_profiles
+   const { data: contacts } = await this.supabase
+     .from('tenant_contacts')
+     .select('id, name, contact_profiles(phone_e164)')
+     .eq('tenant_id', tenantId)
+     .eq('opt_in_status', 'opted_in')  // Actualizado de 'subscribed'
+     .neq('id', lenderContactId)
+   ```
+
+4. **Línea 258:** Acceso a teléfono actualizado
+   ```typescript
+   // ANTES:
+   contact.phone_e164
+
+   // AHORA:
+   const phoneE164 = contact.contact_profiles?.phone_e164;
+   ```
+
+5. **Líneas 320-359:** generateFlowToken() simplificado
+   ```typescript
+   // Query actualizada con join
+   const { data: contact } = await this.supabase
+     .from('tenant_contacts')
+     .select('contact_profile_id, contact_profiles(phone_e164)')
+     .eq('id', contactId)
+     .single();
+
+   // Validación simplificada (ya no auto-crea profile)
+   // El contact_profile_id debe existir por FK constraint
+   ```
+
+#### ✅ menu-data/index.ts
+**Refactorización completa del endpoint de datos del menú web:**
+
+1. **Líneas 82-95:** Query de préstamos prestados
+   ```typescript
+   // ANTES:
+   .select('*, borrower:contacts!agreements_contact_id_fkey(id, name)')
+   .eq('lender_contact_id', tokenData.contact_id)
+
+   // AHORA:
+   .select('*, borrower:tenant_contacts!tenant_contact_id(id, name)')
+   .eq('lender_tenant_contact_id', tokenData.contact_id)
+   ```
+
+2. **Líneas 97-110:** Query de préstamos recibidos
+   ```typescript
+   // ANTES:
+   .select('*, lender:contacts!fk_lender_contact(id, name)')
+   .eq('contact_id', tokenData.contact_id)
+
+   // AHORA:
+   .select('*, lender:tenant_contacts!lender_tenant_contact_id(id, name)')
+   .eq('tenant_contact_id', tokenData.contact_id)
+   ```
+
+3. **Líneas 126-130:** Carga de contact para profile/bank
+   - Cambio de `.from('contacts')` a `.from('tenant_contacts')`
+
+4. **Líneas 205-209:** Guardado - obtener tenant_contact con join
+   ```typescript
+   // ANTES:
+   .from('contacts')
+   .select('contact_profile_id, phone_e164')
+
+   // AHORA:
+   .from('tenant_contacts')
+   .select('contact_profile_id, contact_profiles(phone_e164)')
+   ```
+
+5. **Líneas 230-263:** Crear profile nuevo con validación
+   ```typescript
+   // Extraer phone del join
+   const phoneE164 = contact.contact_profiles?.phone_e164;
+
+   // Validación antes de crear
+   if (!phoneE164) {
+     return error 400 'Teléfono no encontrado'
+   }
+
+   // Actualizar tenant_contacts (no contacts)
+   await supabase
+     .from('tenant_contacts')
+     .update({ contact_profile_id: newProfile.id })
+   ```
+
+#### ✅ generate-menu-token/index.ts
+**Refactorización del generador de tokens para menú web:**
+
+1. **Líneas 54-70:** Validación de contacto
+   ```typescript
+   // ANTES:
+   const { data: contact } = await supabase
+     .from('contacts')
+     .select('id')
+     .eq('id', contact_id)
+     .eq('tenant_id', tenant_id)
+     .single();
+
+   // AHORA:
+   const { data: contact } = await supabase
+     .from('tenant_contacts')
+     .select('id')
+     .eq('id', contact_id)
+     .eq('tenant_id', tenant_id)
+     .single();
+   ```
+
+**Notas:**
+- Archivo simple con un solo cambio necesario
+- Validación robusta antes de generar token
+- Token válido por 1 hora
+
+#### ✅ loan-web-form/index.ts
+**Refactorización del formulario web de préstamos:**
+
+1. **Líneas 183-204:** Query GET de contactos con join
+   ```typescript
+   // ANTES:
+   const { data: contacts } = await supabase
+     .from('contacts')
+     .select('id, name, phone_e164')
+     .eq('tenant_id', tokenData.tenantId)
+
+   // AHORA:
+   const { data: contacts } = await supabase
+     .from('tenant_contacts')
+     .select('id, name, contact_profiles(phone_e164)')
+     .eq('tenant_id', tokenData.tenantId)
+
+   // Mapeo actualizado:
+   const contactsList = (contacts || []).map(c => ({
+     id: c.id,
+     name: c.name,
+     phone: c.contact_profiles?.phone_e164 || ''
+   }));
+   ```
+
+**Notas:**
+- Usa `FlowHandlers` existente para crear préstamos
+- Join a `contact_profiles` para `phone_e164`
+- Acceso correcto con optional chaining
+
+#### ✅ whatsapp-window-manager.ts
+**Refactorización completa del sistema de envío de mensajes de WhatsApp:**
+
+1. **Líneas 55:** Consulta de mensajes con tenant_contact_id
+   - Cambio de `whatsapp_messages.contact_id` a `whatsapp_messages.tenant_contact_id`
+   - Verificación de ventana de 24h ahora usa nueva FK
+
+2. **Líneas 250-263:** Query en sendTemplateMessage()
+   ```typescript
+   // ANTES:
+   .from('contacts')
+   .select('phone_e164')
+
+   // AHORA:
+   .from('tenant_contacts')
+   .select('*, contact_profiles(phone_e164)')
+
+   // Acceso:
+   contact.contact_profiles.phone_e164
+   ```
+
+3. **Líneas 304, 386:** Inserts en whatsapp_messages
+   ```typescript
+   .insert({
+     tenant_id: tenantId,
+     tenant_contact_id: contactId,  // Cambió de contact_id
+     wa_message_id: result.messages[0].id,
+     // ...
+   })
+   ```
+
+4. **Línea 517:** Query en getWindowStats()
+   - Cambio de `contacts` a `tenant_contacts`
+   - Estadísticas de ventanas ahora usan tenant_contacts
+
+### ⚠️ Pendientes (Documentados)
+
+**Archivo crítico:** `wa_webhook/index.ts` (~2000 líneas)
+- Líneas 171-199: Obtener/crear contacto
+- Líneas 326-337, 832-843, 1001-1012, 1160-1168: Buscar agreements
+- Líneas 500-504: Buscar contacto seleccionado
+- Líneas 1404-1550: Procesar contactos compartidos
+- Líneas 1063-1090: Actualizar opt_in
+
+**Otros archivos pendientes:**
+- `flow-data-provider.ts` - Cargar datos desde tenant_contacts
+- `menu-data/index.ts` - Actualizar queries restantes
+- `generate-menu-token/index.ts` - Validar con tenant_contacts
+- `loan-web-form/index.ts` - Crear agreements con nuevas FKs
+
+### 📊 Estadísticas de Migración
+
+**Verificado en base de datos:**
+- Todos los contacts tienen contact_profile_id: ✅
+- Todos los contactos migrados a tenant_contacts: ✅
+- Todos los agreements con tenant_contact_id: ✅
+- Todos los agreements con lender_tenant_contact_id: ✅
+
+### 📝 Documentación Creada
+
+- `docs/MIGRACION_TENANT_CONTACTS_PENDIENTE.md`
+  - Lista completa de cambios necesarios por archivo
+  - Patrones de código para cada tipo de cambio
+  - Líneas específicas a modificar
+  - Estado de completitud por archivo ✅ Actualizado
+
+- `docs/MIGRACION_TENANT_CONTACTS_PLAN_Y_PROGRESO.md` **[NUEVO]**
+  - Plan completo de migración con contexto
+  - Patrones técnicos universales aplicables
+  - Progreso detallado por archivo (60% completado)
+  - Guía para continuar la migración
+  - Lista de errores comunes y buenas prácticas
+  - Próximos archivos a refactorizar priorizados
+
+### 🗃️ Migración SQL
+
+**Archivo:** `supabase/migrations/022_complete_tenant_contacts_migration.sql`
+- 211 líneas de SQL
+- Operaciones idempotentes (pueden ejecutarse múltiples veces)
+- Estadísticas automáticas al finalizar
+- Comentarios y documentación inline
+
+### 🎉 Estado de la Migración: COMPLETADA (100%)
+
+**Completado (100%):**
+- ✅ Base de datos migrada completamente (migración 022)
+- ✅ conversation-manager.ts refactorizado
+- ✅ flow-handlers.ts refactorizado
+- ✅ **wa_webhook/index.ts refactorizado** (CRÍTICO - archivo principal ~2000 líneas)
+- ✅ **whatsapp-window-manager.ts refactorizado** (gestor de ventana 24h WhatsApp)
+- ✅ **flow-data-provider.ts refactorizado** (datos para WhatsApp Flows)
+- ✅ **menu-data/index.ts refactorizado** (endpoint menú web)
+- ✅ **generate-menu-token/index.ts refactorizado** (generador de tokens)
+- ✅ **loan-web-form/index.ts refactorizado** (formulario web préstamos)
+- ✅ Documentación completa y plan creados
+
+**Total de archivos migrados:** 8 archivos + 1 migración SQL
+
+**Próxima fase:**
+- ⏳ Testing exhaustivo de todos los flujos
+- ⏳ Deploy progresivo a producción
+- ⏳ Monitoreo y ajustes post-deploy
+- ⏳ Deprecación eventual de tabla `contacts` legacy
+
+### 🎯 Próximos Pasos
+
+1. ~~Completar refactorización de `wa_webhook/index.ts`~~ ✅ COMPLETADO
+2. ~~Actualizar `whatsapp-window-manager.ts`~~ ✅ COMPLETADO
+3. ~~Actualizar `flow-data-provider.ts`~~ ✅ COMPLETADO
+4. ~~Completar `menu-data/index.ts`~~ ✅ COMPLETADO
+5. ~~Actualizar `generate-menu-token/index.ts`~~ ✅ COMPLETADO
+6. ~~Actualizar `loan-web-form/index.ts`~~ ✅ COMPLETADO
+7. **Testing exhaustivo de todos los flujos** ← PRÓXIMO
+8. **Deploy progresivo a producción**
+9. **Monitoreo post-deploy y ajustes**
+10. **Eventualmente deprecar tabla `contacts` legacy**
+
+### 💡 Notas Técnicas
+
+- La tabla `contacts` se mantiene como backup temporal
+- Todos los nuevos registros van a `tenant_contacts`
+- Queries de agreements ahora usan `tenant_contact_id` y `lender_tenant_contact_id`
+- Patrón de migración es backward-compatible
+- RLS policies deben actualizarse en siguientes fases
+
+---
+
 ## [2025-10-10] - Mensaje de engagement optimizado con CTA directo a la app
 
 ### ✨ Mejorado

@@ -405,19 +405,19 @@ export class ConversationManager {
       .eq('tenant_id', tenantId)
       .eq('contact_id', contactId);
 
-    // Obtener información del contacto (necesitamos phone_number)
-    const { data: contact, error: contactError } = await this.supabase
-      .from('contacts')
-      .select('phone_e164, telegram_id')
+    // Obtener información del contacto desde tenant_contacts
+    const { data: tenantContact, error: contactError } = await this.supabase
+      .from('tenant_contacts')
+      .select('id, contact_profile_id, contact_profiles(phone_e164, telegram_id)')
       .eq('id', contactId)
       .single();
 
-    if (contactError || !contact) {
+    if (contactError || !tenantContact) {
       throw new Error(`Contact not found: ${contactError?.message || 'Unknown error'}`);
     }
 
     // Usar phone_e164 o telegram_id como identificador
-    const phoneNumber = contact.phone_e164 || contact.telegram_id || 'unknown';
+    const phoneNumber = tenantContact.contact_profiles?.phone_e164 || tenantContact.contact_profiles?.telegram_id || 'unknown';
 
     // Crear nuevo estado
     // Para new_loan, incluir el lender_contact_id (quien presta = quien habla)
@@ -561,16 +561,16 @@ export class ConversationManager {
       if (state.flow_type === 'new_loan' && state.current_step === 'awaiting_contact') {
         console.log('Verifying if contact exists in database...');
 
-        // Buscar si el contacto existe
+        // Buscar si el contacto existe en tenant_contacts
         const { data: existingContact } = await this.supabase
-          .from('contacts')
+          .from('tenant_contacts')
           .select('*')
           .eq('tenant_id', tenantId)
           .ilike('name', `%${updatedContext.contact_info}%`)
           .maybeSingle();
 
         if (existingContact) {
-          // Contacto existe, guardar contact_id
+          // Contacto existe, guardar tenant_contact_id
           console.log('Contact found:', existingContact.id, existingContact.name);
           updatedContext.contact_id = existingContact.id;
           updatedContext.contact_info = existingContact.name; // Usar nombre exacto de BD
@@ -656,8 +656,8 @@ export class ConversationManager {
       if (requiresList) {
         console.log('Fetching contacts list for tenant:', tenantId, 'excluding contact:', contactId);
         const { data: contacts } = await this.supabase
-          .from('contacts')
-          .select('id, name, phone_e164')
+          .from('tenant_contacts')
+          .select('id, name, contact_profiles(phone_e164)')
           .eq('tenant_id', tenantId)
           .neq('id', contactId) // Excluir el contacto actual (quien está creando el préstamo)
           .order('name')

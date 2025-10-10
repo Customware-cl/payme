@@ -88,9 +88,9 @@ serve(async (req: Request) => {
             due_date,
             status,
             created_at,
-            borrower:contacts!agreements_contact_id_fkey(id, name)
+            borrower:tenant_contacts!tenant_contact_id(id, name)
           `)
-          .eq('lender_contact_id', tokenData.contact_id)
+          .eq('lender_tenant_contact_id', tokenData.contact_id)
           .in('status', ['active', 'pending_confirmation'])
           .order('created_at', { ascending: false });
 
@@ -103,9 +103,9 @@ serve(async (req: Request) => {
             due_date,
             status,
             created_at,
-            lender:contacts!fk_lender_contact(id, name)
+            lender:tenant_contacts!lender_tenant_contact_id(id, name)
           `)
-          .eq('contact_id', tokenData.contact_id)
+          .eq('tenant_contact_id', tokenData.contact_id)
           .in('status', ['active', 'pending_confirmation'])
           .order('created_at', { ascending: false });
 
@@ -122,9 +122,9 @@ serve(async (req: Request) => {
       }
 
       // Para profile y bank, necesitamos cargar el contact_profile
-      // Primero obtener el contact para ver su contact_profile_id
+      // Primero obtener el tenant_contact para ver su contact_profile_id
       const { data: contact } = await supabase
-        .from('contacts')
+        .from('tenant_contacts')
         .select('contact_profile_id')
         .eq('id', tokenData.contact_id)
         .single();
@@ -201,10 +201,10 @@ serve(async (req: Request) => {
 
       console.log('Saving data:', { type, contact_id: tokenData.contact_id, data });
 
-      // Primero obtener el contact
+      // Primero obtener el tenant_contact con join a contact_profiles para phone_e164
       const { data: contact } = await supabase
-        .from('contacts')
-        .select('contact_profile_id, phone_e164')
+        .from('tenant_contacts')
+        .select('contact_profile_id, contact_profiles(phone_e164)')
         .eq('id', tokenData.contact_id)
         .single();
 
@@ -227,11 +227,20 @@ serve(async (req: Request) => {
 
         profile = existingProfile;
       } else {
-        // Crear nuevo profile y asociarlo al contact
+        // Crear nuevo profile y asociarlo al tenant_contact
+        const phoneE164 = contact.contact_profiles?.phone_e164;
+
+        if (!phoneE164) {
+          return new Response(JSON.stringify({ success: false, error: 'Teléfono no encontrado' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
         const { data: newProfile, error: createError } = await supabase
           .from('contact_profiles')
           .insert({
-            phone_e164: contact.phone_e164
+            phone_e164: phoneE164
           })
           .select()
           .single();
@@ -244,9 +253,9 @@ serve(async (req: Request) => {
           });
         }
 
-        // Actualizar el contact para que apunte al nuevo profile
+        // Actualizar el tenant_contact para que apunte al nuevo profile
         await supabase
-          .from('contacts')
+          .from('tenant_contacts')
           .update({ contact_profile_id: newProfile.id })
           .eq('id', tokenData.contact_id);
 

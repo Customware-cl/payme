@@ -5,6 +5,7 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { decryptAesKey, decryptFlowData, encryptResponse } from "../_shared/whatsapp-flows-encryption.ts";
+import { FlowDataProvider } from "../_shared/flow-data-provider.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -27,6 +28,16 @@ interface BankAccountFlowResponse {
   account_type: string;
   account_number: string;
   is_default: boolean;
+}
+
+interface LoanFlowResponse {
+  loan_type: 'money' | 'object' | 'other';
+  loan_detail: string;
+  contact_id?: string;
+  contact_name: string;
+  contact_phone?: string;
+  new_contact: boolean;
+  date_option: 'tomorrow' | 'end_of_month';
 }
 
 interface FlowRequest {
@@ -74,6 +85,55 @@ function validateAlias(alias: string): { valid: boolean; error?: string } {
     return { valid: false, error: "El alias debe tener entre 3 y 30 caracteres" };
   }
   return { valid: true };
+}
+
+// Formateo de monto chileno
+function formatChileanCurrency(amount: number): string {
+  return `$${amount.toLocaleString('es-CL')}`;
+}
+
+// Formateo de loan_detail según tipo
+function formatLoanDetail(loanType: string, loanDetail: string): string {
+  if (loanType === 'money') {
+    // Limpiar y parsear como número
+    const cleaned = loanDetail.replace(/[$.,\s]/g, '');
+    const amount = parseInt(cleaned);
+
+    if (!isNaN(amount)) {
+      return formatChileanCurrency(amount);
+    }
+  }
+
+  // Para objetos o si no se pudo parsear como número, retornar tal cual
+  return loanDetail;
+}
+
+// Formateo de fecha según date_option
+function formatDateOption(dateOption: string): string {
+  const today = new Date();
+
+  if (dateOption === 'tomorrow') {
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const day = tomorrow.getDate();
+    const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+                       'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const month = monthNames[tomorrow.getMonth()];
+
+    return `Mañana (${day} ${month})`;
+  } else if (dateOption === 'end_of_month') {
+    const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    const day = lastDay.getDate();
+    const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+                       'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const month = monthNames[lastDay.getMonth()];
+
+    return `Fin de mes (${day} ${month})`;
+  }
+
+  // Fallback
+  return dateOption;
 }
 
 // Helper function to create Flow response (encrypted or plain)
@@ -399,6 +459,158 @@ async function handleBankAccountFlow(
   }
 }
 
+// Handler para Flow de Nuevo Préstamo
+async function handleLoanFlow(
+  data: LoanFlowResponse,
+  flowToken: string,
+  supabase: any,
+  aesKey?: ArrayBuffer,
+  iv?: string
+): Promise<Response> {
+  console.log('Processing loan flow:', data);
+
+  try {
+    // Extraer tenant_id y lender_contact_id del flow_token
+    // Format: loan_[tenant_id]_[lender_contact_id]_[contact_profile_id]_[timestamp]
+    const tokenParts = flowToken.split('_');
+    if (tokenParts.length < 5 || tokenParts[0] !== 'loan') {
+      throw new Error('Invalid flow token format');
+    }
+
+    const tenantId = tokenParts[1];
+    const lenderContactId = tokenParts[2]; // El que está prestando (quien habla por WhatsApp)
+
+    console.log('Creating loan for tenant:', { tenantId, lenderContactId });
+
+    // Parsear loan_detail según tipo de préstamo
+    let amount: number | null = null;
+    let itemDescription: string;
+
+    if (data.loan_type === 'money') {
+      // Intentar extraer número del loan_detail
+      const cleaned = data.loan_detail.replace(/[$.,\s]/g, '');
+      const parsedAmount = parseInt(cleaned);
+
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        return createFlowResponse({
+          version: "7.2",
+          screen: "LOAN_DETAILS",
+          data: { error: "Ingresa un monto válido (ej: 15000 solo números)" }
+        }, aesKey, iv);
+      }
+
+      amount = parsedAmount;
+      itemDescription = 'Dinero';
+    } else {
+      // Para objeto/otro, usar loan_detail como descripción
+      if (data.loan_detail.trim().length < 3) {
+        return createFlowResponse({
+          version: "7.2",
+          screen: "LOAN_DETAILS",
+          data: { error: "La descripción debe tener al menos 3 caracteres" }
+        }, aesKey, iv);
+      }
+
+      itemDescription = data.loan_detail.trim();
+    }
+
+    // Calcular fecha de devolución según date_option
+    let dueDate: string;
+
+    if (data.date_option === 'tomorrow') {
+      // Opción 1: Mañana
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      dueDate = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD
+    } else if (data.date_option === 'end_of_month') {
+      // Opción 2: Fin de mes
+      const today = new Date();
+      const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      dueDate = lastDay.toISOString().split('T')[0];
+    } else {
+      // Error: No seleccionó una opción válida
+      return createFlowResponse({
+        version: "7.2",
+        screen: "DUE_DATE_SELECT",
+        data: { error: "Debes seleccionar una fecha de devolución válida" }
+      }, aesKey, iv);
+    }
+
+    // Preparar contexto para el FlowHandler
+    const context: any = {
+      loan_type: data.loan_type,
+      due_date: dueDate,
+      lender_contact_id: lenderContactId,
+      item_description: itemDescription
+    };
+
+    if (amount !== null) {
+      context.amount = amount;
+    }
+
+    // Agregar datos del contacto al contexto
+    if (data.contact_id) {
+      // Usuario seleccionó un contacto existente desde la lista
+      context.contact_id = data.contact_id;
+      context.contact_info = data.contact_name.trim();
+    } else {
+      // Usuario creó un nuevo contacto desde el formulario
+      context.temp_contact_name = data.contact_name.trim();
+      context.new_contact_phone = data.contact_phone?.trim() || null;
+    }
+
+    console.log('Loan context prepared:', context);
+
+    // Importar FlowHandlers y llamar al handler existente
+    const { FlowHandlers } = await import('../_shared/flow-handlers.ts');
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const flowHandlers = new FlowHandlers(supabaseUrl, supabaseServiceKey);
+
+    // El handler buscará/creará el borrower contacto por nombre
+    // Pasamos lenderContactId como referencia
+    const result = await flowHandlers.handleNewLoanFlow(
+      tenantId,
+      lenderContactId,
+      context
+    );
+
+    if (!result.success) {
+      console.error('Flow handler error:', result.error);
+      return createFlowResponse({
+        version: "7.2",
+        screen: "LOAN_FORM",
+        data: { error: result.error || "Error al crear el préstamo" }
+      }, aesKey, iv);
+    }
+
+    console.log('Loan created successfully:', result.agreementId);
+
+    // Respuesta de éxito encriptada
+    return createFlowResponse({
+      version: "7.2",
+      screen: "SUCCESS",
+      data: {
+        extension_message_response: {
+          params: {
+            flow_token: flowToken,
+            agreement_id: result.agreementId
+          }
+        }
+      }
+    }, aesKey, iv);
+
+  } catch (error) {
+    console.error('Error in loan flow handler:', error);
+    return createFlowResponse({
+      version: "7.2",
+      screen: "LOAN_FORM",
+      data: { error: "Hubo un error al crear el préstamo. Por favor intenta de nuevo." }
+    }, aesKey, iv);
+  }
+}
+
 serve(async (req: Request) => {
   try {
     // Handle CORS preflight
@@ -513,6 +725,15 @@ serve(async (req: Request) => {
         flowData = decryptedData.data;
         iv = body.initial_vector;
 
+        // DEBUG: Log non-ping requests
+        console.log('[DEBUG] NON-PING REQUEST:', JSON.stringify({
+          screen: decryptedData.screen,
+          flow_token_prefix: flowToken?.substring(0, 20),
+          has_data: !!flowData,
+          data_keys: flowData ? Object.keys(flowData) : [],
+          action: decryptedData.action
+        }));
+
       } catch (error) {
         console.error('[CRYPTO] Decryption error:', error);
         return new Response(JSON.stringify({
@@ -556,15 +777,71 @@ serve(async (req: Request) => {
       });
     }
 
-    // Determinar qué flow es basado en el flow_token
-    const flowType = flowToken.split('_')[0];
+    // Detectar modo preview/interactivo (Meta usa token especial)
+    const isPreviewMode = flowToken.startsWith('flows-builder-');
 
+    // Determinar qué flow es basado en el flow_token
+    let flowType = 'loan'; // Default para preview mode
+    if (!isPreviewMode) {
+      flowType = flowToken.split('_')[0];
+    }
+
+    console.log('[FLOW] Mode:', isPreviewMode ? 'PREVIEW' : 'PRODUCTION', 'Type:', flowType);
+
+    // Check if this is a data provisioning request (screen navigation)
+    const screen = body.screen;
+
+    // Handle INIT request (primera pantalla con "Solicitar datos")
+    if (!screen && isPreviewMode && flowType === 'loan') {
+      console.log('[INIT] Preview mode INIT request detected');
+      // LOAN_TYPE_SELECT no necesita datos dinámicos, solo indicar la pantalla
+      return await createFlowResponse({
+        version: "7.2",
+        screen: "LOAN_TYPE_SELECT",
+        data: {}
+      }, aesKey, iv);
+    }
+
+    if (screen && flowType === 'loan') {
+      // Data provisioning for SUMMARY_SCREEN
+      if (screen === 'SUMMARY_SCREEN') {
+        console.log('[DATA_PROVISIONING] SUMMARY_SCREEN request detected');
+        console.log('[DATA_PROVISIONING] Flow data:', flowData);
+
+        // Format data for summary display
+        const formattedWhat = formatLoanDetail(flowData.loan_type, flowData.loan_detail);
+        const formattedWhen = formatDateOption(flowData.date_option);
+
+        const summaryData = {
+          version: "7.2",
+          screen: "SUMMARY_SCREEN",
+          data: {
+            loan_type: flowData.loan_type,
+            loan_detail: flowData.loan_detail,
+            contact_id: flowData.contact_id || '',
+            contact_name: flowData.contact_name,
+            contact_phone: flowData.contact_phone || '',
+            new_contact: flowData.new_contact,
+            date_option: flowData.date_option,
+            formatted_what: formattedWhat,
+            formatted_when: formattedWhen
+          }
+        };
+
+        console.log('[DATA_PROVISIONING] Returning formatted summary:', summaryData);
+        return await createFlowResponse(summaryData, aesKey, iv);
+      }
+    }
+
+    // Handle data_exchange (final submit)
     let response: Response;
 
     if (flowType === 'profile') {
       response = await handleProfileFlow(flowData as ProfileFlowResponse, flowToken, supabase, aesKey, iv);
     } else if (flowType === 'bank') {
       response = await handleBankAccountFlow(flowData as BankAccountFlowResponse, flowToken, supabase, aesKey, iv);
+    } else if (flowType === 'loan') {
+      response = await handleLoanFlow(flowData as LoanFlowResponse, flowToken, supabase, aesKey, iv);
     } else {
       // Error response (plain JSON - testing mode)
       return new Response(JSON.stringify({

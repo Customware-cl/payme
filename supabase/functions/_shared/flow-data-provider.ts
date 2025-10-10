@@ -19,10 +19,10 @@ export class FlowDataProvider {
     email: string;
   }> {
     try {
-      // Obtener contact para acceder al contact_profile_id
+      // Obtener tenant_contact con join a contact_profiles
       const { data: contact } = await this.supabase
-        .from('contacts')
-        .select('contact_profile_id')
+        .from('tenant_contacts')
+        .select('contact_profile_id, contact_profiles(first_name, last_name, phone_e164, email)')
         .eq('id', contactId)
         .single();
 
@@ -30,12 +30,7 @@ export class FlowDataProvider {
         throw new Error('Contact profile not found');
       }
 
-      // Obtener datos del contact_profile
-      const { data: profile } = await this.supabase
-        .from('contact_profiles')
-        .select('first_name, last_name, phone_e164, email')
-        .eq('id', contact.contact_profile_id)
-        .single();
+      const profile = contact.contact_profiles;
 
       return {
         first_name: profile?.first_name || "",
@@ -85,9 +80,9 @@ export class FlowDataProvider {
     };
   }>> {
     try {
-      // Obtener contact para acceder al contact_profile_id
+      // Obtener tenant_contact para acceder al contact_profile_id
       const { data: contact } = await this.supabase
-        .from('contacts')
+        .from('tenant_contacts')
         .select('contact_profile_id')
         .eq('id', contactId)
         .single();
@@ -194,21 +189,146 @@ export class FlowDataProvider {
   }
 
   /**
+   * Obtiene la lista de contactos del tenant para prellenar el Flow de Préstamos
+   * Devuelve un array en formato NavigationItem para WhatsApp Flows
+   * Incluye loan_type y loan_detail en los payloads para mantener contexto
+   */
+  async getContactsListData(
+    tenantId: string,
+    lenderContactId: string,
+    loanType?: string,
+    loanDetail?: string
+  ): Promise<Array<{
+    id: string;
+    'main-content': {
+      title: string;
+      description: string;
+    };
+    end: {
+      title: string;
+    };
+    'on-click-action': {
+      name: string;
+      next: {
+        type: string;
+        name: string;
+      };
+      payload: Record<string, any>;
+    };
+  }>> {
+    try {
+      // Obtener contactos activos del tenant (excluir al mismo lender)
+      // Con join a contact_profiles para obtener phone_e164
+      const { data: contacts } = await this.supabase
+        .from('tenant_contacts')
+        .select('id, name, contact_profiles(phone_e164)')
+        .eq('tenant_id', tenantId)
+        .eq('opt_in_status', 'opted_in')
+        .neq('id', lenderContactId)
+        .order('name', { ascending: true })
+        .limit(50);
+
+      const navigationItems = [];
+
+      // Primer item: "Agregar nuevo contacto" (siempre presente)
+      navigationItems.push({
+        id: 'add_new',
+        'main-content': {
+          title: '➕ Agregar nuevo',
+          description: 'Registrar persona nueva'
+        },
+        'on-click-action': {
+          name: 'navigate',
+          next: {
+            type: 'screen',
+            name: 'NEW_CONTACT_FORM'
+          },
+          payload: {
+            loan_type: loanType || '',
+            loan_detail: loanDetail || ''
+          }
+        }
+      });
+
+      // Agregar contactos existentes
+      if (contacts && contacts.length > 0) {
+        for (const contact of contacts) {
+          // Formatear teléfono para que quepa en 20 caracteres
+          let description = 'Sin teléfono';
+          const phoneE164 = contact.contact_profiles?.phone_e164;
+          if (phoneE164) {
+            // Remover +56 y formatear: +56912345678 -> "912345678"
+            const cleanPhone = phoneE164.replace('+56', '').replace(/\s/g, '');
+            description = cleanPhone.substring(0, 15); // Max 15 caracteres para el número
+          }
+
+          navigationItems.push({
+            id: contact.id,
+            'main-content': {
+              title: contact.name,
+              description: description
+            },
+            'on-click-action': {
+              name: 'navigate',
+              next: {
+                type: 'screen',
+                name: 'DUE_DATE_SELECT'
+              },
+              payload: {
+                loan_type: loanType || '',
+                loan_detail: loanDetail || '',
+                contact_id: contact.id,
+                contact_name: contact.name,
+                contact_phone: phoneE164 || '',
+                new_contact: false
+              }
+            }
+          });
+        }
+      }
+
+      return navigationItems;
+
+    } catch (error) {
+      console.error('Error getting contacts list data:', error);
+      // Retornar solo el item "Agregar nuevo contacto" si hay error
+      return [{
+        id: 'add_new',
+        'main-content': {
+          title: '➕ Agregar nuevo',
+          description: 'Registrar persona nueva'
+        },
+        'on-click-action': {
+          name: 'navigate',
+          next: {
+            type: 'screen',
+            name: 'NEW_CONTACT_FORM'
+          },
+          payload: {
+            loan_type: loanType || '',
+            loan_detail: loanDetail || ''
+          }
+        }
+      }];
+    }
+  }
+
+  /**
    * Genera un flow_token único para identificar al usuario en el flow
    * Format: [flow_type]_[tenant_id]_[contact_id]_[contact_profile_id]_[timestamp]
    */
   async generateFlowToken(
-    flowType: 'profile' | 'bank',
+    flowType: 'profile' | 'bank' | 'loan',
     tenantId: string,
     contactId: string
   ): Promise<string> {
     try {
-      console.log('[FLOW_TOKEN] Querying contact with ID:', contactId);
+      console.log('[FLOW_TOKEN] Querying tenant_contact with ID:', contactId);
 
-      // Obtener contact_profile_id y phone del contact
+      // Obtener tenant_contact con join a contact_profiles
       const { data: contact, error: contactError } = await this.supabase
-        .from('contacts')
-        .select('contact_profile_id, phone_e164')
+        .from('tenant_contacts')
+        .select('contact_profile_id, contact_profiles(phone_e164)')
         .eq('id', contactId)
         .single();
 
@@ -216,45 +336,17 @@ export class FlowDataProvider {
       console.log('[FLOW_TOKEN] Query result - error:', contactError);
 
       if (!contact) {
-        console.error('[FLOW_TOKEN] Contact not found for contactId:', contactId);
+        console.error('[FLOW_TOKEN] Tenant contact not found for contactId:', contactId);
         console.error('[FLOW_TOKEN] Error details:', contactError);
-        throw new Error('Contact not found');
+        throw new Error('Tenant contact not found');
       }
 
-      let contactProfileId = contact.contact_profile_id;
+      const contactProfileId = contact.contact_profile_id;
 
-      // Si no tiene contact_profile, crear uno automáticamente
+      // Validar que tenga contact_profile_id (siempre debe tener por FK constraint)
       if (!contactProfileId) {
-        console.log('[AUTO-CREATE] Contact profile not found, creating new one for contact:', contactId);
-
-        const { data: newProfile, error: createError } = await this.supabase
-          .from('contact_profiles')
-          .insert({
-            phone_e164: contact.phone_e164,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          })
-          .select('id')
-          .single();
-
-        if (createError || !newProfile) {
-          console.error('Error creating contact profile:', createError);
-          throw new Error('Failed to create contact profile');
-        }
-
-        contactProfileId = newProfile.id;
-
-        // Actualizar contact con el nuevo contact_profile_id
-        const { error: updateError } = await this.supabase
-          .from('contacts')
-          .update({ contact_profile_id: contactProfileId })
-          .eq('id', contactId);
-
-        if (updateError) {
-          console.error('Error updating tenant_contact:', updateError);
-        }
-
-        console.log('Contact profile created and linked:', contactProfileId);
+        console.error('[FLOW_TOKEN] Contact profile ID missing for tenant_contact:', contactId);
+        throw new Error('Contact profile ID missing');
       }
 
       const timestamp = Date.now();

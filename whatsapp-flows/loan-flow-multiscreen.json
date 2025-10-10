@@ -1,0 +1,285 @@
+{
+  "version": "7.2",
+  "data_api_version": "3.0",
+  "routing_model": {
+    "CONTACT_SELECT": [
+      "NEW_CONTACT_FORM",
+      "LOAN_FORM"
+    ],
+    "NEW_CONTACT_FORM": [
+      "LOAN_FORM"
+    ]
+  },
+  "screens": [
+    {
+      "id": "CONTACT_SELECT",
+      "title": "Seleccionar contacto",
+      "data": {
+        "contacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "main-content": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              },
+              "on-click-action": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "next": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "payload": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "__example__": [
+            {
+              "id": "add_new",
+              "main-content": {
+                "title": "➕ Agregar nuevo contacto",
+                "description": "Registra una persona nueva"
+              },
+              "on-click-action": {
+                "name": "navigate",
+                "next": {
+                  "type": "screen",
+                  "name": "NEW_CONTACT_FORM"
+                },
+                "payload": {}
+              }
+            },
+            {
+              "id": "contact_123",
+              "main-content": {
+                "title": "Juan Pérez",
+                "description": "912345678"
+              },
+              "on-click-action": {
+                "name": "navigate",
+                "next": {
+                  "type": "screen",
+                  "name": "LOAN_FORM"
+                },
+                "payload": {
+                  "contact_id": "contact_123",
+                  "contact_name": "Juan Pérez"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "NavigationList",
+            "name": "contacts_list",
+            "list-items": "${data.contacts}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "NEW_CONTACT_FORM",
+      "title": "Nuevo contacto",
+      "data": {},
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "contact_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Registrar contacto"
+              },
+              {
+                "type": "TextBody",
+                "text": "Ingresa los datos de la persona a quien le vas a prestar"
+              },
+              {
+                "type": "TextInput",
+                "name": "contact_name",
+                "label": "Nombre completo",
+                "input-type": "text",
+                "required": true,
+                "helper-text": "Nombre y apellido de la persona"
+              },
+              {
+                "type": "TextInput",
+                "name": "contact_phone",
+                "label": "Teléfono",
+                "input-type": "phone",
+                "required": false,
+                "helper-text": "Número con código de país (ej: +56912345678)"
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "LOAN_FORM"
+                  },
+                  "payload": {
+                    "contact_name": "${form.contact_name}",
+                    "contact_phone": "${form.contact_phone}",
+                    "new_contact": true
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "LOAN_FORM",
+      "title": "Datos del préstamo",
+      "terminal": true,
+      "data": {
+        "contact_name": {
+          "type": "string",
+          "__example__": "Juan Pérez"
+        },
+        "contact_id": {
+          "type": "string",
+          "__example__": ""
+        },
+        "contact_phone": {
+          "type": "string",
+          "__example__": ""
+        },
+        "new_contact": {
+          "type": "boolean",
+          "__example__": false
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "loan_form",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Registrar préstamo"
+              },
+              {
+                "type": "TextBody",
+                "text": "Préstamo a: ${data.contact_name}"
+              },
+              {
+                "type": "RadioButtonsGroup",
+                "name": "loan_type",
+                "label": "¿Qué vas a prestar?",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "money",
+                    "title": "💰 Dinero"
+                  },
+                  {
+                    "id": "object",
+                    "title": "📦 Un objeto"
+                  },
+                  {
+                    "id": "other",
+                    "title": "✏️ Otra cosa"
+                  }
+                ]
+              },
+              {
+                "type": "TextInput",
+                "name": "amount",
+                "label": "💵 Monto",
+                "input-type": "number",
+                "required": false,
+                "helper-text": "Solo si marcaste 'Dinero' arriba"
+              },
+              {
+                "type": "TextInput",
+                "name": "item_description",
+                "label": "📝 Descripción",
+                "input-type": "text",
+                "required": false,
+                "helper-text": "Solo si marcaste 'Objeto' u 'Otra cosa'"
+              },
+              {
+                "type": "RadioButtonsGroup",
+                "name": "quick_date",
+                "label": "Fecha devolución",
+                "required": false,
+                "data-source": [
+                  {
+                    "id": "tomorrow",
+                    "title": "🗓️ Mañana"
+                  },
+                  {
+                    "id": "end_of_month",
+                    "title": "📅 Fin de mes"
+                  }
+                ]
+              },
+              {
+                "type": "DatePicker",
+                "name": "due_date",
+                "label": "Fecha específica",
+                "required": false,
+                "helper-text": "O elige una fecha personalizada"
+              },
+              {
+                "type": "Footer",
+                "label": "Crear préstamo",
+                "on-click-action": {
+                  "name": "data_exchange",
+                  "payload": {
+                    "contact_id": "${data.contact_id}",
+                    "contact_name": "${data.contact_name}",
+                    "contact_phone": "${data.contact_phone}",
+                    "new_contact": "${data.new_contact}",
+                    "loan_type": "${form.loan_type}",
+                    "amount": "${form.amount}",
+                    "item_description": "${form.item_description}",
+                    "quick_date": "${form.quick_date}",
+                    "due_date": "${form.due_date}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
