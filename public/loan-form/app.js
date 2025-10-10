@@ -44,6 +44,21 @@ function formatMoney(amount) {
     return new Intl.NumberFormat('es-CL').format(amount);
 }
 
+function formatPhone(phone) {
+    if (!phone) return 'Sin teléfono';
+
+    // Limpiar el número
+    const cleaned = phone.replace(/\D/g, '');
+
+    // Formato chileno: +56 9 xxxx xxxx
+    if (cleaned.startsWith('56') && cleaned.length === 11) {
+        return `+56 ${cleaned.charAt(2)} ${cleaned.slice(3, 7)} ${cleaned.slice(7)}`;
+    }
+
+    // Si no coincide con formato chileno, devolver como está
+    return phone;
+}
+
 function formatDate(dateString) {
     const date = new Date(dateString);
     const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -166,7 +181,7 @@ function renderContacts() {
             <div class="contact-avatar">${getInitials(contact.name)}</div>
             <div class="contact-info">
                 <div class="contact-name">${contact.name}</div>
-                <div class="contact-phone">${contact.phone || 'Sin teléfono'}</div>
+                <div class="contact-phone">${formatPhone(contact.phone)}</div>
             </div>
         </div>
     `).join('');

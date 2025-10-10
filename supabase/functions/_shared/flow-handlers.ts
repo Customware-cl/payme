@@ -6,10 +6,19 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // Función auxiliar para parsear números de teléfono
 function parsePhoneNumber(phone: string): string {
   let cleaned = phone.replace(/\D/g, '');
-  if (!cleaned.startsWith('52')) {
-    cleaned = '52' + cleaned;
+
+  // Si ya tiene código de país válido, devolverlo
+  if (cleaned.startsWith('56') || cleaned.startsWith('52')) {
+    return '+' + cleaned;
   }
-  return '+' + cleaned;
+
+  // Para números de 9 dígitos sin código país - asumir Chile
+  if (cleaned.length === 9) {
+    return '+56' + cleaned;
+  }
+
+  // Por defecto, agregar código de Chile
+  return '+56' + cleaned;
 }
 
 // Función auxiliar para generar UUID simple
