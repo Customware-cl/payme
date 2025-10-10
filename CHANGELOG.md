@@ -2,6 +2,143 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-09] - Corrección CRÍTICA: Perfil y datos bancarios no cargaban desde WhatsApp
+
+### 🐛 Corregido
+- **Problema:** Al acceder a "Ver perfil" desde el menú web, los datos ingresados vía WhatsApp Flow no se mostraban
+- **Síntoma:** Formulario de perfil aparecía vacío a pesar de que el usuario había completado sus datos en el flow
+- **Causa raíz:** Schema mismatch crítico en `menu-data/index.ts`
+  - El código intentaba hacer query: `contact_profiles.eq('contact_id', tokenData.contact_id)`
+  - Pero la tabla `contact_profiles` **NO tiene columna `contact_id`**
+  - La relación real es: `contacts.contact_profile_id` → `contact_profiles.id`
+  - Afectaba tanto GET (carga de datos) como POST (guardado de datos)
+
+### 🔍 Schema Real
+```typescript
+// contacts table:
+{
+  id: uuid,
+  contact_profile_id: uuid  // FK → contact_profiles.id
+}
+
+// contact_profiles table:
+{
+  id: uuid,
+  phone_e164: string,
+  first_name: string,
+  last_name: string,
+  email: string,
+  // NO tiene contact_id ❌
+}
+```
+
+### ✅ Solución Implementada
+**GET requests (cargar datos):**
+1. Primero obtiene el `contact` por su `id`
+2. Lee el `contact_profile_id` del contact
+3. Si existe, carga el `contact_profile` usando ese `id`
+4. Retorna datos de perfil/banco correctamente
+
+**POST requests (guardar datos):**
+1. Obtiene el `contact` con su `contact_profile_id`
+2. Si ya tiene profile → lo carga
+3. Si NO tiene profile → crea uno nuevo y actualiza el `contact.contact_profile_id`
+4. Actualiza el profile usando `profile.id` (no contact_id)
+
+### 🔄 Modificado
+- **`supabase/functions/menu-data/index.ts`:**
+  - **Líneas 79-96:** Query GET refactorizado con relación correcta
+  - **Líneas 207-257:** Query POST refactorizado para crear/actualizar correctamente
+  - **Línea 268:** Update de perfil usa `profile.id` en lugar de `contact_id`
+  - **Línea 297:** Update de banco usa `profile.id` en lugar de `contact_id`
+
+### 📦 Deploy Info
+- **Edge Function desplegada:** `menu-data` v3
+  - Script size: 72.02kB
+  - Estado: ✅ Activa
+  - Comando: `npx supabase functions deploy menu-data`
+
+### ✅ Impacto
+- ✅ Datos de perfil ingresados vía WhatsApp Flow ahora se muestran en menú web
+- ✅ Datos bancarios ingresados vía WhatsApp Flow ahora se muestran en menú web
+- ✅ Guardado desde menú web funciona correctamente
+- ✅ Auto-creación de profile cuando no existe (nuevo flujo)
+- ✅ Consistencia total entre WhatsApp Flow y Menú Web
+
+---
+
+## [2025-10-09] - Feature: Vista de estado de préstamos y mejoras en menú web
+
+### ✨ Añadido
+- **Cuarto botón en menú principal:** "📊 Estado de préstamos"
+  - Acceso rápido a todos los préstamos del usuario
+  - Navegación a `/menu/loans.html`
+
+- **Vista de lista de préstamos (`loans.html`):**
+  - Muestra préstamos que hiciste (lent)
+  - Muestra préstamos que te hicieron (borrowed)
+  - Estados visuales: Pendiente, Vencido
+  - Botón retroceder al menú
+  - Empty state cuando no hay préstamos
+  - Loading state durante carga
+
+- **Edge function `menu-data` extendida:**
+  - Nuevo tipo `type=loans` para obtener préstamos
+  - Retorna préstamos activos y pendientes
+  - Incluye información del contacto relacionado (borrower/lender)
+  - Query optimizado con joins
+
+- **Botón retroceder en formulario de préstamos:**
+  - Primera pantalla ahora tiene botón ← para volver al menú
+  - Permite al usuario cancelar antes de iniciar el flujo
+
+### 🔄 Modificado
+- **`public/menu/index.html`:**
+  - Agregado botón "Estado de préstamos" con icono 📊
+
+- **`public/menu/app.js`:**
+  - Handler `handleLoansStatusClick()` para navegación a vista de préstamos
+
+- **`public/menu/styles.css`:**
+  - ~300 líneas de estilos nuevos para vista de préstamos
+  - Clases: `.loan-card`, `.status-badge`, `.empty-state`, `.loading-state`
+  - Animaciones de entrada para tarjetas de préstamos
+  - Estilos preparados para vista de detalle (próxima)
+
+- **`public/loan-form/index.html`:**
+  - Agregado botón `#back-to-menu` en pantalla inicial
+
+- **`public/loan-form/app.js`:**
+  - Event listener para volver al menú desde formulario
+
+- **`supabase/functions/menu-data/index.ts`:**
+  - Agregado soporte para `type=loans` en GET request
+  - Queries con `.select()` incluyendo relaciones a contacts
+  - Filtro por status: `active` y `pending_confirmation`
+
+### 📁 Archivos Creados
+- `public/menu/loans.html` - Vista de lista de préstamos (68 líneas)
+- `public/menu/loans.js` - Lógica de carga y renderizado (189 líneas)
+
+### 📦 Deploy Info
+- **Edge Function desplegada:** `menu-data` v2
+  - Script size: 71.55kB
+  - Soporte para type=loans
+  - Estado: ✅ Activa
+
+### 🎯 Funcionalidad Completa
+1. Usuario hace click en "Estado de préstamos"
+2. `loans.js` llama a `menu-data?type=loans`
+3. Edge function retorna préstamos separados en lent/borrowed
+4. Vista renderiza tarjetas clickeables
+5. **Próximo:** Click en tarjeta → Vista de detalle (en desarrollo)
+
+### ⏳ Pendiente
+- Vista de detalle de préstamo individual (`loan-detail.html`)
+- Opciones en detalle: Anular, Marcar como devuelto, Recordar
+
+---
+
 ## [2025-10-09] - Mejora: Navegación instantánea en menú web
 
 ### ⚡ Optimizado

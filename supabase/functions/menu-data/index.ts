@@ -76,12 +76,24 @@ serve(async (req: Request) => {
 
       console.log('Loading data:', { type, contact_id: tokenData.contact_id });
 
-      // Obtener contact_profile
-      const { data: profile } = await supabase
-        .from('contact_profiles')
-        .select('*')
-        .eq('contact_id', tokenData.contact_id)
+      // Primero obtener el contact para ver su contact_profile_id
+      const { data: contact } = await supabase
+        .from('contacts')
+        .select('contact_profile_id')
+        .eq('id', tokenData.contact_id)
         .single();
+
+      let profile = null;
+      if (contact?.contact_profile_id) {
+        // Si el contact tiene un profile, cargarlo
+        const { data: profileData } = await supabase
+          .from('contact_profiles')
+          .select('*')
+          .eq('id', contact.contact_profile_id)
+          .single();
+
+        profile = profileData;
+      }
 
       if (!profile) {
         // Si no existe, retornar vacío
@@ -192,20 +204,37 @@ serve(async (req: Request) => {
 
       console.log('Saving data:', { type, contact_id: tokenData.contact_id, data });
 
-      // Obtener o crear contact_profile
-      let { data: profile } = await supabase
-        .from('contact_profiles')
-        .select('*')
-        .eq('contact_id', tokenData.contact_id)
+      // Primero obtener el contact
+      const { data: contact } = await supabase
+        .from('contacts')
+        .select('contact_profile_id, phone_e164')
+        .eq('id', tokenData.contact_id)
         .single();
 
-      if (!profile) {
-        // Crear nuevo profile
+      if (!contact) {
+        return new Response(JSON.stringify({ success: false, error: 'Contacto no encontrado' }), {
+          status: 404,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Obtener o crear contact_profile
+      let profile = null;
+      if (contact.contact_profile_id) {
+        // Si ya tiene profile, cargarlo
+        const { data: existingProfile } = await supabase
+          .from('contact_profiles')
+          .select('*')
+          .eq('id', contact.contact_profile_id)
+          .single();
+
+        profile = existingProfile;
+      } else {
+        // Crear nuevo profile y asociarlo al contact
         const { data: newProfile, error: createError } = await supabase
           .from('contact_profiles')
           .insert({
-            contact_id: tokenData.contact_id,
-            tenant_id: tokenData.tenant_id
+            phone_e164: contact.phone_e164
           })
           .select()
           .single();
@@ -217,6 +246,12 @@ serve(async (req: Request) => {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           });
         }
+
+        // Actualizar el contact para que apunte al nuevo profile
+        await supabase
+          .from('contacts')
+          .update({ contact_profile_id: newProfile.id })
+          .eq('id', tokenData.contact_id);
 
         profile = newProfile;
       }
@@ -230,7 +265,7 @@ serve(async (req: Request) => {
             last_name: data.last_name,
             email: data.email
           })
-          .eq('contact_id', tokenData.contact_id);
+          .eq('id', profile.id);
 
         if (updateError) {
           console.error('Error updating profile:', updateError);
@@ -259,7 +294,7 @@ serve(async (req: Request) => {
           .update({
             bank_accounts: [bankAccount]
           })
-          .eq('contact_id', tokenData.contact_id);
+          .eq('id', profile.id);
 
         if (updateError) {
           console.error('Error updating bank details:', updateError);
