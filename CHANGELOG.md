@@ -2,6 +2,24 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-10] - 📝 UX: Cambio de texto en estado de préstamos
+
+### ✨ Mejora de Claridad
+
+**Comando "estado" de préstamos:**
+- Cambiado texto de "Pendiente de confirmación" → "Confirmación pendiente"
+- Más conciso y directo para el usuario
+- Cambio aplicado en 4 ubicaciones del código
+
+**Archivo modificado:**
+- `supabase/functions/wa_webhook/index.ts` - Líneas 404, 425, 1079, 1100
+
+**Deploy:**
+- ✅ `wa_webhook` (143.5kB) re-deployado
+- **Fecha:** 2025-10-10
+
+---
+
 ## [2025-10-10] - 🎨 UX: Mejoras en formulario web de préstamos
 
 ### ✨ Mejoras de Experiencia de Usuario

@@ -401,7 +401,7 @@ async function processInboundMessage(
                 statusText += `   Monto: $${formatMoney(agreement.amount)}\n`;
               }
               if (isPending) {
-                statusText += `   ⏳ _Pendiente de confirmación_\n`;
+                statusText += `   ⏳ _Confirmación pendiente_\n`;
               }
               statusText += '\n';
             });
@@ -422,7 +422,7 @@ async function processInboundMessage(
                 statusText += `   Monto: $${formatMoney(agreement.amount)}\n`;
               }
               if (isPending) {
-                statusText += `   ⏳ _Pendiente de confirmación_\n`;
+                statusText += `   ⏳ _Confirmación pendiente_\n`;
               }
               statusText += '\n';
             });
