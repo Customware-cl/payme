@@ -2,6 +2,48 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-10] - 🎨 UX: Mejoras contextuales en acciones de préstamos
+
+### ✨ Mejoras de Experiencia de Usuario
+
+**Campo "Tipo" más claro:**
+- Cambiado de "💰 Prestamista" / "📥 Prestatario" → "💰 Préstamo de dinero" / "📦 Préstamo de objeto"
+- Más descriptivo y fácil de entender para el usuario
+
+**Badge de estado inteligente:**
+- Ahora detecta automáticamente si un préstamo activo está vencido (`due_date < hoy`)
+- Muestra "⚠️ Vencido" (rojo) cuando está vencido
+- Mantiene "✅ Activo" (verde) cuando no está vencido
+- Mejora la visibilidad del estado real del préstamo
+
+**Opciones contextuales según vencimiento:**
+
+**Prestamista + Préstamo Vencido:**
+- 🚨 Enviar recordatorio (destacado con emoji de alerta, sin palabra "urgente")
+- ✅ Marcar como devuelto
+- 📝 Renegociar fecha (en lugar de "Editar fecha de devolución")
+- ❌ Cancelar/Condonar préstamo
+
+**Prestatario + Préstamo Activo:**
+- ✅ Marcar como devuelto
+- 📝 Solicitar más plazo
+- 💬 **Mensaje conciliador:** _"Te recomendamos conversar con [Nombre del Prestamista] en caso que presentes inconvenientes"_
+- ❌ **Eliminada** opción "Contactar prestamista" (reemplazada por mensaje conciliador)
+
+**Archivos modificados:**
+- `public/menu/loan-detail.js` - Líneas 130-131 (campo Tipo), 159-160 (badge vencido), 176-243 (botones contextuales)
+- `public/menu/styles.css` - Líneas 672-687 (estilos para mensaje conciliador)
+
+**Beneficios:**
+- UX más clara y específica según contexto del préstamo
+- Reduce fricción para usuarios prestatarios con mensajes conciliadores
+- Enfoque más colaborativo en caso de inconvenientes de pago
+- Información de estado más precisa y visible
+
+**Fecha:** 2025-10-10
+
+---
+
 ## [2025-10-10] - ✨ FEATURE: Sistema de Acciones sobre Préstamos (App Web)
 
 ### 🎯 Nueva Funcionalidad

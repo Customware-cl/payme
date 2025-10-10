@@ -669,6 +669,23 @@ body {
     background: #c82333;
 }
 
+/* Mensaje conciliador */
+.advice-message {
+    margin-top: 8px;
+    padding: 16px;
+    background: #e8f5e9;
+    border-left: 4px solid #4caf50;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #2e7d32;
+    text-align: center;
+}
+
+.advice-message em {
+    font-style: italic;
+}
+
 /* Responsive animations */
 .loan-card {
     animation: fadeIn 0.3s ease;

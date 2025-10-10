@@ -126,8 +126,9 @@ function renderLoanDetails() {
     const loanTypeText = userRole === 'lender' ? 'Préstamo que hiciste' : 'Préstamo que te hicieron';
     $('#loan-title').textContent = loanTypeText;
 
-    // Tipo (Prestamista o Prestatario)
-    $('#detail-type').textContent = userRole === 'lender' ? '💰 Prestamista' : '📥 Prestatario';
+    // Tipo (Préstamo de dinero o préstamo de objeto)
+    const loanType = loan.amount !== null ? '💰 Préstamo de dinero' : '📦 Préstamo de objeto';
+    $('#detail-type').textContent = loanType;
 
     // Contacto
     const contactLabel = userRole === 'lender' ? 'A quien le prestaste' : 'Quien te prestó';
@@ -155,6 +156,8 @@ function renderLoanDetails() {
     let statusText = '';
     if (isPending) {
         statusText = '⏳ Confirmación pendiente';
+    } else if (loan.status === 'active' && overdue) {
+        statusText = '⚠️ Vencido';
     } else if (loan.status === 'active') {
         statusText = '✅ Activo';
     } else if (loan.status === 'completed') {
@@ -175,6 +178,7 @@ function renderActionButtons() {
     const { loan, userRole } = state;
     const isPending = loan.status === 'pending_confirmation';
     const isActive = loan.status === 'active';
+    const overdue = isActive && isOverdue(loan.due_date);
     const container = $('#action-buttons');
 
     // Limpiar botones existentes
@@ -188,7 +192,16 @@ function renderActionButtons() {
             { icon: '🔔', text: 'Reenviar solicitud', action: 'resend', style: 'secondary' },
             { icon: '❌', text: 'Cancelar solicitud', action: 'cancel', style: 'danger' }
         ];
+    } else if (userRole === 'lender' && isActive && overdue) {
+        // Prestamista con préstamo vencido
+        actions = [
+            { icon: '🚨', text: 'Enviar recordatorio', action: 'remind', style: 'secondary' },
+            { icon: '✅', text: 'Marcar como devuelto', action: 'mark_returned', style: 'primary' },
+            { icon: '📝', text: 'Renegociar fecha', action: 'edit_date', style: 'secondary' },
+            { icon: '❌', text: 'Cancelar/Condonar préstamo', action: 'cancel', style: 'danger' }
+        ];
     } else if (userRole === 'lender' && isActive) {
+        // Prestamista con préstamo activo no vencido
         actions = [
             { icon: '🔔', text: 'Enviar recordatorio', action: 'remind', style: 'secondary' },
             { icon: '✅', text: 'Marcar como devuelto', action: 'mark_returned', style: 'primary' },
@@ -201,17 +214,11 @@ function renderActionButtons() {
             { icon: '❌', text: 'Rechazar préstamo', action: 'reject', style: 'danger' }
         ];
     } else if (userRole === 'borrower' && isActive) {
-        const contact = loan.lender;
-        const hasPhone = contact && contact.phone;
-
+        // Prestatario con préstamo activo (vencido o no)
         actions = [
             { icon: '✅', text: 'Marcar como devuelto', action: 'mark_returned', style: 'primary' },
             { icon: '📝', text: 'Solicitar más plazo', action: 'request_extension', style: 'secondary' }
         ];
-
-        if (hasPhone) {
-            actions.push({ icon: '💬', text: 'Contactar prestamista', action: 'contact', style: 'secondary' });
-        }
     }
 
     // Renderizar botones
@@ -223,6 +230,16 @@ function renderActionButtons() {
         btn.addEventListener('click', () => handleAction(action));
         container.appendChild(btn);
     });
+
+    // Agregar mensaje conciliador para prestatarios con préstamos activos
+    if (userRole === 'borrower' && isActive) {
+        const contact = loan.lender;
+        const contactName = contact ? contact.name : 'tu prestamista';
+        const adviceMessage = document.createElement('div');
+        adviceMessage.className = 'advice-message';
+        adviceMessage.innerHTML = `💬 <em>Te recomendamos conversar con ${contactName} en caso que presentes inconvenientes</em>`;
+        container.appendChild(adviceMessage);
+    }
 }
 
 // Manejar acciones
