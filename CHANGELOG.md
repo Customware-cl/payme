@@ -7,21 +7,38 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
 ### ✨ Añadido
 
 #### Plantilla de WhatsApp `menu_web_access`
-- **Categoría:** UTILITY
+- **Categoría:** UTILITY (adaptada para evitar detección como MARKETING)
 - **Idioma:** Español (es)
-- **Componentes:**
-  - **Header:** "¡Hola {{1}}! 👋" (variable: nombre del usuario)
-  - **Body:** Descripción del menú personal (Ver perfil, Datos bancarios, Crear préstamos)
-  - **Footer:** "🔒 Link válido por 1 hora"
-  - **Button:** "Abrir Menú" con URL dinámica {{1}}
+- **Enfoque:** Gestión de préstamos (registrar, ver estado, más funcionalidades)
+- **Dos versiones disponibles:**
+  - **OPCIÓN 1 (Recomendada):** Sin variable en header, lenguaje transaccional
+    - Header: "Tu acceso personal"
+    - Body: "Registra préstamos, ve su estado y gestiona tu información.\n\nVálido por 1 hora."
+    - Button: "Ingresar" + URL dinámica
+  - **OPCIÓN 2:** Con personalización de nombre
+    - Header: "{{1}}, tu acceso está listo"
+    - Body: "Registra préstamos, ve su estado y más.\n\nEste link expira en 1 hora."
+    - Button: "Acceder ahora" + URL dinámica
+
+#### Adaptaciones para mantener categoría UTILITY
+- ❌ **Eliminado:** Lenguaje promocional ("donde puedes", "rápida y segura")
+- ❌ **Eliminado:** Bullets listando beneficios (suena a marketing)
+- ❌ **Eliminado:** Emojis excesivos (👋 💰 📋 🔒)
+- ✅ **Agregado:** Lenguaje transaccional ("Ingresa", "Actualiza")
+- ✅ **Agregado:** Enfoque en acción del usuario, no en vender beneficios
+- ✅ **Agregado:** Versión simplificada sin variables (OPCIÓN 1)
 
 #### Helper Class `WhatsAppTemplates`
 - **Archivo:** `supabase/functions/_shared/whatsapp-templates.ts`
 - **Métodos:**
   - `sendMenuWebAccessTemplate()` - Envía plantilla de menú web
+    - Nuevo parámetro: `usePersonalizedHeader` (default: false)
+    - `false` = OPCIÓN 1 (sin variable en header, recomendado)
+    - `true` = OPCIÓN 2 (con nombre en header)
   - `generateAndSendMenuAccess()` - Genera token + envía plantilla
 - **Integración con WhatsApp Graph API v18.0**
 - **Gestión automática de errores y logging**
+- **Por defecto usa OPCIÓN 1** para evitar problemas de categorización
 
 #### Comandos de WhatsApp
 - **Comando de texto:** "menú web", "menu web", "acceso web"
@@ -92,6 +109,27 @@ Click en "Abrir Menú" → Abre navegador con menú web
 2. **Recordatorio:** Enviar si usuario no completa perfil
 3. **Comando manual:** Al escribir "menú web" en WhatsApp
 4. **Botón en menú:** Opción en el menú principal de WhatsApp
+
+### 🔧 Problema Resuelto: Categorización como MARKETING
+
+**Problema inicial:**
+Meta detectó la plantilla original como MARKETING debido a:
+- Lenguaje promocional: "Accede a tu menú personal donde puedes..."
+- Lista de beneficios con bullets (• Ver perfil, • Datos bancarios, • Préstamos)
+- Emojis excesivos (👋 💰 📋 🔒)
+- Tono de "venta" en lugar de transaccional
+
+**Solución implementada:**
+1. **Versión simplificada (OPCIÓN 1):** Sin variables, lenguaje directo
+2. **Lenguaje transaccional:** "Registra", "Ve su estado" (verbos de acción)
+3. **Sin bullets:** Texto corrido más simple
+4. **Sin emojis en body/footer:** Solo texto profesional
+5. **Enfoque en acción:** "Tu acceso está listo" vs "Accede a tu menú"
+6. **Enfoque en core business:** "Registra préstamos, ve su estado" (funcionalidad principal)
+
+**Referencias:**
+- Guía oficial: https://developers.facebook.com/docs/whatsapp/updates-to-pricing/new-template-guidelines/
+- UTILITY debe ser "non-promotional", "specific to user", "essential/critical"
 
 ---
 

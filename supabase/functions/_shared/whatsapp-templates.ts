@@ -13,18 +13,52 @@ export class WhatsAppTemplates {
   /**
    * Enviar plantilla de acceso al menú web
    *
+   * NOTA: Por defecto usa versión sin variable en header (más simple, evita que Meta la marque como MARKETING)
+   * Para usar versión con nombre, pasar usePersonalizedHeader = true
+   *
    * @param to - Número de teléfono en formato E.164 (ej: +56912345678)
-   * @param contactName - Nombre del contacto para personalizar el header
+   * @param contactName - Nombre del contacto (solo se usa si usePersonalizedHeader = true)
    * @param menuUrl - URL completa del menú con token
+   * @param usePersonalizedHeader - Si true, incluye nombre en header (default: false)
    * @returns Response de la API de WhatsApp
    */
   async sendMenuWebAccessTemplate(
     to: string,
     contactName: string,
-    menuUrl: string
+    menuUrl: string,
+    usePersonalizedHeader: boolean = false
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
-      console.log('[TEMPLATE] Sending menu_web_access:', { to, contactName, menuUrl });
+      console.log('[TEMPLATE] Sending menu_web_access:', { to, contactName, menuUrl, usePersonalizedHeader });
+
+      // Componentes base: siempre incluye el botón con URL
+      const components: any[] = [
+        {
+          type: 'button',
+          sub_type: 'url',
+          index: '0',
+          parameters: [
+            {
+              type: 'text',
+              text: menuUrl
+            }
+          ]
+        }
+      ];
+
+      // Si se solicita, agregar header personalizado (OPCIÓN 2)
+      // Por defecto NO se agrega (OPCIÓN 1 - recomendada para UTILITY)
+      if (usePersonalizedHeader) {
+        components.unshift({
+          type: 'header',
+          parameters: [
+            {
+              type: 'text',
+              text: contactName || 'Usuario'
+            }
+          ]
+        });
+      }
 
       const payload = {
         messaging_product: 'whatsapp',
@@ -33,28 +67,7 @@ export class WhatsAppTemplates {
         template: {
           name: 'menu_web_access',
           language: { code: 'es' },
-          components: [
-            {
-              type: 'header',
-              parameters: [
-                {
-                  type: 'text',
-                  text: contactName || 'Usuario'
-                }
-              ]
-            },
-            {
-              type: 'button',
-              sub_type: 'url',
-              index: '0',
-              parameters: [
-                {
-                  type: 'text',
-                  text: menuUrl
-                }
-              ]
-            }
-          ]
+          components: components
         }
       };
 
