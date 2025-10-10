@@ -22,6 +22,18 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
   - Los préstamos NO requieren profile, solo usan `contact_id` directamente
 - **Solución:** Reordenar la lógica para procesar `type=loans` PRIMERO, antes de cargar profile
 
+#### Problema 3: Perfil y banco retornaban HTTP 401 "Missing authorization header"
+- **Síntoma:** Al recargar la página de perfil o datos bancarios, aparecía error HTTP 401
+- **Respuesta del API:** `{"code":401,"message":"Missing authorization header"}`
+- **Causa raíz:** Edge function `menu-data` requería JWT por defecto
+  - Supabase por defecto requiere autenticación JWT en todas las edge functions
+  - El navegador hace llamadas públicas sin ningún header de autorización
+  - El frontend solo pasa el token temporal en query string, NO en headers
+  - Resultado: 401 antes de ejecutar cualquier lógica
+- **Solución:** Re-desplegar con flag `--no-verify-jwt`
+  - Mismo fix que se aplicó a `loan-web-form` y `wa_webhook`
+  - Permite que la función sea accesible públicamente desde navegadores
+
 ### 🔍 Schema Real
 ```typescript
 // contacts table:
@@ -65,19 +77,22 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
   - **Línea 297:** Update de banco usa `profile.id` en lugar de `contact_id`
 
 ### 📦 Deploy Info
-- **Edge Function desplegada:** `menu-data` v4
+- **Edge Function desplegada:** `menu-data` v5
   - Script size: 72.07kB
   - Estado: ✅ Activa
-  - Comando: `npx supabase functions deploy menu-data`
+  - Comando: `npx supabase functions deploy menu-data --no-verify-jwt`
+  - **Flag crítico:** `--no-verify-jwt` habilitado (permite acceso público desde navegador)
 
 ### ✅ Impacto
-- ✅ Datos de perfil ingresados vía WhatsApp Flow ahora se muestran en menú web
-- ✅ Datos bancarios ingresados vía WhatsApp Flow ahora se muestran en menú web
-- ✅ **Estado de préstamos ahora carga correctamente sin HTTP 401**
+- ✅ **Problema 1 resuelto:** Datos de perfil ingresados vía WhatsApp Flow ahora se muestran en menú web
+- ✅ **Problema 1 resuelto:** Datos bancarios ingresados vía WhatsApp Flow ahora se muestran en menú web
+- ✅ **Problema 2 resuelto:** Estado de préstamos ahora carga correctamente sin HTTP 401
+- ✅ **Problema 3 resuelto:** Perfil y banco cargan sin error "Missing authorization header"
 - ✅ Préstamos se muestran sin necesidad de tener profile creado
 - ✅ Guardado desde menú web funciona correctamente
 - ✅ Auto-creación de profile cuando no existe (nuevo flujo)
 - ✅ Consistencia total entre WhatsApp Flow y Menú Web
+- ✅ Todas las vistas del menú web funcionan correctamente ahora
 
 ---
 
