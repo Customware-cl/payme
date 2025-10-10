@@ -2,6 +2,69 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-09] - FIX CRÍTICO: Duplicación de código de país + Formato teléfono
+
+### 🐛 Corregido
+- **Bug crítico: Duplicación de código de país en teléfonos**
+  - **Síntoma:** Al ingresar `+56986199797` se guardaba como `+5256986199797`
+  - **Causa raíz:** Función `parsePhoneNumber()` en `flow-handlers.ts` agregaba código de México (+52) por defecto
+  - **Código problemático:**
+    ```typescript
+    if (!cleaned.startsWith('52')) {
+      cleaned = '52' + cleaned;  // ❌ México en lugar de Chile
+    }
+    ```
+  - **Solución:** Reescrita lógica para manejar correctamente código de Chile (+56)
+    ```typescript
+    if (cleaned.startsWith('56') || cleaned.startsWith('52')) {
+      return '+' + cleaned;  // Ya tiene código válido
+    }
+    if (cleaned.length === 9) {
+      return '+56' + cleaned;  // 9 dígitos = Chile
+    }
+    return '+56' + cleaned;  // Por defecto Chile
+    ```
+
+### ✨ Añadido
+- **Formato de visualización de teléfonos chilenos**
+  - Formato estándar: `+56 9 xxxx xxxx`
+  - Función `formatPhone()` en `loan-form/app.js`
+  - Se aplica automáticamente en lista de contactos
+  - Números extranjeros se muestran sin formato especial
+
+### 🔄 Archivos modificados
+- `supabase/functions/_shared/flow-handlers.ts`:
+  - Corregida función `parsePhoneNumber()` para Chile
+  - Soporte para códigos +56 (Chile) y +52 (México)
+  - Números de 9 dígitos se asumen chilenos
+- `public/loan-form/app.js`:
+  - Nueva función `formatPhone()` para formato visual
+  - Aplicada en renderizado de contactos
+
+### ✅ Impacto
+- ✅ **Bug crítico corregido:** No más duplicación de códigos
+- ✅ **UX mejorada:** Números se ven en formato legible
+- ✅ **Consistencia:** Formato chileno estándar
+- ✅ **Compatibilidad:** Soporta números chilenos y extranjeros
+
+### 📱 Ejemplos
+
+**Antes (bug):**
+```
+Input:  +56986199797
+Guardado: +5256986199797  ❌
+Mostrado: +5256986199797  ❌
+```
+
+**Ahora (correcto):**
+```
+Input:  +56986199797
+Guardado: +56986199797     ✅
+Mostrado: +56 9 8619 9797  ✅
+```
+
+---
+
 ## [2025-10-09] - Feature: Mensaje informativo en datos bancarios
 
 ### ✨ Añadido
