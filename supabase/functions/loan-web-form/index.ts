@@ -74,15 +74,28 @@ function calculateDate(option: string, customDate?: string): string {
 function parseToken(token: string): { tenantId: string; lenderContactId: string; timestamp: number } | null {
   try {
     // Format: loan_web_[tenant_id]_[lender_contact_id]_[timestamp]
+    // OR: menu_[tenant_id]_[contact_id]_[timestamp]
     const parts = token.split('_');
 
-    if (parts.length < 5 || parts[0] !== 'loan' || parts[1] !== 'web') {
+    let tenantId: string;
+    let lenderContactId: string;
+    let timestamp: number;
+
+    // Soporte para tokens de menú (menu_) y de formulario (loan_web_)
+    if (parts[0] === 'menu' && parts.length >= 4) {
+      // Token de menú: menu_[tenant_id]_[contact_id]_[timestamp]
+      tenantId = parts[1];
+      lenderContactId = parts[2];
+      timestamp = parseInt(parts[3]);
+    } else if (parts.length >= 5 && parts[0] === 'loan' && parts[1] === 'web') {
+      // Token de formulario: loan_web_[tenant_id]_[lender_contact_id]_[timestamp]
+      tenantId = parts[2];
+      lenderContactId = parts[3];
+      timestamp = parseInt(parts[4]);
+    } else {
+      console.error('Invalid token format:', token.substring(0, 30));
       return null;
     }
-
-    const tenantId = parts[2];
-    const lenderContactId = parts[3];
-    const timestamp = parseInt(parts[4]);
 
     // Validar que no haya expirado (1 hora)
     const now = Date.now();
