@@ -12,8 +12,15 @@ const BANK_ENDPOINT = `${SUPABASE_URL}/functions/v1/menu-data`;
 // Utilidades
 const $ = (selector) => document.querySelector(selector);
 
-function showLoader(show = true) {
-    $('#loader').classList.toggle('hidden', !show);
+function showLoader(show = true, text = 'Cargando...') {
+    const loader = $('#loader');
+    const loaderText = $('#loader-text');
+
+    if (loaderText) {
+        loaderText.textContent = text;
+    }
+
+    loader.classList.toggle('hidden', !show);
 }
 
 function showToast(message, duration = 3000) {
@@ -170,7 +177,7 @@ async function saveBankDetails() {
         return;
     }
 
-    showLoader(true);
+    showLoader(true, 'Guardando...');
 
     try {
         const formData = {

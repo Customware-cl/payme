@@ -9,10 +9,6 @@ const SUPABASE_URL = 'https://qgjxkszfdoolaxmsupil.supabase.co';
 // Utilidades
 const $ = (selector) => document.querySelector(selector);
 
-function showLoader(show = true) {
-    $('#loader').classList.toggle('hidden', !show);
-}
-
 // Inicialización
 function init() {
     // Obtener token de URL si existe
@@ -54,8 +50,6 @@ function setupEventListeners() {
 
 // Handlers
 function handleProfileClick() {
-    showLoader(true);
-
     // Redirigir a la vista de perfil
     const profileUrl = state.token
         ? `/menu/profile.html?token=${state.token}`
@@ -67,8 +61,6 @@ function handleProfileClick() {
 }
 
 function handleBankDetailsClick() {
-    showLoader(true);
-
     // Redirigir a la vista de datos bancarios
     const bankUrl = state.token
         ? `/menu/bank-details.html?token=${state.token}`
@@ -80,8 +72,6 @@ function handleBankDetailsClick() {
 }
 
 function handleNewLoanClick() {
-    showLoader(true);
-
     // Redirigir al formulario de préstamos
     const loanFormUrl = state.token
         ? `/loan-form?token=${state.token}`
@@ -93,8 +83,6 @@ function handleNewLoanClick() {
 }
 
 function handleLoansStatusClick() {
-    showLoader(true);
-
     // Redirigir a la vista de estado de préstamos
     const loansUrl = state.token
         ? `/menu/loans.html?token=${state.token}`
