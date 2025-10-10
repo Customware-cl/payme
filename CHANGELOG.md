@@ -34,6 +34,19 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
   - Mismo fix que se aplicó a `loan-web-form` y `wa_webhook`
   - Permite que la función sea accesible públicamente desde navegadores
 
+#### Problema 4: Guardar datos bancarios fallaba con HTTP 500
+- **Síntoma:** Al intentar guardar datos bancarios → HTTP 500
+- **Error del API:** `{"success":false,"error":"Error al guardar datos bancarios"}`
+- **Causa raíz:** La columna `bank_accounts` NO EXISTÍA en la tabla `contact_profiles`
+  - El código intentaba hacer: `UPDATE contact_profiles SET bank_accounts = [...]`
+  - Pero la tabla solo tenía: id, phone_e164, first_name, last_name, email, created_at, updated_at
+  - La columna bank_accounts nunca se había creado
+- **Solución:** Crear migración para agregar la columna
+  - Migración: `add_bank_accounts_to_contact_profiles`
+  - Tipo: JSONB (permite guardar arrays de objetos)
+  - Default: `[]` (array vacío)
+  - Permite guardar múltiples cuentas bancarias por usuario
+
 ### 🔍 Schema Real
 ```typescript
 // contacts table:
@@ -49,6 +62,7 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
   first_name: string,
   last_name: string,
   email: string,
+  bank_accounts: jsonb,  // ✅ AGREGADO en migración
   // NO tiene contact_id ❌
 }
 ```
@@ -76,6 +90,27 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
   - **Línea 268:** Update de perfil usa `profile.id` en lugar de `contact_id`
   - **Línea 297:** Update de banco usa `profile.id` en lugar de `contact_id`
 
+### 🗃️ Migración de Base de Datos
+- **Migración:** `add_bank_accounts_to_contact_profiles`
+- **SQL:**
+  ```sql
+  ALTER TABLE contact_profiles
+  ADD COLUMN bank_accounts JSONB DEFAULT '[]'::jsonb;
+  ```
+- **Propósito:** Almacenar cuentas bancarias del usuario
+- **Estructura esperada:**
+  ```json
+  [
+    {
+      "rut": "12.345.678-9",
+      "bank_name": "Banco de Chile",
+      "account_type": "Cuenta Corriente",
+      "account_number": "1234567890",
+      "account_holder_name": "Felipe Abarca"
+    }
+  ]
+  ```
+
 ### 📦 Deploy Info
 - **Edge Function desplegada:** `menu-data` v5
   - Script size: 72.07kB
@@ -88,11 +123,13 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
 - ✅ **Problema 1 resuelto:** Datos bancarios ingresados vía WhatsApp Flow ahora se muestran en menú web
 - ✅ **Problema 2 resuelto:** Estado de préstamos ahora carga correctamente sin HTTP 401
 - ✅ **Problema 3 resuelto:** Perfil y banco cargan sin error "Missing authorization header"
+- ✅ **Problema 4 resuelto:** Guardado de datos bancarios ahora funciona sin HTTP 500
 - ✅ Préstamos se muestran sin necesidad de tener profile creado
-- ✅ Guardado desde menú web funciona correctamente
+- ✅ Guardado de perfil desde menú web funciona correctamente
+- ✅ Guardado de datos bancarios desde menú web funciona correctamente
 - ✅ Auto-creación de profile cuando no existe (nuevo flujo)
 - ✅ Consistencia total entre WhatsApp Flow y Menú Web
-- ✅ Todas las vistas del menú web funcionan correctamente ahora
+- ✅ **TODAS las vistas del menú web funcionan correctamente ahora**
 
 ---
 
