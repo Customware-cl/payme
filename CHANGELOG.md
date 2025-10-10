@@ -7,26 +7,53 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
 ### 🐛 Corregido
 - **Síntoma:** Al acceder a "Estado de préstamos" desde el menú web, la página se quedaba cargando infinitamente mostrando "Cargando préstamos..."
 - **Consola del navegador:** `Loans loaded: Object { lent: [], borrowed: [] }` (arrays vacíos)
-- **Causa raíz:** Nombre de tabla incorrecto en queries de `menu-data/index.ts`
-  - El código consultaba: `.from('lending_agreements')`
-  - Pero la tabla real se llama: `agreements`
-  - Las consultas retornaban arrays vacíos sin error
-  - Afectaba tanto préstamos hechos (lent) como préstamos recibidos (borrowed)
+- **Causas raíz múltiples:** Queries incorrectas en `menu-data/index.ts`
+  1. **Tabla incorrecta:** `.from('lending_agreements')` → debe ser `.from('agreements')`
+  2. **Foreign key incorrecta para borrower:** `agreements_borrower_contact_id_fkey` → debe ser `agreements_contact_id_fkey`
+     - La tabla no tiene columna `borrower_contact_id`, el borrower está en `contact_id`
+  3. **Foreign key incorrecta para lender:** `agreements_lender_contact_id_fkey` → debe ser `fk_lender_contact`
+  4. **Columna incorrecta en filter:** `.eq('borrower_contact_id', ...)` → debe ser `.eq('contact_id', ...)`
 - **Impacto:** Los usuarios con préstamos activos veían una página en blanco
   - Usuario de prueba tenía **10 préstamos** en la base de datos
   - Ninguno se mostraba en la interfaz web
   - Estados afectados: `active`, `pending_confirmation`, `rejected`
 
+### 📊 Schema Real de agreements
+```typescript
+agreements {
+  contact_id: uuid           // FK → contacts.id (este es el BORROWER)
+  lender_contact_id: uuid    // FK → contacts.id (este es el LENDER)
+}
+
+// Foreign Keys:
+agreements_contact_id_fkey    → contacts(id)  // para borrower
+fk_lender_contact             → contacts(id)  // para lender
+```
+
 ### ✅ Solución Implementada
-- **Archivos modificados:**
-  - `supabase/functions/menu-data/index.ts`:
-    - Línea 83: Cambiado `.from('lending_agreements')` → `.from('agreements')`
-    - Línea 91: Actualizado foreign key reference a `agreements_borrower_contact_id_fkey`
-    - Línea 98: Cambiado `.from('lending_agreements')` → `.from('agreements')`
-    - Línea 106: Actualizado foreign key reference a `agreements_lender_contact_id_fkey`
+**Préstamos que hice (lent):**
+```typescript
+.from('agreements')  // ✅ tabla correcta
+.select('borrower:contacts!agreements_contact_id_fkey(id, name)')  // ✅ FK correcta
+.eq('lender_contact_id', tokenData.contact_id)  // ✅ columna correcta
+```
+
+**Préstamos que me hicieron (borrowed):**
+```typescript
+.from('agreements')  // ✅ tabla correcta
+.select('lender:contacts!fk_lender_contact(id, name)')  // ✅ FK correcta
+.eq('contact_id', tokenData.contact_id)  // ✅ columna correcta (NO borrower_contact_id)
+```
+
+### 🔄 Archivos modificados
+- `supabase/functions/menu-data/index.ts`:
+  - Líneas 83, 98: Cambiado `.from('lending_agreements')` → `.from('agreements')`
+  - Línea 91: FK borrower: `agreements_borrower_contact_id_fkey` → `agreements_contact_id_fkey`
+  - Línea 106: FK lender: `agreements_lender_contact_id_fkey` → `fk_lender_contact`
+  - Línea 108: Columna: `borrower_contact_id` → `contact_id`
 
 ### 📦 Deploy Info
-- **Edge Function desplegada:** `menu-data` v6
+- **Edge Function desplegada:** `menu-data` v7
   - Script size: 72.06kB
   - Estado: ✅ Activa
   - Comando: `npx supabase functions deploy menu-data --no-verify-jwt`

@@ -88,7 +88,7 @@ serve(async (req: Request) => {
             due_date,
             status,
             created_at,
-            borrower:contacts!agreements_borrower_contact_id_fkey(id, name)
+            borrower:contacts!agreements_contact_id_fkey(id, name)
           `)
           .eq('lender_contact_id', tokenData.contact_id)
           .in('status', ['active', 'pending_confirmation'])
@@ -103,9 +103,9 @@ serve(async (req: Request) => {
             due_date,
             status,
             created_at,
-            lender:contacts!agreements_lender_contact_id_fkey(id, name)
+            lender:contacts!fk_lender_contact(id, name)
           `)
-          .eq('borrower_contact_id', tokenData.contact_id)
+          .eq('contact_id', tokenData.contact_id)
           .in('status', ['active', 'pending_confirmation'])
           .order('created_at', { ascending: false });
 
