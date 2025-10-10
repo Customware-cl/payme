@@ -2,6 +2,40 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-10] - 🎨 UX: Limpiar emojis innecesarios en detalle de préstamo
+
+### ✨ Mejora de interfaz
+
+**Cambios solicitados:**
+- Eliminar emoji antes del monto del préstamo
+- Eliminar emoji en indicador de fecha vencida
+
+**Modificaciones realizadas:**
+
+En `public/menu/loan-detail.js` (líneas 139-153):
+
+1. **Campo "Préstamo"** (línea 142-144):
+   - Antes: `💰 $49.000` → Después: `$49.000`
+   - Antes: `📦 Descripción` → Después: `Descripción`
+   - Eliminados emojis decorativos del valor del préstamo
+
+2. **Campo "Fecha de devolución"** (línea 151):
+   - Antes: `2 Oct 2025 ⚠️ Vencido` → Después: `2 Oct 2025 Vencido`
+   - Eliminado emoji de advertencia del indicador vencido
+
+**Razón:**
+- Interfaz más limpia y profesional
+- Mejor legibilidad de valores numéricos
+- Mantiene emojis solo en:
+  - Campo "Tipo" (identificador visual de categoría)
+  - Campo "Estado" (códigos de estado)
+  - Botones de acción (identificadores de función)
+
+**Archivos modificados:**
+- `public/menu/loan-detail.js` - Líneas 142, 144, 151
+
+---
+
 ## [2025-10-10] - 🔥 Hotfix: Errores de base de datos y WhatsApp al marcar préstamo como devuelto
 
 ### 🐛 Bugs críticos corregidos

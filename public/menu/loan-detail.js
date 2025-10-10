@@ -139,16 +139,16 @@ function renderLoanDetails() {
     // Préstamo (dinero u objeto)
     let loanText = '';
     if (loan.amount !== null) {
-        loanText = `💰 ${formatMoney(loan.amount)}`;
+        loanText = formatMoney(loan.amount);
     } else {
-        loanText = `📦 ${loan.item_description || 'Objeto'}`;
+        loanText = loan.item_description || 'Objeto';
     }
     $('#detail-loan').textContent = loanText;
 
     // Fecha de devolución
     let dueDateText = formatDate(loan.due_date);
     if (overdue && loan.status === 'active') {
-        dueDateText += ' ⚠️ Vencido';
+        dueDateText += ' Vencido';
     }
     $('#detail-due-date').textContent = dueDateText;
 
