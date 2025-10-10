@@ -198,11 +198,15 @@ export class WhatsAppWindowManager {
       expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 días
     };
 
-    const { data: inserted } = await this.supabase
+    const { data: inserted, error } = await this.supabase
       .from('message_queue')
       .insert(queueItem)
       .select('id')
       .single();
+
+    if (error || !inserted) {
+      throw new Error(`Failed to queue message: ${error?.message || 'No data returned'}`);
+    }
 
     return inserted.id;
   }
@@ -297,7 +301,7 @@ export class WhatsAppWindowManager {
       }
 
       // Registrar mensaje en base de datos
-      const { data: messageRecord } = await this.supabase
+      const { data: messageRecord, error: insertError } = await this.supabase
         .from('whatsapp_messages')
         .insert({
           tenant_id: tenantId,
@@ -313,9 +317,13 @@ export class WhatsAppWindowManager {
         .select('id')
         .single();
 
+      if (insertError || !messageRecord) {
+        console.error('Error inserting message record:', insertError);
+      }
+
       return {
         success: true,
-        messageId: messageRecord.id
+        messageId: messageRecord?.id
       };
 
     } catch (error) {
@@ -379,7 +387,7 @@ export class WhatsAppWindowManager {
       }
 
       // Registrar mensaje en base de datos
-      const { data: messageRecord } = await this.supabase
+      const { data: messageRecord, error: insertError } = await this.supabase
         .from('whatsapp_messages')
         .insert({
           tenant_id: tenantId,
@@ -394,9 +402,13 @@ export class WhatsAppWindowManager {
         .select('id')
         .single();
 
+      if (insertError || !messageRecord) {
+        console.error('Error inserting message record:', insertError);
+      }
+
       return {
         success: true,
-        messageId: messageRecord.id
+        messageId: messageRecord?.id
       };
 
     } catch (error) {

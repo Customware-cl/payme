@@ -258,7 +258,7 @@ serve(async (req: Request) => {
           }
           updateData = {
             status: 'completed',
-            returned_date: new Date().toISOString().split('T')[0]
+            completed_at: new Date().toISOString()
           };
           message = 'Préstamo marcado como devuelto';
 

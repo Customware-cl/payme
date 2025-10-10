@@ -2,6 +2,72 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-10] - 🔥 Hotfix: Errores de base de datos y WhatsApp al marcar préstamo como devuelto
+
+### 🐛 Bugs críticos corregidos
+
+**Errores reportados en logs:**
+1. Error SQL: `Could not find the 'returned_date' column of 'agreements'`
+2. Error WhatsApp: `Cannot read properties of null (reading 'id')`
+
+**Problemas identificados:**
+
+1. **Columna inexistente - returned_date**
+   - `loan-actions/index.ts:261` intentaba actualizar `returned_date`
+   - La tabla `agreements` NO tiene esa columna, tiene `completed_at`
+   - Causaba fallo al intentar marcar préstamo como devuelto
+
+2. **Acceso a propiedades null - WhatsApp**
+   - `whatsapp-window-manager.ts:146` accedía a `inserted.id` sin validar null
+   - `whatsapp-window-manager.ts:257` accedía a `messageRecord.id` sin validar
+   - `whatsapp-window-manager.ts:339` accedía a `messageRecord.id` sin validar
+   - Causaba crash al intentar enviar notificaciones WhatsApp
+
+**Soluciones implementadas:**
+
+1. **Columna corregida:**
+```typescript
+// ANTES:
+updateData = {
+    status: 'completed',
+    returned_date: new Date().toISOString().split('T')[0]  // ❌ Columna no existe
+};
+
+// DESPUÉS:
+updateData = {
+    status: 'completed',
+    completed_at: new Date().toISOString()  // ✅ Columna correcta
+};
+```
+
+2. **Validaciones agregadas:**
+```typescript
+// queueMessage - líneas 201-211
+const { data: inserted, error } = await this.supabase...
+if (error || !inserted) {
+    throw new Error(`Failed to queue message: ${error?.message}`);
+}
+return inserted.id;  // ✅ Ahora seguro
+
+// sendTemplateMessage y sendFreeFormMessage
+const { data: messageRecord, error: insertError } = await this.supabase...
+if (insertError || !messageRecord) {
+    console.error('Error inserting message record:', insertError);
+}
+return { success: true, messageId: messageRecord?.id };  // ✅ Optional chaining
+```
+
+**Archivos modificados:**
+- `supabase/functions/loan-actions/index.ts` - Línea 261 (cambiar returned_date → completed_at)
+- `supabase/functions/_shared/whatsapp-window-manager.ts` - Líneas 201-211, 304-327, 390-412 (validaciones)
+
+**Resultado:**
+- ✅ Marcar como devuelto actualiza correctamente la base de datos
+- ✅ Notificaciones WhatsApp se envían sin crash (o fallan gracefully)
+- ✅ Logs más descriptivos para debugging
+
+---
+
 ## [2025-10-10] - 🐛 Fix crítico: Acciones de préstamo no se ejecutaban correctamente
 
 ### 🐛 Bug crítico corregido
