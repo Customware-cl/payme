@@ -40,6 +40,16 @@ Se abre el navegador con el menú web (token válido 1h)
   - Reemplaza botones de WhatsApp por acceso directo al menú web
   - Manejo de errores con fallback a mensaje de texto
 
+### 📦 Deploy Info
+- **Edge Function desplegada:** `wa_webhook`
+  - Script size: 140.9kB
+  - Estado: ✅ Desplegado correctamente
+  - Comando: `npx supabase functions deploy wa_webhook --no-verify-jwt`
+  - Dashboard: https://supabase.com/dashboard/project/qgjxkszfdoolaxmsupil/functions
+
+### ✅ Listo para usar
+El usuario puede escribir "hola" en WhatsApp y recibirá inmediatamente el botón de acceso al menú web.
+
 ---
 
 ## [2025-10-09] - Plantilla de WhatsApp para acceso al Menú Web
