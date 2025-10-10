@@ -2,6 +2,55 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-10] - Mensaje de engagement optimizado con CTA directo a la app
+
+### ✨ Mejorado
+- **Mensaje de engagement después de primera confirmación**
+  - Ahora envía botón CTA URL directo a la app en lugar de 3 botones de acción
+  - **Trigger:** Solo se envía cuando el usuario confirma su primer préstamo
+  - **Antes (3 botones):**
+    - ➕ Registrar uno mío (new_loan)
+    - 📋 Ver préstamos (check_status)
+    - 💬 Ver ayuda (help)
+  - **Ahora (1 botón CTA URL):**
+    - "Ir a la app" → Link directo al menú web
+    - Token generado dinámicamente (válido 1 hora)
+    - Acceso inmediato a todas las funcionalidades
+
+### 💡 Estrategia de Engagement
+- **Timing:** Justo después de la primera confirmación
+- **Value Proposition:** "Como a ti te prestaron, probablemente tú también prestas a amigos o familia"
+- **CTA:** Un solo botón para reducir fricción
+- **Beneficio:** Usuario accede directamente al menú donde puede:
+  - Registrar préstamos propios
+  - Ver estado de préstamos
+  - Gestionar perfil y datos bancarios
+  - Y más funcionalidades
+
+### 🔄 Implementación Técnica
+- **Ubicación:** `wa_webhook/index.ts` líneas 1376-1426
+- **Proceso:**
+  1. Verificar si es primera confirmación (count === 1)
+  2. Generar token del menú web llamando a `generate-menu-token`
+  3. Crear mensaje interactivo tipo `cta_url`
+  4. Enviar botón "Ir a la app" con URL personalizada
+- **Manejo de errores:** Si falla generación de token, no bloquea flujo de confirmación
+- **Logs detallados:** `[ENGAGEMENT]` prefix para tracking
+
+### ✅ Impacto
+- ✅ **Reducción de fricción:** 1 click vs 1 click + navegación
+- ✅ **Mayor conversión:** Acceso directo elimina pasos intermedios
+- ✅ **Mejor UX:** Usuario ve inmediatamente todas las opciones en la app
+- ✅ **Mantenibilidad:** Código más simple (1 botón vs 3 handlers)
+- ✅ **Seguridad:** Token temporal con expiración (1 hora)
+
+### 📊 Métricas a Monitorear
+- Tasa de click en botón "Ir a la app" (engagement)
+- Tasa de creación de primer préstamo propio post-confirmación
+- Tiempo entre confirmación y primera acción en la app
+
+---
+
 ## [2025-10-09] - FIX CRÍTICO: Duplicación de código de país + Formato teléfono
 
 ### 🐛 Corregido

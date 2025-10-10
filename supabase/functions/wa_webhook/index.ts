@@ -1376,38 +1376,54 @@ async function processInboundMessage(
                 if (count === 1) {
                   console.log('[ENGAGEMENT] First confirmation detected, sending engagement message');
 
-                  // Preparar mensaje de engagement con botones (Variante C)
-                  interactiveResponse = {
-                    type: 'button',
-                    body: {
-                      text: 'Confirmado! 🎉\n\nComo a ti te prestaron, probablemente tú también prestas a amigos o familia. Registra esos préstamos acá y te ayudamos con recordatorios para que no se olviden.\n\n¿Qué hacemos?'
-                    },
-                    action: {
-                      buttons: [
-                        {
-                          type: 'reply',
-                          reply: {
-                            id: 'new_loan',
-                            title: '➕ Registrar uno mío'
-                          }
+                  // Generar token del menú web para engagement
+                  try {
+                    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+                    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+                    const engagementTokenResponse = await fetch(
+                      `${supabaseUrl}/functions/v1/generate-menu-token`,
+                      {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${supabaseServiceKey}`
                         },
-                        {
-                          type: 'reply',
-                          reply: {
-                            id: 'check_status',
-                            title: '📋 Ver préstamos'
-                          }
+                        body: JSON.stringify({
+                          tenant_id: tenant.id,
+                          contact_id: contact.id
+                        })
+                      }
+                    );
+
+                    const engagementTokenData = await engagementTokenResponse.json();
+
+                    if (engagementTokenData.success && engagementTokenData.data.url) {
+                      const engagementMenuUrl = engagementTokenData.data.url;
+                      console.log('[ENGAGEMENT] Menu URL generated:', engagementMenuUrl);
+
+                      // Preparar mensaje de engagement con botón CTA URL
+                      interactiveResponse = {
+                        type: 'cta_url',
+                        body: {
+                          text: 'Confirmado! 🎉\n\nComo a ti te prestaron, probablemente tú también prestas a amigos o familia. Registra esos préstamos y te ayudamos con recordatorios para que no se olviden.\n\n⏱️ Válido por 1 hora.'
                         },
-                        {
-                          type: 'reply',
-                          reply: {
-                            id: 'help',
-                            title: '💬 Ver ayuda'
+                        action: {
+                          name: 'cta_url',
+                          parameters: {
+                            display_text: 'Ir a la app',
+                            url: engagementMenuUrl
                           }
                         }
-                      ]
+                      };
+                    } else {
+                      console.error('[ENGAGEMENT] Error generating menu token:', engagementTokenData);
+                      // Si falla, no bloquear - el mensaje de confirmación ya se envió
                     }
-                  };
+                  } catch (engagementTokenError) {
+                    console.error('[ENGAGEMENT] Exception generating menu token:', engagementTokenError);
+                    // Si falla, no bloquear - el mensaje de confirmación ya se envió
+                  }
                 } else {
                   console.log('[ENGAGEMENT] Not first confirmation, skipping engagement message');
                 }
