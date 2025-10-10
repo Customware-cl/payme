@@ -2,6 +2,44 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-10] - 🎨 Fix: Estilos de modales y botón danger en detalle de préstamos
+
+### 🐛 Problemas corregidos
+
+**Problemas reportados por usuario:**
+1. Modales (confirmación y editar fecha) renderizándose incorrectamente - aparecían superpuestos sin overlay
+2. Botón "Cancelar préstamo" (danger) más pequeño que los demás botones de acción
+
+**Causa raíz:**
+- Estilos de modal faltaban en `public/menu/styles.css`
+- Botón `.btn-danger` no tenía propiedades de tamaño definidas
+
+**Solución implementada:**
+
+1. **Estilos de modal agregados** (líneas 725-831):
+   - `.modal` - Overlay con fondo semi-transparente, z-index 1000
+   - `.modal-content` - Contenedor centrado con animación slideUp
+   - `.modal-header` - Header con título y botón cerrar
+   - `.modal-body` - Cuerpo con formularios
+   - `.modal-footer` - Footer con botones (flex: 1)
+   - `@keyframes slideUp` - Animación de entrada suave
+
+2. **Botón danger normalizado** (líneas 662-681):
+   - `width: 100%` - Mismo ancho que btn-primary y btn-secondary
+   - `padding: 16px` - Mismo padding que otros botones
+   - `font-size: 16px` - Consistente con otros botones
+   - Mantiene color rojo (#dc3545) como color de advertencia
+
+**Archivos modificados:**
+- `public/menu/styles.css` - Agregados estilos de modal y normalizados estilos btn-danger
+
+**Resultado:**
+- Modales se muestran correctamente con overlay y animación
+- Todos los botones tienen el mismo tamaño visual
+- Interfaz más consistente y profesional
+
+---
+
 ## [2025-10-10] - 🔙 UX: Navegación contextual en botón volver de préstamos
 
 ### ✨ Mejora de Navegación
