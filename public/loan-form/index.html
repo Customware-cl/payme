@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nuevo Préstamo</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Overlay de carga -->
+    <div id="loader" class="loader hidden">
+        <div class="spinner"></div>
+        <p>Cargando...</p>
+    </div>
+
+    <!-- Pantalla 1: ¿A quién? -->
+    <section id="screen-who" class="screen active">
+        <div class="container">
+            <div class="header">
+                <h1>¿A quién le prestas?</h1>
+                <p class="subtitle">Selecciona un contacto o agrega uno nuevo</p>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: 25%"></div>
+                </div>
+            </div>
+
+            <div class="content">
+                <div id="contacts-list" class="contacts-list">
+                    <!-- Se llena dinámicamente con JavaScript -->
+                </div>
+
+                <button type="button" class="btn-secondary" id="btn-new-contact">
+                    <span>➕</span>
+                    <span>Agregar nuevo contacto</span>
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pantalla 2: ¿Qué? -->
+    <section id="screen-what" class="screen">
+        <div class="container">
+            <div class="header">
+                <button class="btn-back" id="back-from-what">←</button>
+                <h1>¿Qué le prestas?</h1>
+                <p class="subtitle" id="subtitle-what">Selecciona el tipo de préstamo</p>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: 50%"></div>
+                </div>
+            </div>
+
+            <div class="content">
+                <div class="type-buttons">
+                    <button type="button" class="type-btn" data-type="money">
+                        <span class="icon">💰</span>
+                        <span class="label">Dinero</span>
+                    </button>
+                    <button type="button" class="type-btn" data-type="object">
+                        <span class="icon">📦</span>
+                        <span class="label">Un objeto</span>
+                    </button>
+                </div>
+
+                <div id="detail-input" class="detail-input hidden">
+                    <label id="detail-label" for="loan-detail">Monto</label>
+                    <input type="text" id="loan-detail" placeholder="Ej: 50000" autocomplete="off">
+                    <p class="hint" id="detail-hint">Solo números, sin puntos ni comas</p>
+                </div>
+
+                <button type="button" class="btn-primary hidden" id="btn-continue-what">
+                    Continuar
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pantalla 3: ¿Cuándo? -->
+    <section id="screen-when" class="screen">
+        <div class="container">
+            <div class="header">
+                <button class="btn-back" id="back-from-when">←</button>
+                <h1>¿Cuándo te lo devuelven?</h1>
+                <p class="subtitle">Selecciona una fecha</p>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: 75%"></div>
+                </div>
+            </div>
+
+            <div class="content">
+                <div class="date-chips">
+                    <button type="button" class="date-chip" data-date="tomorrow">
+                        <span class="icon">🕐</span>
+                        <span class="label">Mañana</span>
+                    </button>
+                    <button type="button" class="date-chip" data-date="week">
+                        <span class="icon">📅</span>
+                        <span class="label">En una semana</span>
+                    </button>
+                    <button type="button" class="date-chip" data-date="month-end">
+                        <span class="icon">📆</span>
+                        <span class="label">A fin de mes</span>
+                    </button>
+                    <button type="button" class="date-chip" data-date="custom">
+                        <span class="icon">🗓️</span>
+                        <span class="label">Fecha específica</span>
+                    </button>
+                </div>
+
+                <div id="custom-date-input" class="custom-date-input hidden">
+                    <label for="custom-date">Fecha de devolución</label>
+                    <input type="date" id="custom-date">
+                </div>
+
+                <button type="button" class="btn-primary hidden" id="btn-continue-when">
+                    Continuar
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pantalla 4: Confirmación -->
+    <section id="screen-confirm" class="screen">
+        <div class="container">
+            <div class="header">
+                <button class="btn-back" id="back-from-confirm">←</button>
+                <h1>Confirma el préstamo</h1>
+                <p class="subtitle">Verifica que todo esté correcto</p>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: 100%"></div>
+                </div>
+            </div>
+
+            <div class="content">
+                <div class="summary-card">
+                    <div class="summary-row">
+                        <span class="label">Para:</span>
+                        <span class="value" id="summary-who">—</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="label">Préstamo:</span>
+                        <span class="value" id="summary-what">—</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="label">Devolución:</span>
+                        <span class="value" id="summary-when">—</span>
+                    </div>
+                </div>
+
+                <button type="button" class="btn-primary" id="btn-create-loan">
+                    Crear préstamo
+                </button>
+
+                <button type="button" class="btn-link" id="btn-edit">
+                    Editar
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pantalla 5: Éxito -->
+    <section id="screen-success" class="screen">
+        <div class="container">
+            <div class="success-animation">
+                <div class="checkmark">✓</div>
+            </div>
+
+            <h1 class="success-title">¡Préstamo creado!</h1>
+            <p class="success-subtitle">El registro se completó exitosamente</p>
+
+            <div class="success-details">
+                <div class="detail-item">
+                    <span class="label">Para:</span>
+                    <span class="value" id="success-who">—</span>
+                </div>
+                <div class="detail-item">
+                    <span class="label">Préstamo:</span>
+                    <span class="value" id="success-what">—</span>
+                </div>
+                <div class="detail-item">
+                    <span class="label">Fecha:</span>
+                    <span class="value" id="success-when">—</span>
+                </div>
+            </div>
+
+            <button type="button" class="btn-primary" id="btn-back-to-whatsapp">
+                Volver a WhatsApp
+            </button>
+
+            <button type="button" class="btn-link" id="btn-create-another">
+                Crear otro préstamo
+            </button>
+        </div>
+    </section>
+
+    <!-- Modal para nuevo contacto -->
+    <div id="modal-new-contact" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Nuevo contacto</h3>
+                <button class="btn-close" id="btn-close-modal">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="new-contact-name">Nombre completo *</label>
+                    <input type="text" id="new-contact-name" placeholder="Ej: Juan Pérez" required>
+                </div>
+                <div class="form-group">
+                    <label for="new-contact-phone">Teléfono (opcional)</label>
+                    <input type="tel" id="new-contact-phone" placeholder="Ej: +56912345678">
+                    <p class="hint">Formato: +56912345678</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" id="btn-cancel-contact">Cancelar</button>
+                <button type="button" class="btn-primary" id="btn-save-contact">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast de notificaciones -->
+    <div id="toast" class="toast hidden">
+        <p id="toast-message"></p>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
