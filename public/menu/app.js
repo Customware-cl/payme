@@ -44,6 +44,12 @@ function setupEventListeners() {
         console.log('New loan button clicked');
         handleNewLoanClick();
     });
+
+    // Estado de préstamos
+    $('#btn-loans-status').addEventListener('click', () => {
+        console.log('Loans status button clicked');
+        handleLoansStatusClick();
+    });
 }
 
 // Handlers
@@ -84,6 +90,19 @@ function handleNewLoanClick() {
     console.log('Redirecting to loan form:', loanFormUrl);
 
     window.location.href = loanFormUrl;
+}
+
+function handleLoansStatusClick() {
+    showLoader(true);
+
+    // Redirigir a la vista de estado de préstamos
+    const loansUrl = state.token
+        ? `/menu/loans.html?token=${state.token}`
+        : '/menu/loans.html';
+
+    console.log('Redirecting to loans status:', loansUrl);
+
+    window.location.href = loansUrl;
 }
 
 // Iniciar app cuando el DOM esté listo

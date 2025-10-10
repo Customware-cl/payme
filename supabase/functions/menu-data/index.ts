@@ -120,6 +120,48 @@ serve(async (req: Request) => {
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
+      } else if (type === 'loans') {
+        // Obtener préstamos donde el usuario es el prestador (lent) o prestatario (borrowed)
+        const { data: lentAgreements } = await supabase
+          .from('lending_agreements')
+          .select(`
+            id,
+            amount,
+            item_description,
+            due_date,
+            status,
+            created_at,
+            borrower:contacts!lending_agreements_borrower_contact_id_fkey(id, name)
+          `)
+          .eq('lender_contact_id', tokenData.contact_id)
+          .in('status', ['active', 'pending_confirmation'])
+          .order('created_at', { ascending: false });
+
+        const { data: borrowedAgreements } = await supabase
+          .from('lending_agreements')
+          .select(`
+            id,
+            amount,
+            item_description,
+            due_date,
+            status,
+            created_at,
+            lender:contacts!lending_agreements_lender_contact_id_fkey(id, name)
+          `)
+          .eq('borrower_contact_id', tokenData.contact_id)
+          .in('status', ['active', 'pending_confirmation'])
+          .order('created_at', { ascending: false });
+
+        return new Response(JSON.stringify({
+          success: true,
+          contact_id: tokenData.contact_id,
+          loans: {
+            lent: lentAgreements || [],
+            borrowed: borrowedAgreements || []
+          }
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
       }
 
       return new Response(JSON.stringify({ success: false, error: 'Tipo no válido' }), {

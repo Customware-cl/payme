@@ -170,6 +170,15 @@ function renderContacts() {
 
 // Event Listeners
 function setupEventListeners() {
+    // Botón volver al menú
+    $('#back-to-menu').addEventListener('click', () => {
+        // Volver al menú principal
+        const menuUrl = state.token
+            ? `/menu?token=${state.token}`
+            : '/menu';
+        window.location.href = menuUrl;
+    });
+
     // Pantalla 1: Selección de contacto
     $('#contacts-list').addEventListener('click', (e) => {
         const item = e.target.closest('.contact-item');
