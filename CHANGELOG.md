@@ -2,6 +2,38 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-09] - Feature: Mensaje informativo en datos bancarios
+
+### ✨ Añadido
+- **Mensaje informativo en vista de datos bancarios**
+  - Box informativo azul al inicio del formulario
+  - Explica al usuario el propósito de los datos bancarios
+  - Texto: "Esta información será enviada a quienes les has prestado dinero u objetos en la fecha de devolución"
+  - Icono ℹ️ para llamar la atención
+  - Diseño no intrusivo pero visible
+
+### 🎨 Diseño
+- Box con fondo azul claro (#e3f2fd)
+- Borde izquierdo azul (#2196f3) para énfasis
+- Texto azul oscuro (#1565c0) legible
+- Espaciado adecuado con el formulario
+
+### 🔄 Archivos modificados
+- `public/menu/bank-details.html`:
+  - Agregado `.info-box` antes del formulario
+  - Mensaje informativo claro y directo
+- `public/menu/styles.css`:
+  - Nuevas clases: `.info-box`, `.info-box-icon`, `.info-box-text`
+  - Estilo reutilizable para otros mensajes informativos
+
+### ✅ Impacto
+- ✅ Usuario entiende para qué se usan sus datos bancarios
+- ✅ Transparencia en el uso de información personal
+- ✅ Reduce dudas antes de ingresar datos sensibles
+- ✅ UX más clara y confiable
+
+---
+
 ## [2025-10-09] - FIX CRÍTICO: Loader visible después del renderizado
 
 ### 🐛 Corregido

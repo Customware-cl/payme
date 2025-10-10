@@ -260,6 +260,30 @@ body {
     background: var(--bg-main);
 }
 
+/* Info box */
+.info-box {
+    background: #e3f2fd;
+    border-left: 4px solid #2196f3;
+    padding: 16px;
+    border-radius: 8px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.info-box-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.info-box-text {
+    font-size: 14px;
+    line-height: 1.5;
+    color: #1565c0;
+}
+
 /* Formularios */
 .form {
     max-width: 100%;
