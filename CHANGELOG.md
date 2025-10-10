@@ -2,6 +2,101 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-09] - Feature: Submenú de filtros + Corrección de fechas en préstamos
+
+### ✨ Añadido
+- **Submenú de filtros en Estado de Préstamos**
+  - Al entrar a "Estado de préstamos", ahora se muestra un menú con 2 opciones:
+    - 💰 Dinero: Filtra solo préstamos de dinero
+    - 📦 Objetos: Filtra solo préstamos de objetos
+  - Cada opción muestra contador de préstamos (ej: "3 préstamos")
+  - Navegación fluida estilo WhatsApp
+
+- **Ordenamiento por fecha de vencimiento**
+  - Préstamos ahora se muestran ordenados por fecha ascendente
+  - Los que vencen primero aparecen arriba
+  - Aplica a ambas secciones: préstamos hechos y recibidos
+
+- **Iconos visuales según tipo**
+  - 💰 Dinero: Muestra icono de dinero + monto formateado
+  - 📦 Objetos: Muestra icono de paquete + descripción
+
+### 🐛 Corregido
+- **Problema CRÍTICO: Fechas incorrectas por offset UTC**
+  - **Síntoma:** Registrar "fin de mes" (31 Oct) mostraba 1 Nov en la lista
+  - **Causa raíz:** `.toISOString()` convertía fecha local a UTC
+    - Chile UTC-3: "31 Oct 2025 00:00 -03:00" → "31 Oct 2025 03:00 UTC"
+    - Al parsear de vuelta, saltaba al día siguiente
+  - **Solución:** Formateo manual sin conversión UTC
+    - Frontend: `loan-form/app.js` - función `calculateDate()`
+    - Backend: `loan-web-form/index.ts` - función `calculateDate()`
+    - Vista: `loans.js` - funciones `formatDate()` e `isOverdue()`
+  - **Formato usado:** `YYYY-MM-DD` construido con valores locales
+
+### 🔄 Archivos modificados
+- `public/menu/loans.html`:
+  - Agregado submenú de filtros con 2 botones
+  - IDs: `#filter-money`, `#filter-objects`
+  - Contadores dinámicos: `#money-count`, `#objects-count`
+
+- `public/menu/loans.js`:
+  - Variable de estado `currentFilter` para tracking del filtro activo
+  - Función `showFilterMenu()`: Muestra submenú con contadores
+  - Función `filterAndRenderLoans()`: Filtra por tipo y ordena por fecha
+  - Función `renderLoans()`: Acepta parámetro opcional con datos filtrados
+  - Función `formatDate()`: Parsea fecha como local sin offset UTC
+  - Función `isOverdue()`: Parsea fecha como local sin offset UTC
+  - Función `renderLoanCard()`: Agrega icono 💰 o 📦 según tipo
+  - Event listeners para botones de filtro
+
+- `public/loan-form/app.js`:
+  - Función `calculateDate()`: Reemplazado `.toISOString()` por formato manual
+  - Usa `.getFullYear()`, `.getMonth()`, `.getDate()` para valores locales
+
+- `supabase/functions/loan-web-form/index.ts`:
+  - Función `calculateDate()`: Mismo fix que frontend
+  - Consistencia backend-frontend en manejo de fechas
+
+### 🎨 Flujo de Usuario
+
+**Antes:**
+```
+Estado de préstamos → Loading → Lista mezclada sin orden
+```
+
+**Después:**
+```
+Estado de préstamos → Submenú (💰 Dinero | 📦 Objetos)
+                         ↓
+                    Lista filtrada y ordenada ↑
+```
+
+### ✅ Impacto
+- ✅ **Fechas exactas:** "Fin de mes" muestra 31 Oct (no 1 Nov)
+- ✅ **Organización:** Préstamos separados por tipo
+- ✅ **Ordenamiento:** Próximos a vencer aparecen primero
+- ✅ **Visual:** Iconos facilitan identificación rápida
+- ✅ **Contadores:** Usuario sabe cuántos préstamos tiene de cada tipo
+- ✅ **UX mejorada:** Navegación más clara y organizada
+
+### 📊 Ejemplo de Vista
+
+**Dinero:**
+```
+A Juan Pérez                    ⏳ Pendiente
+💰 $50.000
+Vence: 31 Oct 2025                        ›
+```
+
+**Objeto:**
+```
+De María López                  ⚠️ Vencido
+📦 Bicicleta
+Vence: 28 Oct 2025                        ›
+```
+
+---
+
 ## [2025-10-09] - Corrección UX: Eliminados parpadeos molestos en menú web
 
 ### 🐛 Corregido

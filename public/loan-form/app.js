@@ -70,7 +70,11 @@ function calculateDate(option) {
             return null;
     }
 
-    return targetDate.toISOString().split('T')[0];
+    // Formatear como YYYY-MM-DD sin conversión UTC
+    const year = targetDate.getFullYear();
+    const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const day = String(targetDate.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 }
 
 function getDateLabel(option, customDate = null) {

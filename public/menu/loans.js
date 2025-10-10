@@ -4,7 +4,8 @@ const state = {
     loans: {
         lent: [],
         borrowed: []
-    }
+    },
+    currentFilter: null // 'money' | 'objects' | null
 };
 
 // Configuración
@@ -18,19 +19,23 @@ function formatMoney(amount) {
 }
 
 function formatDate(dateString) {
-    const date = new Date(dateString);
+    // Parsear fecha como local (sin offset UTC)
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+
     const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-    const day = date.getDate();
-    const month = months[date.getMonth()];
-    const year = date.getFullYear();
-    return `${day} ${month} ${year}`;
+    return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
 }
 
 function isOverdue(dueDate) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const due = new Date(dueDate);
+
+    // Parsear fecha como local (sin offset UTC)
+    const [year, month, day] = dueDate.split('-').map(Number);
+    const due = new Date(year, month - 1, day);
     due.setHours(0, 0, 0, 0);
+
     return due < today;
 }
 
@@ -65,6 +70,17 @@ function setupEventListeners() {
             window.location.href = `/loan-form?token=${state.token}`;
         });
     }
+
+    // Filtros del submenú
+    $('#filter-money').addEventListener('click', () => {
+        state.currentFilter = 'money';
+        filterAndRenderLoans();
+    });
+
+    $('#filter-objects').addEventListener('click', () => {
+        state.currentFilter = 'objects';
+        filterAndRenderLoans();
+    });
 }
 
 // Cargar préstamos
@@ -99,11 +115,8 @@ async function loadLoans() {
             return;
         }
 
-        // Renderizar préstamos
-        renderLoans();
-
-        loadingState.classList.add('hidden');
-        loansContent.classList.remove('hidden');
+        // Mostrar submenú de filtros
+        showFilterMenu();
 
     } catch (error) {
         console.error('Error loading loans:', error);
@@ -112,28 +125,88 @@ async function loadLoans() {
     }
 }
 
+// Mostrar submenú de filtros
+function showFilterMenu() {
+    const filterMenu = $('#filter-menu');
+    const loadingState = $('#loading-state');
+    const emptyState = $('#empty-state');
+    const loansContent = $('#loans-content');
+
+    // Contar préstamos por tipo
+    const allLoans = [...state.loans.lent, ...state.loans.borrowed];
+    const moneyCount = allLoans.filter(l => l.amount !== null).length;
+    const objectsCount = allLoans.filter(l => l.amount === null).length;
+
+    // Actualizar contadores
+    $('#money-count').textContent = moneyCount === 1 ? '1 préstamo' : `${moneyCount} préstamos`;
+    $('#objects-count').textContent = objectsCount === 1 ? '1 préstamo' : `${objectsCount} préstamos`;
+
+    // Mostrar solo el menú de filtros
+    filterMenu.classList.remove('hidden');
+    loadingState.classList.add('hidden');
+    emptyState.classList.add('hidden');
+    loansContent.classList.add('hidden');
+}
+
+// Filtrar y renderizar préstamos
+function filterAndRenderLoans() {
+    const filterMenu = $('#filter-menu');
+    const loansContent = $('#loans-content');
+
+    // Filtrar según el tipo seleccionado
+    const filtered = {
+        lent: state.loans.lent.filter(loan => {
+            if (state.currentFilter === 'money') {
+                return loan.amount !== null;
+            } else if (state.currentFilter === 'objects') {
+                return loan.amount === null;
+            }
+            return true;
+        }),
+        borrowed: state.loans.borrowed.filter(loan => {
+            if (state.currentFilter === 'money') {
+                return loan.amount !== null;
+            } else if (state.currentFilter === 'objects') {
+                return loan.amount === null;
+            }
+            return true;
+        })
+    };
+
+    // Ordenar por fecha ascendente (próximos a vencer primero)
+    filtered.lent.sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+    filtered.borrowed.sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+
+    // Renderizar con datos filtrados
+    renderLoans(filtered);
+
+    // Ocultar menú, mostrar préstamos
+    filterMenu.classList.add('hidden');
+    loansContent.classList.remove('hidden');
+}
+
 // Renderizar préstamos
-function renderLoans() {
+function renderLoans(loansData = state.loans) {
     // Renderizar préstamos que hiciste
     const lentList = $('#lent-list');
     const lentSection = $('#lent-section');
 
-    if (state.loans.lent.length === 0) {
+    if (loansData.lent.length === 0) {
         lentSection.classList.add('hidden');
     } else {
         lentSection.classList.remove('hidden');
-        lentList.innerHTML = state.loans.lent.map(loan => renderLoanCard(loan, 'lent')).join('');
+        lentList.innerHTML = loansData.lent.map(loan => renderLoanCard(loan, 'lent')).join('');
     }
 
     // Renderizar préstamos que te hicieron
     const borrowedList = $('#borrowed-list');
     const borrowedSection = $('#borrowed-section');
 
-    if (state.loans.borrowed.length === 0) {
+    if (loansData.borrowed.length === 0) {
         borrowedSection.classList.add('hidden');
     } else {
         borrowedSection.classList.remove('hidden');
-        borrowedList.innerHTML = state.loans.borrowed.map(loan => renderLoanCard(loan, 'borrowed')).join('');
+        borrowedList.innerHTML = loansData.borrowed.map(loan => renderLoanCard(loan, 'borrowed')).join('');
     }
 
     // Agregar event listeners a las tarjetas
@@ -154,11 +227,14 @@ function renderLoanCard(loan, type) {
     const contact = type === 'lent' ? loan.borrower : loan.lender;
     const contactName = contact ? contact.name : 'Contacto desconocido';
 
-    // Determinar el texto del préstamo
+    // Determinar el texto del préstamo con icono
+    let loanIcon = '';
     let loanText = '';
-    if (loan.amount) {
+    if (loan.amount !== null) {
+        loanIcon = '💰';
         loanText = formatMoney(loan.amount);
     } else {
+        loanIcon = '📦';
         loanText = loan.item_description || 'Objeto';
     }
 
@@ -177,7 +253,7 @@ function renderLoanCard(loan, type) {
                 ${statusBadge}
             </div>
             <div class="loan-card-body">
-                <div class="loan-amount">${loanText}</div>
+                <div class="loan-amount">${loanIcon} ${loanText}</div>
                 <div class="loan-due-date">Vence: ${formatDate(loan.due_date)}</div>
             </div>
             <div class="loan-card-arrow">›</div>
