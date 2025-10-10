@@ -2,6 +2,62 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-10] - ✨ FEATURE: Sistema de Acciones sobre Préstamos (App Web)
+
+### 🎯 Nueva Funcionalidad
+
+**Vista de Detalle de Préstamos:**
+- ✅ Página completa de detalle del préstamo con acciones contextuales
+- ✅ Botones que se renderizan según rol del usuario (prestamista/prestatario) y estado del préstamo
+- ✅ Modales de confirmación para acciones destructivas
+- ✅ Integración con WhatsApp para notificaciones automáticas
+- ✅ Validación de permisos en backend
+
+**Archivos creados:**
+- `public/menu/loan-detail.html` - Interfaz de detalle con acciones
+- `public/menu/loan-detail.js` - Lógica frontend para manejar acciones
+- `supabase/functions/loan-actions/index.ts` - Edge Function para procesar acciones
+
+**Acciones implementadas por rol y estado:**
+
+**Prestamista + Préstamo Pendiente:**
+- 🔔 Reenviar solicitud de confirmación
+- ❌ Cancelar solicitud
+
+**Prestamista + Préstamo Activo:**
+- 🔔 Enviar recordatorio vía WhatsApp
+- ✅ Marcar como devuelto
+- 📝 Editar fecha de devolución
+- ❌ Cancelar préstamo
+
+**Prestatario + Préstamo Pendiente:**
+- ✅ Confirmar préstamo
+- ❌ Rechazar préstamo
+
+**Prestatario + Préstamo Activo:**
+- ✅ Marcar como devuelto
+- 📝 Solicitar extensión de plazo
+- 💬 Contactar prestamista (abre WhatsApp directo)
+
+**Características técnicas:**
+- Validación de tokens con expiración de 1 hora
+- Validación de permisos según rol del usuario
+- Notificaciones automáticas vía WhatsApp usando `WhatsAppWindowManager`
+- Actualización de estado de préstamos con retroalimentación en tiempo real
+- Formateo de fechas y montos en español chileno
+- Diseño responsive con estilos consistentes
+
+**Deploy:**
+- ✅ `loan-actions` (80.77kB) deployado con `--no-verify-jwt`
+- **Fecha:** 2025-10-10
+
+**Integración:**
+- Desde `loans.html`, al hacer click en una tarjeta de préstamo → navega a `loan-detail.html`
+- La navegación preserva el token de sesión
+- Botón "volver" regresa a la lista de préstamos
+
+---
+
 ## [2025-10-10] - 📝 UX: Cambio de texto en estado de préstamos
 
 ### ✨ Mejora de Claridad
