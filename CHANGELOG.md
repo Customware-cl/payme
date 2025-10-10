@@ -2,6 +2,42 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-10] - 🎯 UX: Reorden de botones de positivo a negativo
+
+### ✨ Mejora de Jerarquía Visual
+
+**Orden de botones optimizado:**
+- Todos los botones ahora van ordenados de acciones positivas a negativas
+- "✅ Marcar como devuelto" siempre aparece primero cuando está disponible
+- Facilita encontrar la acción más importante rápidamente
+
+**Nuevo orden para Prestamista + Préstamo Activo:**
+
+**Vencido:**
+1. ✅ Marcar como devuelto (POSITIVO - resuelve el préstamo)
+2. 📝 Renegociar fecha (POSITIVO - ayuda)
+3. 🚨 Enviar recordatorio (NEUTRO)
+4. ❌ Cancelar/Condonar préstamo (NEGATIVO)
+
+**No vencido:**
+1. ✅ Marcar como devuelto (POSITIVO)
+2. 📝 Editar fecha de devolución (POSITIVO)
+3. 🔔 Enviar recordatorio (NEUTRO)
+4. ❌ Cancelar préstamo (NEGATIVO)
+
+**Archivos modificados:**
+- `public/menu/loan-detail.js` - Líneas 195-210 (reordenación de arrays de acciones)
+
+**Beneficios:**
+- Jerarquía visual clara: acción principal siempre primero
+- Reduce errores al evitar acciones destructivas en primer lugar
+- Mejora la velocidad de navegación
+- Flujo más intuitivo de toma de decisiones
+
+**Fecha:** 2025-10-10
+
+---
+
 ## [2025-10-10] - 🎨 UX: Mejoras contextuales en acciones de préstamos
 
 ### ✨ Mejoras de Experiencia de Usuario

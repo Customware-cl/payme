@@ -193,19 +193,19 @@ function renderActionButtons() {
             { icon: '❌', text: 'Cancelar solicitud', action: 'cancel', style: 'danger' }
         ];
     } else if (userRole === 'lender' && isActive && overdue) {
-        // Prestamista con préstamo vencido
+        // Prestamista con préstamo vencido (orden: positivo → negativo)
         actions = [
-            { icon: '🚨', text: 'Enviar recordatorio', action: 'remind', style: 'secondary' },
             { icon: '✅', text: 'Marcar como devuelto', action: 'mark_returned', style: 'primary' },
             { icon: '📝', text: 'Renegociar fecha', action: 'edit_date', style: 'secondary' },
+            { icon: '🚨', text: 'Enviar recordatorio', action: 'remind', style: 'secondary' },
             { icon: '❌', text: 'Cancelar/Condonar préstamo', action: 'cancel', style: 'danger' }
         ];
     } else if (userRole === 'lender' && isActive) {
-        // Prestamista con préstamo activo no vencido
+        // Prestamista con préstamo activo no vencido (orden: positivo → negativo)
         actions = [
-            { icon: '🔔', text: 'Enviar recordatorio', action: 'remind', style: 'secondary' },
             { icon: '✅', text: 'Marcar como devuelto', action: 'mark_returned', style: 'primary' },
             { icon: '📝', text: 'Editar fecha de devolución', action: 'edit_date', style: 'secondary' },
+            { icon: '🔔', text: 'Enviar recordatorio', action: 'remind', style: 'secondary' },
             { icon: '❌', text: 'Cancelar préstamo', action: 'cancel', style: 'danger' }
         ];
     } else if (userRole === 'borrower' && isPending) {
