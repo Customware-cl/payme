@@ -2,6 +2,45 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-09] - Corrección CRÍTICA: Vista de préstamos mostraba página vacía (loading infinito)
+
+### 🐛 Corregido
+- **Síntoma:** Al acceder a "Estado de préstamos" desde el menú web, la página se quedaba cargando infinitamente mostrando "Cargando préstamos..."
+- **Consola del navegador:** `Loans loaded: Object { lent: [], borrowed: [] }` (arrays vacíos)
+- **Causa raíz:** Nombre de tabla incorrecto en queries de `menu-data/index.ts`
+  - El código consultaba: `.from('lending_agreements')`
+  - Pero la tabla real se llama: `agreements`
+  - Las consultas retornaban arrays vacíos sin error
+  - Afectaba tanto préstamos hechos (lent) como préstamos recibidos (borrowed)
+- **Impacto:** Los usuarios con préstamos activos veían una página en blanco
+  - Usuario de prueba tenía **10 préstamos** en la base de datos
+  - Ninguno se mostraba en la interfaz web
+  - Estados afectados: `active`, `pending_confirmation`, `rejected`
+
+### ✅ Solución Implementada
+- **Archivos modificados:**
+  - `supabase/functions/menu-data/index.ts`:
+    - Línea 83: Cambiado `.from('lending_agreements')` → `.from('agreements')`
+    - Línea 91: Actualizado foreign key reference a `agreements_borrower_contact_id_fkey`
+    - Línea 98: Cambiado `.from('lending_agreements')` → `.from('agreements')`
+    - Línea 106: Actualizado foreign key reference a `agreements_lender_contact_id_fkey`
+
+### 📦 Deploy Info
+- **Edge Function desplegada:** `menu-data` v6
+  - Script size: 72.06kB
+  - Estado: ✅ Activa
+  - Comando: `npx supabase functions deploy menu-data --no-verify-jwt`
+  - Dashboard: https://supabase.com/dashboard/project/qgjxkszfdoolaxmsupil/functions
+
+### ✅ Impacto
+- ✅ **Vista de préstamos ahora carga correctamente** con todos los préstamos del usuario
+- ✅ Muestra préstamos que hiciste (lent agreements)
+- ✅ Muestra préstamos que te hicieron (borrowed agreements)
+- ✅ Incluye préstamos activos y pendientes de confirmación
+- ✅ **TODAS las vistas del menú web funcionan correctamente ahora**
+
+---
+
 ## [2025-10-09] - Corrección CRÍTICA: Perfil, banco y préstamos no cargaban correctamente
 
 ### 🐛 Corregido

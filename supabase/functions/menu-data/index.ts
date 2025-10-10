@@ -80,7 +80,7 @@ serve(async (req: Request) => {
       if (type === 'loans') {
         // Obtener préstamos donde el usuario es el prestador (lent) o prestatario (borrowed)
         const { data: lentAgreements } = await supabase
-          .from('lending_agreements')
+          .from('agreements')
           .select(`
             id,
             amount,
@@ -88,14 +88,14 @@ serve(async (req: Request) => {
             due_date,
             status,
             created_at,
-            borrower:contacts!lending_agreements_borrower_contact_id_fkey(id, name)
+            borrower:contacts!agreements_borrower_contact_id_fkey(id, name)
           `)
           .eq('lender_contact_id', tokenData.contact_id)
           .in('status', ['active', 'pending_confirmation'])
           .order('created_at', { ascending: false });
 
         const { data: borrowedAgreements } = await supabase
-          .from('lending_agreements')
+          .from('agreements')
           .select(`
             id,
             amount,
@@ -103,7 +103,7 @@ serve(async (req: Request) => {
             due_date,
             status,
             created_at,
-            lender:contacts!lending_agreements_lender_contact_id_fkey(id, name)
+            lender:contacts!agreements_lender_contact_id_fkey(id, name)
           `)
           .eq('borrower_contact_id', tokenData.contact_id)
           .in('status', ['active', 'pending_confirmation'])
