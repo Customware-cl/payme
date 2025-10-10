@@ -2,6 +2,37 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-10] - 🔙 UX: Navegación contextual en botón volver de préstamos
+
+### ✨ Mejora de Navegación
+
+**Problema resuelto:**
+- Al filtrar por "💰 Dinero" o "📦 Objetos", el botón volver (←) iba al menú principal
+- Ahora regresa al submenú de selección de filtros primero
+
+**Nuevo flujo de navegación:**
+1. Usuario ve submenú: [💰 Dinero] [📦 Objetos]
+2. Click en "Dinero" → Ve lista filtrada de préstamos de dinero
+3. Click en volver (←) → **Regresa al submenú de filtros**
+4. Click en volver (←) desde submenú → Va al menú principal
+
+**Implementación:**
+- Botón volver ahora es contextual según `state.currentFilter`
+- Si hay filtro activo → Vuelve al submenú
+- Si no hay filtro → Vuelve al menú principal
+
+**Archivos modificados:**
+- `public/menu/loans.js` - Líneas 60-70 (navegación contextual), 134-145 (función `goBackToFilterMenu`)
+
+**Beneficios:**
+- Navegación más intuitiva y natural
+- Usuario puede cambiar fácilmente entre "Dinero" y "Objetos"
+- Reduce pasos innecesarios al explorar préstamos
+
+**Fecha:** 2025-10-10
+
+---
+
 ## [2025-10-10] - 🎯 UX: Reorden de botones de positivo a negativo
 
 ### ✨ Mejora de Jerarquía Visual

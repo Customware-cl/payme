@@ -58,9 +58,15 @@ async function init() {
 
 // Setup event listeners
 function setupEventListeners() {
-    // Volver al menú
+    // Volver (contextual según estado)
     $('#back-to-menu').addEventListener('click', () => {
-        window.location.href = `/menu?token=${state.token}`;
+        // Si estamos viendo una lista filtrada, volver al submenú de filtros
+        if (state.currentFilter) {
+            goBackToFilterMenu();
+        } else {
+            // Si estamos en el submenú, volver al menú principal
+            window.location.href = `/menu?token=${state.token}`;
+        }
     });
 
     // Botón crear préstamo desde empty state
@@ -123,6 +129,19 @@ async function loadLoans() {
         loadingState.classList.add('hidden');
         alert('Error al cargar préstamos: ' + error.message);
     }
+}
+
+// Volver al submenú de filtros desde la lista filtrada
+function goBackToFilterMenu() {
+    const filterMenu = $('#filter-menu');
+    const loansContent = $('#loans-content');
+
+    // Limpiar filtro actual
+    state.currentFilter = null;
+
+    // Ocultar lista de préstamos y mostrar submenú
+    loansContent.classList.add('hidden');
+    filterMenu.classList.remove('hidden');
 }
 
 // Mostrar submenú de filtros
