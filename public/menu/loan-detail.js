@@ -308,8 +308,9 @@ function closeConfirmModal() {
 async function executeAction() {
     if (!state.pendingAction) return;
 
+    const actionToExecute = state.pendingAction; // Guardar antes de cerrar
     closeConfirmModal();
-    await executeActionDirect(state.pendingAction);
+    await executeActionDirect(actionToExecute);
 }
 
 // Ejecutar acción directamente (sin modal)

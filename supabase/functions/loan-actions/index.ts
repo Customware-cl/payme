@@ -143,8 +143,18 @@ serve(async (req: Request) => {
       const body = await req.json();
       const { token, loan_id, action, new_date } = body;
 
+      console.log('POST request body:', { token: !!token, loan_id, action, new_date });
+
       if (!token || !loan_id || !action) {
-        return new Response(JSON.stringify({ success: false, error: 'Datos incompletos' }), {
+        const missing = [];
+        if (!token) missing.push('token');
+        if (!loan_id) missing.push('loan_id');
+        if (!action) missing.push('action');
+
+        return new Response(JSON.stringify({
+          success: false,
+          error: `Datos incompletos: faltan ${missing.join(', ')}`
+        }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });

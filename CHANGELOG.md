@@ -2,6 +2,52 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-10] - 🐛 Fix crítico: Acciones de préstamo no se ejecutaban correctamente
+
+### 🐛 Bug crítico corregido
+
+**Problema reportado:**
+- Al intentar marcar préstamo como devuelto (y otras acciones con modal de confirmación), aparecía error: "Datos incompletos: faltan action"
+- El action llegaba como `null` al backend
+
+**Causa raíz:**
+- En `public/menu/loan-detail.js`, función `executeAction()` (línea 308)
+- Llamaba a `closeConfirmModal()` que limpiaba `state.pendingAction = null`
+- DESPUÉS intentaba usar `state.pendingAction` (ya null) para ejecutar la acción
+
+**Solución implementada:**
+```javascript
+// ANTES (BUGGY):
+async function executeAction() {
+    closeConfirmModal();  // Limpia state.pendingAction = null
+    await executeActionDirect(state.pendingAction);  // ❌ Ya es null!
+}
+
+// DESPUÉS (FIXED):
+async function executeAction() {
+    const actionToExecute = state.pendingAction; // ✅ Guardar antes
+    closeConfirmModal();
+    await executeActionDirect(actionToExecute);  // ✅ Usa el valor guardado
+}
+```
+
+**Archivos modificados:**
+- `public/menu/loan-detail.js` - Línea 311 (guardar action antes de cerrar modal)
+- `supabase/functions/loan-actions/index.ts` - Línea 146 (mejorar logging para debugging)
+
+**Acciones afectadas (ahora funcionan):**
+- ✅ Confirmar préstamo
+- ✅ Rechazar préstamo
+- ✅ Marcar como devuelto
+- ✅ Cancelar préstamo
+
+**Acciones sin modal (no afectadas):**
+- Enviar recordatorio
+- Reenviar solicitud
+- Solicitar extensión
+
+---
+
 ## [2025-10-10] - 🎨 Fix: Estilos de modales y botón danger en detalle de préstamos
 
 ### 🐛 Problemas corregidos
