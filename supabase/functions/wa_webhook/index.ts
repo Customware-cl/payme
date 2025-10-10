@@ -238,38 +238,56 @@ async function processInboundMessage(
         console.log('Detected button text for new_loan, converting to command');
         // Procesar como si fuera el comando directo - continuar con flujo conversacional
       } else if (lowerText === 'hola' || lowerText === 'hi' || lowerText === 'menu' || lowerText === 'inicio') {
-        // Mensaje de bienvenida con botones
-        interactiveResponse = {
-          type: 'button',
-          body: {
-            text: '¡Hola! 👋 Soy tu asistente de recordatorios.\n\n¿En qué puedo ayudarte hoy?'
-          },
-          action: {
-            buttons: [
-              {
-                type: 'reply',
-                reply: {
-                  id: 'new_loan',
-                  title: '💰 Nuevo préstamo'
-                }
+        // Generar token del menú web y enviar botón de acceso
+        console.log('[WELCOME] Generating menu web access for welcome message');
+        try {
+          const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+          const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+          // 1. Generar token del menú
+          const tokenResponse = await fetch(
+            `${supabaseUrl}/functions/v1/generate-menu-token`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${supabaseServiceKey}`
               },
-              {
-                type: 'reply',
-                reply: {
-                  id: 'check_status',
-                  title: '📋 Ver estado'
-                }
+              body: JSON.stringify({
+                tenant_id: tenant.id,
+                contact_id: contact.id
+              })
+            }
+          );
+
+          const tokenData = await tokenResponse.json();
+
+          if (tokenData.success && tokenData.data.url) {
+            const menuUrl = tokenData.data.url;
+            console.log('[WELCOME] Menu URL generated:', menuUrl);
+
+            // 2. Enviar mensaje interactivo con botón CTA URL
+            interactiveResponse = {
+              type: 'cta_url',
+              body: {
+                text: '¡Hola! 👋 Soy tu asistente de préstamos.\n\nRegistra préstamos, ve su estado y gestiona tu información.\n\n⏱️ Válido por 1 hora.'
               },
-              {
-                type: 'reply',
-                reply: {
-                  id: 'web_menu',
-                  title: '🌐 Menú Web'
+              action: {
+                name: 'cta_url',
+                parameters: {
+                  display_text: 'Ingresar al menú',
+                  url: menuUrl
                 }
               }
-            ]
+            };
+          } else {
+            console.error('[WELCOME] Error generating menu token:', tokenData);
+            responseMessage = '¡Hola! 👋 Soy tu asistente de préstamos.\n\nHubo un error generando tu acceso. Por favor intenta escribir "menú web".';
           }
-        };
+        } catch (error) {
+          console.error('[WELCOME] Exception generating menu access:', error);
+          responseMessage = '¡Hola! 👋 Soy tu asistente de préstamos.\n\nHubo un error generando tu acceso. Por favor intenta escribir "menú web".';
+        }
       } else if (lowerText === 'ayuda' || lowerText === 'help') {
         // Mensaje de ayuda con botones
         interactiveResponse = {

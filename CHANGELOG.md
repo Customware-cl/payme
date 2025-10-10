@@ -2,6 +2,46 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-09] - Mensaje de bienvenida con botón directo al Menú Web
+
+### ✨ Añadido
+
+#### Mensaje de bienvenida mejorado
+- **Comando:** "hola", "hi", "menu", "inicio"
+- **Funcionalidad:** Genera token único y envía mensaje interactivo con botón CTA URL
+- **Tipo de mensaje:** Interactive CTA URL (no requiere plantilla aprobada)
+- **Contenido:**
+  - Texto: "¡Hola! 👋 Soy tu asistente de préstamos.\n\nRegistra préstamos, ve su estado y gestiona tu información.\n\n⏱️ Válido por 1 hora."
+  - Botón: "Ingresar al menú" → URL dinámica con token
+
+#### Ventajas vs Plantilla
+- ✅ No requiere aprobación de Meta
+- ✅ Funciona inmediatamente dentro de ventana 24h
+- ✅ URL completamente dinámica sin restricciones
+- ✅ Evita problema de categorización MARKETING vs UTILITY
+- ✅ Más simple de implementar y mantener
+
+#### Flujo completo
+```
+Usuario escribe: "hola"
+     ↓
+Webhook genera token: menu_[tenant_id]_[contact_id]_[timestamp]
+     ↓
+Webhook envía mensaje interactivo con botón CTA URL
+     ↓
+Usuario hace click en "Ingresar al menú"
+     ↓
+Se abre el navegador con el menú web (token válido 1h)
+```
+
+### 🔄 Modificado
+- **`wa_webhook/index.ts`:**
+  - Líneas 240-290: Comando "hola" ahora genera token y envía botón CTA URL
+  - Reemplaza botones de WhatsApp por acceso directo al menú web
+  - Manejo de errores con fallback a mensaje de texto
+
+---
+
 ## [2025-10-09] - Plantilla de WhatsApp para acceso al Menú Web
 
 ### ✨ Añadido
