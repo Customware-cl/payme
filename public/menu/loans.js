@@ -151,7 +151,11 @@ function showFilterMenu() {
 // Filtrar y renderizar préstamos
 function filterAndRenderLoans() {
     const filterMenu = $('#filter-menu');
+    const loadingState = $('#loading-state');
     const loansContent = $('#loans-content');
+
+    // Asegurar que el loader esté oculto (filtrado es instantáneo)
+    loadingState.classList.add('hidden');
 
     // Filtrar según el tipo seleccionado
     const filtered = {
@@ -177,10 +181,10 @@ function filterAndRenderLoans() {
     filtered.lent.sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
     filtered.borrowed.sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
 
-    // Renderizar con datos filtrados
+    // Renderizar con datos filtrados (instantáneo, sin loader)
     renderLoans(filtered);
 
-    // Ocultar menú, mostrar préstamos
+    // Ocultar menú y loader, mostrar préstamos
     filterMenu.classList.add('hidden');
     loansContent.classList.remove('hidden');
 }

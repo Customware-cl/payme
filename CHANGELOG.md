@@ -2,6 +2,27 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-09] - UX: Filtrado instantáneo sin loader molesto
+
+### 🐛 Corregido
+- **Loader confuso durante filtrado**
+  - **Síntoma:** Al hacer clic en 💰 Dinero o 📦 Objetos, aparecía loader "Cargando préstamos..."
+  - **Problema:** Generaba confusión - los datos ya estaban cargados
+  - **Solución:** Filtrado ahora es instantáneo sin mostrar loader
+  - **Mejora:** Transición fluida de submenú → lista filtrada
+
+### 🔄 Archivos modificados
+- `public/menu/loans.js`:
+  - Función `filterAndRenderLoans()` ahora oculta explícitamente el loader
+  - Filtrado es 100% instantáneo (solo JavaScript, sin fetch)
+
+### ✅ Impacto
+- ✅ Filtrado instantáneo sin confusión
+- ✅ UX más fluida y profesional
+- ✅ Sin loaders innecesarios
+
+---
+
 ## [2025-10-09] - Feature: Submenú de filtros + Corrección de fechas en préstamos
 
 ### ✨ Añadido
