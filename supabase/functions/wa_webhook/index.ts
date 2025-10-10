@@ -422,8 +422,8 @@ async function processInboundMessage(
         }
       }
 
-      // Si no se asignó responseMessage, procesar con sistema de flujos conversacionales
-      if (!responseMessage) {
+      // Si no se asignó responseMessage ni interactiveResponse, procesar con sistema de flujos conversacionales
+      if (!responseMessage && !interactiveResponse) {
         try {
           const conversationManager = new ConversationManager(supabase.supabaseUrl, supabase.supabaseKey);
           const intentDetector = new IntentDetector();

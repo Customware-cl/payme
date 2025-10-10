@@ -77,3 +77,5 @@ debug_tables.ts
 whatsapp_flows_private_key.pem
 whatsapp_flows_public_key.pem
 *.pem
+# Local Netlify folder
+.netlify
