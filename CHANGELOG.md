@@ -2,6 +2,31 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-09] - Corrección UX: Loader de préstamos no desaparecía tras cargar
+
+### 🐛 Corregido
+- **Síntoma:** Al cargar la vista de préstamos, aparecían las tarjetas pero el loader y "Cargando préstamos..." permanecían visibles
+- **Causa raíz:** Elemento `#loader` duplicado en el HTML
+  - Existían DOS elementos de loading:
+    - `#loading-state` (manejado correctamente por JavaScript)
+    - `#loader` (no se ocultaba, quedaba visible sobre el contenido)
+  - El JavaScript solo ocultaba `#loading-state`, dejando `#loader` visible
+- **Solución:**
+  - Eliminado elemento `#loader` duplicado del HTML
+  - Eliminada función `showLoader()` no utilizada del JavaScript
+  - Solo queda `#loading-state` que se maneja correctamente
+
+### 🔄 Archivos modificados
+- `public/menu/loans.html`: Eliminado elemento `#loader` duplicado
+- `public/menu/loans.js`: Eliminada función `showLoader()` no utilizada
+
+### ✅ Impacto
+- ✅ Loader desaparece correctamente al cargar los préstamos
+- ✅ Vista de préstamos se muestra limpia sin elementos duplicados
+- ✅ Experiencia de usuario mejorada
+
+---
+
 ## [2025-10-09] - Corrección CRÍTICA: Vista de préstamos mostraba página vacía (loading infinito)
 
 ### 🐛 Corregido

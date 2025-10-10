@@ -13,10 +13,6 @@ const SUPABASE_URL = 'https://qgjxkszfdoolaxmsupil.supabase.co';
 // Utilidades
 const $ = (selector) => document.querySelector(selector);
 
-function showLoader(show = true) {
-    $('#loader').classList.toggle('hidden', !show);
-}
-
 function formatMoney(amount) {
     return new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(amount);
 }
