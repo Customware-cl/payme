@@ -76,63 +76,8 @@ serve(async (req: Request) => {
 
       console.log('Loading data:', { type, contact_id: tokenData.contact_id });
 
-      // Primero obtener el contact para ver su contact_profile_id
-      const { data: contact } = await supabase
-        .from('contacts')
-        .select('contact_profile_id')
-        .eq('id', tokenData.contact_id)
-        .single();
-
-      let profile = null;
-      if (contact?.contact_profile_id) {
-        // Si el contact tiene un profile, cargarlo
-        const { data: profileData } = await supabase
-          .from('contact_profiles')
-          .select('*')
-          .eq('id', contact.contact_profile_id)
-          .single();
-
-        profile = profileData;
-      }
-
-      if (!profile) {
-        // Si no existe, retornar vacío
-        return new Response(JSON.stringify({
-          success: true,
-          contact_id: tokenData.contact_id,
-          profile: null,
-          bank_account: null
-        }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      if (type === 'profile') {
-        return new Response(JSON.stringify({
-          success: true,
-          contact_id: tokenData.contact_id,
-          profile: {
-            first_name: profile.first_name,
-            last_name: profile.last_name,
-            email: profile.email
-          }
-        }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      } else if (type === 'bank') {
-        // Obtener primera cuenta bancaria (por ahora solo soportamos una)
-        const bankAccount = profile.bank_accounts && profile.bank_accounts.length > 0
-          ? profile.bank_accounts[0]
-          : null;
-
-        return new Response(JSON.stringify({
-          success: true,
-          contact_id: tokenData.contact_id,
-          bank_account: bankAccount
-        }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      } else if (type === 'loans') {
+      // Para préstamos, no necesitamos el profile
+      if (type === 'loans') {
         // Obtener préstamos donde el usuario es el prestador (lent) o prestatario (borrowed)
         const { data: lentAgreements } = await supabase
           .from('lending_agreements')
@@ -176,8 +121,60 @@ serve(async (req: Request) => {
         });
       }
 
-      return new Response(JSON.stringify({ success: false, error: 'Tipo no válido' }), {
-        status: 400,
+      // Para profile y bank, necesitamos cargar el contact_profile
+      // Primero obtener el contact para ver su contact_profile_id
+      const { data: contact } = await supabase
+        .from('contacts')
+        .select('contact_profile_id')
+        .eq('id', tokenData.contact_id)
+        .single();
+
+      let profile = null;
+      if (contact?.contact_profile_id) {
+        // Si el contact tiene un profile, cargarlo
+        const { data: profileData } = await supabase
+          .from('contact_profiles')
+          .select('*')
+          .eq('id', contact.contact_profile_id)
+          .single();
+
+        profile = profileData;
+      }
+
+      if (type === 'profile') {
+        return new Response(JSON.stringify({
+          success: true,
+          contact_id: tokenData.contact_id,
+          profile: {
+            first_name: profile.first_name,
+            last_name: profile.last_name,
+            email: profile.email
+          }
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } else if (type === 'bank') {
+        // Obtener primera cuenta bancaria (por ahora solo soportamos una)
+        const bankAccount = profile.bank_accounts && profile.bank_accounts.length > 0
+          ? profile.bank_accounts[0]
+          : null;
+
+        return new Response(JSON.stringify({
+          success: true,
+          contact_id: tokenData.contact_id,
+          bank_account: bankAccount
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Si no existe profile para profile/bank, retornar vacío
+      return new Response(JSON.stringify({
+        success: true,
+        contact_id: tokenData.contact_id,
+        profile: null,
+        bank_account: null
+      }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }

@@ -2,16 +2,25 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
-## [2025-10-09] - Corrección CRÍTICA: Perfil y datos bancarios no cargaban desde WhatsApp
+## [2025-10-09] - Corrección CRÍTICA: Perfil, banco y préstamos no cargaban correctamente
 
 ### 🐛 Corregido
-- **Problema:** Al acceder a "Ver perfil" desde el menú web, los datos ingresados vía WhatsApp Flow no se mostraban
-- **Síntoma:** Formulario de perfil aparecía vacío a pesar de que el usuario había completado sus datos en el flow
+
+#### Problema 1: Perfil y datos bancarios vacíos
+- **Síntoma:** Al acceder a "Ver perfil" desde el menú web, los datos ingresados vía WhatsApp Flow no se mostraban
 - **Causa raíz:** Schema mismatch crítico en `menu-data/index.ts`
   - El código intentaba hacer query: `contact_profiles.eq('contact_id', tokenData.contact_id)`
   - Pero la tabla `contact_profiles` **NO tiene columna `contact_id`**
   - La relación real es: `contacts.contact_profile_id` → `contact_profiles.id`
   - Afectaba tanto GET (carga de datos) como POST (guardado de datos)
+
+#### Problema 2: Estado de préstamos retornaba HTTP 401
+- **Síntoma:** Al acceder a "Estado de préstamos" retornaba error 401 "Token inválido o expirado"
+- **Causa raíz:** Lógica de carga de profile bloqueaba acceso a préstamos
+  - El código cargaba profile ANTES de verificar `type=loans`
+  - Si no existía profile, retornaba early sin llegar a la lógica de préstamos
+  - Los préstamos NO requieren profile, solo usan `contact_id` directamente
+- **Solución:** Reordenar la lógica para procesar `type=loans` PRIMERO, antes de cargar profile
 
 ### 🔍 Schema Real
 ```typescript
@@ -47,20 +56,25 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
 
 ### 🔄 Modificado
 - **`supabase/functions/menu-data/index.ts`:**
-  - **Líneas 79-96:** Query GET refactorizado con relación correcta
+  - **Líneas 79-122:** Lógica de préstamos movida al PRINCIPIO (antes de cargar profile)
+  - **Líneas 124-142:** Query GET de profile refactorizado con relación correcta
+  - **Líneas 144-169:** Retorno de profile/bank solo si existe profile
+  - **Líneas 171-179:** Retorno vacío si no existe profile (solo para profile/bank)
   - **Líneas 207-257:** Query POST refactorizado para crear/actualizar correctamente
   - **Línea 268:** Update de perfil usa `profile.id` en lugar de `contact_id`
   - **Línea 297:** Update de banco usa `profile.id` en lugar de `contact_id`
 
 ### 📦 Deploy Info
-- **Edge Function desplegada:** `menu-data` v3
-  - Script size: 72.02kB
+- **Edge Function desplegada:** `menu-data` v4
+  - Script size: 72.07kB
   - Estado: ✅ Activa
   - Comando: `npx supabase functions deploy menu-data`
 
 ### ✅ Impacto
 - ✅ Datos de perfil ingresados vía WhatsApp Flow ahora se muestran en menú web
 - ✅ Datos bancarios ingresados vía WhatsApp Flow ahora se muestran en menú web
+- ✅ **Estado de préstamos ahora carga correctamente sin HTTP 401**
+- ✅ Préstamos se muestran sin necesidad de tener profile creado
 - ✅ Guardado desde menú web funciona correctamente
 - ✅ Auto-creación de profile cuando no existe (nuevo flujo)
 - ✅ Consistencia total entre WhatsApp Flow y Menú Web
