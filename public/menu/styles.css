@@ -87,6 +87,10 @@ body {
     background: var(--bg-main);
 }
 
+.menu.hidden {
+    display: none;
+}
+
 .menu-item {
     background: var(--bg-card);
     border: none;
@@ -396,6 +400,10 @@ body {
     justify-content: center;
     padding: 64px 24px;
     background: var(--bg-main);
+}
+
+.loading-state.hidden {
+    display: none;
 }
 
 .loading-state .spinner {

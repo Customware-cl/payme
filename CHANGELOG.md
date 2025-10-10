@@ -2,24 +2,45 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
-## [2025-10-09] - UX: Filtrado instantáneo sin loader molesto
+## [2025-10-09] - FIX CRÍTICO: Loader visible después del renderizado
 
 ### 🐛 Corregido
-- **Loader confuso durante filtrado**
-  - **Síntoma:** Al hacer clic en 💰 Dinero o 📦 Objetos, aparecía loader "Cargando préstamos..."
-  - **Problema:** Generaba confusión - los datos ya estaban cargados
-  - **Solución:** Filtrado ahora es instantáneo sin mostrar loader
-  - **Mejora:** Transición fluida de submenú → lista filtrada
+- **Loader "Cargando préstamos..." quedaba visible permanentemente**
+  - **Síntoma:** Loader aparecía después del renderizado y no desaparecía
+  - **Causa raíz TRIPLE:**
+    1. HTML: `#loading-state` no tenía clase `hidden` por defecto
+    2. CSS: Faltaba regla `.loading-state.hidden { display: none; }`
+    3. CSS: Faltaba regla `.menu.hidden { display: none; }`
+  - **Solución:**
+    1. Agregado `class="hidden"` por defecto en HTML
+    2. Agregadas reglas CSS para ocultar elementos
+    3. JavaScript muestra loader solo cuando carga del servidor
 
 ### 🔄 Archivos modificados
-- `public/menu/loans.js`:
-  - Función `filterAndRenderLoans()` ahora oculta explícitamente el loader
-  - Filtrado es 100% instantáneo (solo JavaScript, sin fetch)
+- `public/menu/loans.html`:
+  - Línea 40: Agregado `class="hidden"` a `#loading-state`
+- `public/menu/styles.css`:
+  - Agregado `.loading-state.hidden { display: none; }`
+  - Agregado `.menu.hidden { display: none; }`
 
 ### ✅ Impacto
-- ✅ Filtrado instantáneo sin confusión
-- ✅ UX más fluida y profesional
-- ✅ Sin loaders innecesarios
+- ✅ Loader solo aparece al cargar del servidor
+- ✅ Se oculta correctamente después de cargar
+- ✅ Filtrado instantáneo sin loader molesto
+- ✅ Sin elementos visuales fantasma
+
+### 🎯 Flujo corregido
+**Antes (molesto):**
+```
+Carga → Loader visible permanentemente ❌
+Filtrado → Loader aparece de nuevo ❌
+```
+
+**Ahora (correcto):**
+```
+Carga → Loader visible → Oculto al terminar ✅
+Filtrado → Sin loader (instantáneo) ✅
+```
 
 ---
 
