@@ -145,6 +145,16 @@ function renderLoanDetails() {
     }
     $('#detail-loan').textContent = loanText;
 
+    // Concepto/Descripción del préstamo
+    const descriptionRow = $('#detail-description-row');
+    const descriptionValue = $('#detail-description');
+    if (loan.item_description && loan.item_description.trim() !== '') {
+        descriptionValue.textContent = loan.item_description;
+        descriptionRow.style.display = 'flex';
+    } else {
+        descriptionRow.style.display = 'none';
+    }
+
     // Fecha de devolución
     let dueDateText = formatDate(loan.due_date);
     if (overdue && loan.status === 'active') {

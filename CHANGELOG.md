@@ -2,6 +2,66 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-12] - 📝 Campo de Concepto/Descripción para Préstamos de Dinero
+
+### 🎯 Objetivo
+
+Permitir que los usuarios ingresen un concepto o descripción específica cuando crean préstamos de dinero (ej: "almuerzo", "salida con amigos"), y mostrar esta información en el detalle del préstamo.
+
+### ✅ Cambios Realizados
+
+#### 1. **WhatsApp Flow actualizado** (`new-loan-flow.json`)
+- ✏️ Campo `item_description` ahora es visible para TODOS los tipos de préstamo (dinero, objeto, otro)
+- 📝 Label actualizado: "Concepto o descripción"
+- 💡 Helper text: "Ej: almuerzo, salida con amigos, PlayStation 5, etc."
+- Permite describir el propósito del préstamo de dinero o el nombre del objeto
+
+#### 2. **Flow Handler actualizado** (`flows-handler/index.ts`)
+- ✅ Interface `LoanFlowResponse` actualizada para aceptar:
+  - `amount`: Monto del préstamo (para dinero)
+  - `item_description`: Concepto/descripción (para todos los tipos)
+  - `quick_date` y `due_date`: Opciones de fecha (rápida o personalizada)
+- ✅ Lógica de validación:
+  - Para dinero: `amount` obligatorio, `item_description` opcional (default: "Préstamo en efectivo")
+  - Para objeto/otro: `item_description` obligatoria (mínimo 3 caracteres)
+- ✅ Soporte para fecha personalizada del DatePicker o fechas rápidas (mañana/fin de mes)
+
+#### 3. **Vista de Detalle actualizada** (`loan-detail.html` + `loan-detail.js`)
+- ➕ Nueva fila "Concepto" agregada entre "Préstamo" y "Fecha de devolución"
+- 🎨 Se muestra solo si `item_description` tiene contenido
+- 🙈 Se oculta automáticamente si el campo está vacío (préstamos antiguos)
+
+### 📊 Impacto
+
+- ✅ **Mejora UX**: Los usuarios pueden especificar el propósito de préstamos de dinero
+- ✅ **Mejor contexto**: Al ver el detalle, ambas partes pueden recordar el motivo del préstamo
+- ✅ **Retrocompatibilidad**: Préstamos antiguos sin descripción no rompen la vista
+- ✅ **Consistencia**: El mismo campo sirve tanto para dinero como para objetos
+
+### 🧪 Ejemplo de Uso
+
+**Préstamo de dinero con concepto:**
+```
+Tipo: 💰 Préstamo de dinero
+Contacto: María
+Préstamo: $50.000
+Concepto: Almuerzo y salida con amigos
+Fecha de devolución: 31 Oct 2025
+Estado: ✅ Activo
+```
+
+**Préstamo de objeto:**
+```
+Tipo: 📦 Préstamo de objeto
+Contacto: Juan
+Préstamo: PlayStation 5
+Concepto: PlayStation 5
+Fecha de devolución: 15 Nov 2025
+Estado: ✅ Activo
+```
+
+---
+
 ## [2025-10-10] - ⏰ Configuración de Cron Job para Scheduler Automático
 
 ### 🎯 Objetivo

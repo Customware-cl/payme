@@ -32,12 +32,14 @@ interface BankAccountFlowResponse {
 
 interface LoanFlowResponse {
   loan_type: 'money' | 'object' | 'other';
-  loan_detail: string;
+  amount?: string; // Para préstamos de dinero
+  item_description?: string; // Concepto/descripción para todos los tipos
   contact_id?: string;
   contact_name: string;
   contact_phone?: string;
   new_contact: boolean;
-  date_option: 'tomorrow' | 'end_of_month';
+  quick_date?: 'tomorrow' | 'end_of_month'; // Renamed from date_option
+  due_date?: string; // Fecha específica del DatePicker
 }
 
 interface FlowRequest {
@@ -482,57 +484,69 @@ async function handleLoanFlow(
 
     console.log('Creating loan for tenant:', { tenantId, lenderContactId });
 
-    // Parsear loan_detail según tipo de préstamo
+    // Parsear datos según tipo de préstamo
     let amount: number | null = null;
     let itemDescription: string;
 
     if (data.loan_type === 'money') {
-      // Intentar extraer número del loan_detail
-      const cleaned = data.loan_detail.replace(/[$.,\s]/g, '');
+      // Para préstamos de dinero: validar amount
+      if (!data.amount || data.amount.trim() === '') {
+        return createFlowResponse({
+          version: "7.2",
+          screen: "LOAN_FORM",
+          data: { error: "Debes ingresar un monto para el préstamo de dinero" }
+        }, aesKey, iv);
+      }
+
+      const cleaned = data.amount.replace(/[$.,\s]/g, '');
       const parsedAmount = parseInt(cleaned);
 
       if (isNaN(parsedAmount) || parsedAmount <= 0) {
         return createFlowResponse({
           version: "7.2",
-          screen: "LOAN_DETAILS",
+          screen: "LOAN_FORM",
           data: { error: "Ingresa un monto válido (ej: 15000 solo números)" }
         }, aesKey, iv);
       }
 
       amount = parsedAmount;
-      itemDescription = 'Dinero';
+      // Usar item_description si está presente, o un valor por defecto
+      itemDescription = data.item_description?.trim() || 'Préstamo en efectivo';
     } else {
-      // Para objeto/otro, usar loan_detail como descripción
-      if (data.loan_detail.trim().length < 3) {
+      // Para objeto/otro, item_description es obligatoria
+      if (!data.item_description || data.item_description.trim().length < 3) {
         return createFlowResponse({
           version: "7.2",
-          screen: "LOAN_DETAILS",
+          screen: "LOAN_FORM",
           data: { error: "La descripción debe tener al menos 3 caracteres" }
         }, aesKey, iv);
       }
 
-      itemDescription = data.loan_detail.trim();
+      itemDescription = data.item_description.trim();
     }
 
-    // Calcular fecha de devolución según date_option
+    // Calcular fecha de devolución
     let dueDate: string;
 
-    if (data.date_option === 'tomorrow') {
-      // Opción 1: Mañana
+    if (data.due_date) {
+      // Usuario seleccionó fecha específica del DatePicker
+      dueDate = data.due_date;
+    } else if (data.quick_date === 'tomorrow') {
+      // Opción rápida: Mañana
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       dueDate = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD
-    } else if (data.date_option === 'end_of_month') {
-      // Opción 2: Fin de mes
+    } else if (data.quick_date === 'end_of_month') {
+      // Opción rápida: Fin de mes
       const today = new Date();
       const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
       dueDate = lastDay.toISOString().split('T')[0];
     } else {
-      // Error: No seleccionó una opción válida
+      // Error: No seleccionó ninguna fecha
       return createFlowResponse({
         version: "7.2",
-        screen: "DUE_DATE_SELECT",
-        data: { error: "Debes seleccionar una fecha de devolución válida" }
+        screen: "LOAN_FORM",
+        data: { error: "Debes seleccionar una fecha de devolución" }
       }, aesKey, iv);
     }
 

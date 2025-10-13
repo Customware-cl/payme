@@ -251,10 +251,10 @@
               {
                 "type": "TextInput",
                 "name": "item_description",
-                "label": "📝 Descripción",
+                "label": "📝 Concepto o descripción",
                 "input-type": "text",
                 "required": false,
-                "helper-text": "Solo si marcaste 'Objeto' u 'Otra cosa'"
+                "helper-text": "Ej: almuerzo, salida con amigos, PlayStation 5, etc."
               },
               {
                 "type": "RadioButtonsGroup",
