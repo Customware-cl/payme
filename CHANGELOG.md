@@ -2,6 +2,139 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-13a] - 🚨 Problema Crítico Arquitectural: Reminder Instances No Se Generan
+
+### 🎯 Problema Identificado
+
+**Severidad**: 🔴 **CRÍTICA**
+**Estado**: ⚠️ **NO RESUELTO** - Requiere implementación
+
+El sistema de recordatorios de préstamos **NO está funcionando** porque las instancias ejecutables (`reminder_instances`) nunca se generan automáticamente cuando se crean los préstamos.
+
+**Síntomas**:
+- Usuario creó 5 préstamos con fecha de vencimiento 13/10
+- Configuró recordatorios para enviarse a las 09:00
+- **NINGÚN recordatorio se envió**
+- 0 mensajes de WhatsApp generados por el cron job
+
+### 🧬 Causa Raíz
+
+**Arquitectura actual (incorrecta)**:
+1. `handleNewLoanFlow()` crea el préstamo
+2. Llama `setupDefaultReminders()` que crea 3 registros en tabla `reminders` (configuraciones)
+3. **❌ NO llama `generate_reminder_instances()`** para crear instancias ejecutables
+4. El cron job `process_pending_reminders()` busca en `reminder_instances` → encuentra 0 registros
+5. No envía mensajes
+
+**Evidencia**:
+```sql
+-- Verificar: 5 préstamos con due_date = 2025-10-13
+SELECT COUNT(*) FROM agreements WHERE due_date = '2025-10-13';
+-- Resultado: 5
+
+-- Verificar: 15 reminders (5 × 3 tipos: before_24h, due_date, overdue)
+SELECT COUNT(*) FROM reminders r
+JOIN agreements a ON a.id = r.agreement_id
+WHERE a.due_date = '2025-10-13';
+-- Resultado: 15
+
+-- Verificar: ¿Cuántas reminder_instances?
+SELECT COUNT(*) FROM reminder_instances ri
+JOIN reminders r ON r.id = ri.reminder_id
+JOIN agreements a ON a.id = r.agreement_id
+WHERE a.due_date = '2025-10-13';
+-- Resultado: 0 ❌
+```
+
+### 📊 Impacto
+
+**Funcionalidad afectada**:
+- ❌ Recordatorios 24h antes del vencimiento: NO funcionan
+- ❌ Recordatorios el día del vencimiento: NO funcionan
+- ❌ Recordatorios post-vencimiento: NO funcionan
+
+**Datos del sistema**:
+- Total préstamos: ~50+
+- Total reminders configurados: ~150+ (50 × 3 tipos)
+- Total reminder_instances: 0
+- **Tasa de éxito: 0%**
+
+**Usuario final**:
+- NO recibe notificaciones de préstamos próximos a vencer
+- NO recibe recordatorios de pagos pendientes
+- Pérdida total de funcionalidad de gestión proactiva
+
+### 🛠️ Solución Propuesta
+
+**Fix inmediato**: Modificar `setupDefaultReminders()` en `/supabase/functions/_shared/flow-handlers.ts`
+
+```typescript
+private async setupDefaultReminders(agreementId: string, dueDate: string, timezone: string): Promise<void> {
+  const reminders = [
+    { type: 'before_24h', offset: -1, time: '09:00:00' },
+    { type: 'due_date', offset: 0, time: '09:00:00' },
+    { type: 'overdue', offset: 1, time: '16:00:00' }
+  ];
+
+  for (const reminder of reminders) {
+    // 1. Insertar reminder y obtener el ID
+    const { data: insertedReminder, error: insertError } = await this.supabase
+      .from('reminders')
+      .insert({
+        agreement_id: agreementId,
+        reminder_type: reminder.type,
+        days_offset: reminder.offset,
+        time_of_day: reminder.time,
+        timezone: timezone,
+        is_active: true
+      })
+      .select('id')
+      .single();
+
+    if (insertError || !insertedReminder) {
+      console.error('Error creating reminder:', insertError);
+      continue;
+    }
+
+    // ✅ 2. Generar reminder_instance inmediatamente
+    const { data: instanceResult, error: instanceError } = await this.supabase
+      .rpc('generate_reminder_instances', {
+        p_reminder_id: insertedReminder.id,
+        p_due_date: dueDate,
+        p_timezone: timezone
+      });
+
+    if (instanceError) {
+      console.error('Error generating reminder instance:', instanceError);
+    }
+  }
+}
+```
+
+**Fix retroactivo**: Generar instancias para todos los préstamos activos existentes con `due_date` futura.
+
+### 📝 Archivos Afectados
+
+- `/supabase/functions/_shared/flow-handlers.ts` - Método `setupDefaultReminders()` (línea ~684)
+- `/supabase/migrations/003_seed_data.sql` - Función `generate_reminder_instances()` (ya existe)
+- `/supabase/migrations/004_setup_cron_jobs.sql` - Cron `process_pending_reminders()` (ya existe)
+
+### 📚 Documentación
+
+Ver análisis completo en: `/docs/PROBLEMA_ARQUITECTURAL_REMINDER_INSTANCES.md`
+
+### ✅ Checklist de Implementación
+
+- [ ] Modificar `setupDefaultReminders()` para llamar `generate_reminder_instances()`
+- [ ] Probar con préstamo nuevo (crear y verificar que se generen 3 instancias)
+- [ ] Decidir estrategia retroactiva (generar instancias para préstamos existentes)
+- [ ] Ejecutar script retroactivo si aplica
+- [ ] Verificar cron `process_pending_reminders()` está activo
+- [ ] Probar envío real de recordatorio
+- [ ] Commit y deploy a producción
+
+---
+
 ## [2025-10-12g] - 🐛 Fix: Offset de Fecha UTC (mañana → 13/10 en vez de 14/10)
 
 ### 🎯 Problema Identificado
