@@ -2,6 +2,464 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-10] - ⏰ Configuración de Cron Job para Scheduler Automático
+
+### 🎯 Objetivo
+
+Configurar el scheduler de recordatorios para que se ejecute automáticamente todos los días a las 09:00 AM, enviando recordatorios de préstamos que vencen ese día.
+
+### 🔧 Configuración Realizada
+
+#### 1. **Extensiones habilitadas:**
+- ✅ `pg_cron` (v1.6.4) - Scheduler de tareas
+- ✅ `pg_net` - HTTP requests asincrónicos desde Postgres
+
+#### 2. **Secrets configurados en Vault:**
+```sql
+-- Token de autenticación para el scheduler
+SELECT vault.create_secret('KYx4b4OjXnQkzZpzFCuZB81OI5q4RO/Rs2kvYoDcp9A=', 'scheduler_auth_token');
+```
+
+#### 3. **Variable de entorno en Edge Functions:**
+```bash
+SCHEDULER_AUTH_TOKEN='KYx4b4OjXnQkzZpzFCuZB81OI5q4RO/Rs2kvYoDcp9A='
+```
+
+#### 4. **Cron Job creado:**
+```sql
+SELECT cron.schedule(
+  'daily-reminder-scheduler',
+  '0 9 * * *', -- Todos los días a las 09:00 AM
+  $$
+  SELECT net.http_post(
+    url := 'https://qgjxkszfdoolaxmsupil.supabase.co/functions/v1/scheduler_dispatch',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'scheduler_auth_token')
+    ),
+    body := jsonb_build_object('dry_run', false),
+    timeout_milliseconds := 300000
+  ) as request_id;
+  $$
+);
+```
+
+### 📋 Cómo Funciona
+
+1. **09:00 AM cada día**: pg_cron ejecuta el HTTP POST al scheduler
+2. **Scheduler busca préstamos**: Con `status = 'due_soon'` y `due_date = HOY`
+3. **Ventana de envío**: Solo envía si la hora está entre 07:00-11:00 (±2 horas)
+4. **Templates dinámicos**: Selecciona `due_date_money_v1` o `due_date_object_v1` según el tipo
+5. **Envío con botones**: Mensaje con "Marcar como devuelto" y "Ver otras opciones"
+
+### 🔍 Verificar Estado del Cron Job
+
+```sql
+-- Ver información del cron job
+SELECT jobid, schedule, command, active
+FROM cron.job
+WHERE jobname = 'daily-reminder-scheduler';
+
+-- Ver historial de ejecuciones
+SELECT
+  jobid,
+  runid,
+  job_pid,
+  database,
+  status,
+  start_time,
+  end_time
+FROM cron.job_run_details
+WHERE jobid = (SELECT jobid FROM cron.job WHERE jobname = 'daily-reminder-scheduler')
+ORDER BY start_time DESC
+LIMIT 10;
+```
+
+### ⚙️ Gestión del Cron Job
+
+**Desactivar temporalmente:**
+```sql
+SELECT cron.alter_job(
+  job_id := (SELECT jobid FROM cron.job WHERE jobname = 'daily-reminder-scheduler'),
+  active := false
+);
+```
+
+**Reactivar:**
+```sql
+SELECT cron.alter_job(
+  job_id := (SELECT jobid FROM cron.job WHERE jobname = 'daily-reminder-scheduler'),
+  active := true
+);
+```
+
+**Eliminar:**
+```sql
+SELECT cron.unschedule('daily-reminder-scheduler');
+```
+
+**Cambiar horario:**
+```sql
+SELECT cron.alter_job(
+  job_id := (SELECT jobid FROM cron.job WHERE jobname = 'daily-reminder-scheduler'),
+  schedule := '0 10 * * *' -- Cambiar a las 10:00 AM
+);
+```
+
+### 📊 Monitoreo
+
+**Ver respuestas de HTTP requests:**
+```sql
+SELECT
+  id,
+  status_code,
+  headers->>'x-completed-jobs' as completed,
+  headers->>'x-failed-jobs' as failed,
+  created
+FROM net._http_response
+ORDER BY created DESC
+LIMIT 10;
+```
+
+---
+
+## [2025-10-10] - 🧪 Testing y Módulos de WhatsApp Client
+
+### 🛠️ Herramientas Creadas
+
+#### 1. **Módulo WhatsApp Client** (`_shared/whatsapp-client.ts`)
+Módulo genérico reutilizable para enviar mensajes de WhatsApp usando plantillas HSM.
+
+**Función principal:**
+```typescript
+sendWhatsAppMessage({
+  phoneNumberId, accessToken, to,
+  template: { name, language, components }
+})
+```
+
+**Uso:** Reemplaza código duplicado en `scheduler_dispatch` y `test-reminder` para envío de templates.
+
+#### 2. **Edge Function de Prueba** (`test-reminder/index.ts`)
+Función para testear manualmente el sistema de recordatorios sin esperar al scheduler.
+
+**Endpoint:** `POST /functions/v1/test-reminder`
+**Body:** `{ "loan_id": "uuid-del-prestamo" }`
+
+**Funcionalidad:**
+- Acepta `loan_id` y obtiene datos completos del préstamo
+- Detecta automáticamente tipo de préstamo (dinero vs objeto)
+- Selecciona template correcto (`due_date_money_v1` o `due_date_object_v1`)
+- Prepara todas las variables (12 para dinero, 6 para objeto)
+- Construye componentes (header, body, botones Quick Reply y CTA URL)
+- Envía mensaje via WhatsApp Graph API
+- Retorna resultado detallado con éxito/error
+
+**Uso:**
+```bash
+curl -X POST "https://qgjxkszfdoolaxmsupil.supabase.co/functions/v1/test-reminder" \
+  -H "Authorization: Bearer ANON_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"loan_id": "uuid-del-prestamo"}'
+```
+
+### 📚 Documentación Creada
+
+**Archivo:** `docs/PLANTILLAS_RECORDATORIO_VENCIMIENTO.md`
+
+Documentación completa para crear y configurar los templates de recordatorio en Meta Business Manager:
+
+- Instrucciones paso a paso para crear `due_date_money_v1` y `due_date_object_v1`
+- Texto exacto del body con todas las variables
+- Configuración de botones (Quick Reply + CTA URL)
+- Ejemplos visuales de cómo se ven los mensajes
+- Troubleshooting de errores comunes
+- Referencias a documentación de Meta
+
+### ✅ Problemas Resueltos y Prueba Exitosa
+
+**Problemas encontrados durante testing:**
+
+1. **Código de idioma incorrecto** - Error `#132001: Template name does not exist in the translation`
+   - **Causa:** Enviando `language: { code: 'es' }` pero Meta tiene templates como `Spanish (CHL)` = `es_CL`
+   - **Solución:** Cambiado a `language: { code: 'es_CL' }` en test-reminder y scheduler_dispatch
+
+2. **Número de parámetros incorrecto** - Error `#132000: Number of parameters does not match`
+   - **Causa:** Pasando TODAS las variables (incluyendo URL) al body, pero Meta espera:
+     - Money: 11 variables en body + 1 en botón URL
+     - Object: 5 variables en body + 1 en botón URL
+   - **Solución:** Separar `bodyVariables = variables.slice(0, -1)` y `detailUrl = variables[variables.length - 1]`
+
+3. **Resultado de la prueba (2025-10-10):**
+   ```json
+   {
+     "success": true,
+     "message": "Reminder sent successfully",
+     "data": {
+       "loan_id": "ac54966b-7142-4c0b-a95c-cc7cf9bacbe7",
+       "borrower": "Caty",
+       "template": "due_date_money_v1",
+       "phone": "+56962081122"
+     }
+   }
+   ```
+
+**Templates verificados en Meta Business:**
+- ✅ `due_date_money_v1`: Activa (Spanish CHL)
+- ✅ `due_date_object_v1`: Activa (Spanish CHL)
+
+---
+
+## [2025-10-10] - 🔘 Sistema de Recordatorios: Botones Interactivos en Templates de Día de Vencimiento
+
+### ✨ Nueva Funcionalidad
+
+**Objetivo:**
+Implementar botones interactivos en los recordatorios del día de vencimiento para facilitar acciones rápidas desde WhatsApp:
+- Botón Quick Reply "Marcar como devuelto" para acción inmediata
+- Botón CTA URL "Ver otras opciones" para acceder al detalle del préstamo con token dinámico
+
+**Cambios realizados:**
+
+#### 1. **Migration SQL** (`024_add_due_date_templates_with_buttons.sql`):
+
+**Dos templates especializados** para manejar tipos de préstamos diferentes:
+
+**a) `due_date_money_v1` - Préstamos de dinero (12 variables)**
+   - Header: "Tienes un préstamo por vencer"
+   - Variables (1-11): Datos del préstamo + información bancaria completa
+     - {{1}} = Nombre del borrower (de su perfil)
+     - {{2}} = Monto formateado ($50.000)
+     - {{3}} = Nombre del lender (alias del contacto)
+     - {{4}} = Fecha de creación (14/10/25)
+     - {{5}} = Concepto/descripción
+     - {{6}} = Nombre completo del lender (de su perfil)
+     - {{7}} = RUT del lender (formato 12.345.678-9)
+     - {{8}} = Banco
+     - {{9}} = Tipo de cuenta
+     - {{10}} = Número de cuenta
+     - {{11}} = Email del lender
+   - Variable {{12}}: URL dinámica al detalle del préstamo
+   - Botones:
+     - Quick Reply: "Marcar como devuelto" → payload `loan_{id}_mark_returned`
+     - CTA URL: "Ver otras opciones" → URL variable {{12}}
+
+**b) `due_date_object_v1` - Préstamos de objetos (6 variables)**
+   - Header: "Tienes un préstamo por vencer"
+   - Variables (1-5): Datos básicos del préstamo
+     - {{1}} = Nombre del borrower
+     - {{2}} = Descripción del objeto
+     - {{3}} = Nombre del lender
+     - {{4}} = Fecha de creación
+     - {{5}} = Concepto/descripción
+   - Variable {{6}}: URL dinámica al detalle del préstamo
+   - Botones: Idénticos a template de dinero
+
+**Especificaciones técnicas de templates:**
+- `button_type = 'mixed'` (Quick Reply + CTA URL)
+- `category = 'due_date'`
+- `approval_status = 'pending'` (requiere aprobación de Meta)
+- Máximo 6 emojis en body (cumple política de WhatsApp)
+- Header sin emojis (cumple política de WhatsApp UTILITY)
+
+#### 2. **Scheduler Dispatch** (`supabase/functions/scheduler_dispatch/index.ts`):
+
+**a) Función de generación de token** (líneas 701-705):
+```typescript
+function generateLoanDetailToken(tenantId: string, contactId: string): string {
+  const timestamp = Date.now();
+  return `menu_${tenantId}_${contactId}_${timestamp}`;
+}
+```
+- Genera tokens únicos para acceso a detalle de préstamos
+- Formato: `menu_{tenant_id}_{contact_id}_{timestamp}`
+
+**b) Lógica de selección de template** (líneas 592-638):
+- Detecta si el agreement es préstamo de dinero (`amount !== null`) u objeto
+- Selecciona template específico:
+  - Dinero → `due_date_money_v1`
+  - Objeto → `due_date_object_v1`
+- Solo aplica en estado `due_soon` cuando faltan menos de 6 horas (día D)
+
+**c) Construcción de componentes de botones** (líneas 640-701):
+```typescript
+// Quick Reply buttons
+if (template.buttons.quick_replies && Array.isArray(template.buttons.quick_replies)) {
+  template.buttons.quick_replies.forEach((button: any) => {
+    components.push({
+      type: 'button',
+      sub_type: 'quick_reply',
+      index: buttonIndex.toString(),
+      parameters: [{
+        type: 'payload',
+        payload: `loan_${agreement.id}_mark_returned`
+      }]
+    });
+    buttonIndex++;
+  });
+}
+
+// CTA URL button (con variable dinámica)
+if (template.buttons.cta_url) {
+  const detailUrl = variables[variables.length - 1]; // Última variable = URL
+  components.push({
+    type: 'button',
+    sub_type: 'url',
+    index: buttonIndex.toString(),
+    parameters: [{
+      type: 'text',
+      text: detailUrl
+    }]
+  });
+}
+```
+
+**d) Generación de URL dinámica** (en `prepareRefinedTemplateVariables`):
+- Se genera token para el borrower
+- URL construida: `{APP_BASE_URL}/menu/loan-detail.html?token={token}&loan_id={agreement_id}`
+- Se agrega como última variable en el array
+
+#### 3. **Webhook Handler** (`supabase/functions/wa_webhook/index.ts`, líneas 1361-1445):
+
+**Handler para botón "Marcar como devuelto":**
+
+```typescript
+if (buttonId.startsWith('loan_') && buttonId.endsWith('_mark_returned')) {
+  const agreementId = buttonId.split('_')[1];
+
+  // 1. Buscar préstamo específico
+  const { data: specificLoan, error: loanError } = await supabase
+    .from('agreements')
+    .select('*, lender:tenant_contacts!lender_tenant_contact_id(id, name)')
+    .eq('id', agreementId)
+    .eq('tenant_contact_id', contact.id)
+    .single();
+
+  // 2. Validaciones
+  if (loanError || !specificLoan) {
+    responseMessage = 'No encontré ese préstamo...';
+    break;
+  }
+
+  if (specificLoan.status === 'completed') {
+    responseMessage = 'Este préstamo ya está marcado como devuelto.';
+    break;
+  }
+
+  // 3. Marcar como completado
+  await supabase
+    .from('agreements')
+    .update({
+      status: 'completed',
+      completed_at: new Date().toISOString()
+    })
+    .eq('id', agreementId);
+
+  // 4. Notificar al lender
+  if (specificLoan.lender_tenant_contact_id) {
+    const windowManager = new WhatsAppWindowManager(...);
+    const loanText = specificLoan.amount
+      ? `${formatMoney(specificLoan.amount)}`
+      : specificLoan.item_description;
+    const notifyMessage = `✅ ${contact.name} marcó como devuelto el préstamo de ${loanText}.`;
+
+    await windowManager.sendMessage(
+      tenant.id,
+      specificLoan.lender_tenant_contact_id,
+      notifyMessage,
+      { priority: 'normal' }
+    );
+  }
+
+  // 5. Confirmar al borrower
+  responseMessage = `✅ ¡Perfecto! He registrado que devolviste "${loanDescription}". ¡Gracias!`;
+}
+```
+
+**Flujo del handler:**
+1. Extrae `agreement_id` del payload `loan_{id}_mark_returned`
+2. Valida que el préstamo existe y pertenece al contacto
+3. Verifica que no esté ya completado
+4. Actualiza estado a `completed` con `completed_at`
+5. Notifica al lender vía WhatsApp
+6. Envía confirmación al borrower
+
+**Beneficios:**
+- ✅ **UX mejorada**: Usuario puede marcar préstamo como devuelto desde el mensaje
+- ✅ **Acceso rápido**: Botón URL lleva directamente al detalle con token seguro
+- ✅ **Sin fricción**: No requiere abrir app, login, o buscar manualmente
+- ✅ **Notificaciones automáticas**: Lender es notificado inmediatamente
+- ✅ **Seguridad**: Token con timestamp para validación temporal
+- ✅ **Templates específicos**: Dinero vs Objeto, información relevante a cada tipo
+- ✅ **Compliance WhatsApp**: Cumple políticas de botones y categoría UTILITY
+
+**Arquitectura:**
+- **Templates HSM**: Duales (dinero/objeto) en tabla `templates` con `button_type = 'mixed'`
+- **Payload pattern**: `loan_{agreement_id}_mark_returned` para identificación única
+- **Token pattern**: `menu_{tenant_id}_{contact_id}_{timestamp}` para seguridad
+- **Scheduler**: Detecta tipo de préstamo → selecciona template → construye componentes
+- **Webhook**: Pattern matching en payload → valida → ejecuta → notifica
+
+**Pendientes para deployment:**
+1. Registrar ambos templates en Meta Business Manager
+2. Esperar aprobación de Meta (24-48 horas típicamente)
+3. Configurar variable de entorno `APP_BASE_URL` para producción
+4. Ejecutar migration `024_add_due_date_templates_with_buttons.sql`
+5. Testing completo del flujo end-to-end
+
+**Archivos modificados:**
+- `supabase/migrations/024_add_due_date_templates_with_buttons.sql` - Nuevas plantillas
+- `supabase/functions/scheduler_dispatch/index.ts` - Líneas 592-701 (selección template, token, botones)
+- `supabase/functions/wa_webhook/index.ts` - Líneas 1361-1445 (handler botón)
+
+---
+
+## [2025-10-10] - 💳 Sistema de Recordatorios: Incluir Datos Bancarios en Recordatorio de Día de Vencimiento
+
+### ✨ Nueva Funcionalidad
+
+**Objetivo:**
+Facilitar la devolución de préstamos en dinero incluyendo datos bancarios del prestamista en el recordatorio del día de vencimiento.
+
+**Cambios realizados:**
+
+1. **Migration SQL** (`023_add_bank_details_to_due_date_reminder.sql`):
+   - Actualización de template `due_date` de 3 a 8 variables
+   - Nueva estructura de mensaje incluye:
+     - {{1}} = Nombre del borrower
+     - {{2}} = Item/monto prestado
+     - {{3}} = Nombre completo del lender
+     - {{4}} = RUT del lender
+     - {{5}} = Banco
+     - {{6}} = Tipo de cuenta
+     - {{7}} = Número de cuenta
+     - {{8}} = Email del lender
+
+2. **Refactorización Scheduler** (`supabase/functions/scheduler_dispatch/index.ts`):
+   - `processRefinedAgreementStates()` (líneas 460-480):
+     - Migrado de `contacts` (deprecated) a `tenant_contacts`
+     - JOIN con `borrower:tenant_contacts` para datos del prestatario
+     - JOIN con `lender:tenant_contacts` + `contact_profiles` para datos bancarios del prestamista
+
+   - `prepareRefinedTemplateVariables()` (líneas 687-810):
+     - Nueva función `getBankInfo()` para extraer datos bancarios
+     - Función `formatRUT()` para formatear RUT chileno (12.345.678-9)
+     - Caso `due_date` actualizado con 8 variables incluyendo datos bancarios
+     - Manejo de valores null con fallback "No disponible"
+
+**Beneficios:**
+- ✅ Reduce fricción: Usuario recibe todos los datos para transferir inmediatamente
+- ✅ Aumenta conversión: Menos pasos para devolver préstamos en dinero
+- ✅ Mejor UX: Información completa en un solo mensaje
+- ✅ Solo aplica a recordatorios urgentes (día de vencimiento)
+
+**Arquitectura:**
+- Datos bancarios fluyen desde: `tenant_contacts` → `contact_profiles` → `bank_accounts` (JSONB)
+- Sistema respeta nueva arquitectura post-migración a `tenant_contacts`
+- Compatible con préstamos donde lender puede ser NULL (owner) o contact específico
+
+---
+
 ## [2025-10-10] - 🎨 UX: Limpiar emojis innecesarios en detalle de préstamo
 
 ### ✨ Mejora de interfaz

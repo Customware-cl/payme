@@ -460,14 +460,24 @@ async function processRefinedAgreementStates(
     let agreementsQuery = supabase
       .from('agreements')
       .select(`
-        id, title, status, due_date, agreement_type, tenant_id, contact_id,
+        id, title, status, due_date, agreement_type, tenant_id,
+        tenant_contact_id, lender_tenant_contact_id,
         last_reminder_sent, reminder_sequence_step, opt_in_required,
-        contacts!inner(id, name, phone_e164, opt_in_status),
+        borrower:tenant_contacts!tenant_contact_id(
+          id, name, opt_in_status,
+          contact_profiles!inner(phone_e164)
+        ),
+        lender:tenant_contacts!lender_tenant_contact_id(
+          id, name,
+          contact_profiles!inner(
+            first_name, last_name, email, bank_accounts
+          )
+        ),
         tenants!inner(id, name, whatsapp_phone_number_id, whatsapp_access_token)
       `)
       .in('status', ['due_soon', 'overdue'])
-      .eq('contacts.opt_in_status', 'opted_in')
-      .not('due_date', 'is', null);
+      .not('due_date', 'is', null)
+      .not('tenant_contact_id', 'is', null);
 
     if (tenantId) {
       agreementsQuery = agreementsQuery.eq('tenant_id', tenantId);
@@ -497,7 +507,7 @@ async function processRefinedAgreementStates(
         }
 
         if (dryRun) {
-          console.log(`[DRY RUN] Enviaría recordatorio refinado a ${agreement.contacts.name} para ${agreement.title}`);
+          console.log(`[DRY RUN] Enviaría recordatorio refinado a ${agreement.borrower?.name} para ${agreement.title}`);
           stats.sent++;
           continue;
         }
@@ -537,20 +547,38 @@ async function processRefinedAgreementStates(
 }
 
 // Determinar si debe enviar recordatorio refinado
-async function shouldSendRefinedReminder(agreement: any): Promise<boolean> {
+// Los recordatorios se envían a las 09:00 por defecto (configurable)
+async function shouldSendRefinedReminder(agreement: any, targetHour: number = 9): Promise<boolean> {
   const now = new Date();
+  const currentHour = now.getHours();
   const dueDate = new Date(agreement.due_date);
+  dueDate.setHours(0, 0, 0, 0); // Normalizar a medianoche
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Normalizar a medianoche
+
   const lastSent = agreement.last_reminder_sent ? new Date(agreement.last_reminder_sent) : null;
 
-  // Calcular horas hasta vencimiento
-  const hoursUntilDue = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+  // Calcular días hasta vencimiento
+  const daysUntilDue = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+  // Ventana de envío: entre 2 horas antes y 2 horas después de la hora objetivo
+  const inSendWindow = currentHour >= (targetHour - 2) && currentHour <= (targetHour + 2);
 
   if (agreement.status === 'due_soon') {
-    // Para due_soon: enviar si está entre 12-36 horas del vencimiento
-    if (hoursUntilDue < 12 || hoursUntilDue > 36) return false;
+    // Día antes del vencimiento (daysUntilDue === 1) → Recordatorio "before_24h"
+    // Día de vencimiento (daysUntilDue === 0) → Recordatorio "due_date" con botones
+    if (daysUntilDue !== 0 && daysUntilDue !== 1) {
+      return false; // No es el día correcto
+    }
 
-    // No enviar si ya se envió en las últimas 22 horas
-    if (lastSent && (now.getTime() - lastSent.getTime()) < (22 * 60 * 60 * 1000)) {
+    // Verificar que estamos en la ventana de envío (cerca de las 09:00)
+    if (!inSendWindow) {
+      return false; // No es la hora correcta
+    }
+
+    // No enviar si ya se envió hoy (en las últimas 12 horas)
+    if (lastSent && (now.getTime() - lastSent.getTime()) < (12 * 60 * 60 * 1000)) {
       return false;
     }
 
@@ -558,7 +586,11 @@ async function shouldSendRefinedReminder(agreement: any): Promise<boolean> {
   }
 
   if (agreement.status === 'overdue') {
-    // Para overdue: enviar cada 48 horas
+    // Para overdue: enviar cada 48 horas a las 09:00
+    if (!inSendWindow) {
+      return false; // No es la hora correcta
+    }
+
     if (lastSent && (now.getTime() - lastSent.getTime()) < (48 * 60 * 60 * 1000)) {
       return false;
     }
@@ -575,20 +607,33 @@ async function sendRefinedReminder(supabase: any, agreement: any): Promise<{
   error?: string;
 }> {
   try {
-    const now = new Date();
     const dueDate = new Date(agreement.due_date);
-    const hoursUntilDue = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+    dueDate.setHours(0, 0, 0, 0);
 
-    // Determinar categoría de plantilla
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Calcular días hasta vencimiento
+    const daysUntilDue = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+    // Determinar categoría de plantilla basándose en días
     let templateCategory = '';
+    let templateName = '';
 
     if (agreement.status === 'due_soon') {
-      if (hoursUntilDue > 6) {
-        // 24h antes
+      if (daysUntilDue === 1) {
+        // Día antes del vencimiento → Recordatorio previo
         templateCategory = agreement.agreement_type === 'loan' ? 'before_24h' : 'monthly_service_preview';
-      } else {
-        // Día D
-        templateCategory = agreement.agreement_type === 'loan' ? 'due_date' : 'monthly_service';
+      } else if (daysUntilDue === 0) {
+        // Día de vencimiento → Recordatorio con botones
+        if (agreement.agreement_type === 'loan') {
+          templateCategory = 'due_date';
+          // Seleccionar template según tipo de préstamo
+          const isMoneyLoan = agreement.amount !== null;
+          templateName = isMoneyLoan ? 'due_date_money_v1' : 'due_date_object_v1';
+        } else {
+          templateCategory = 'monthly_service';
+        }
       }
     } else if (agreement.status === 'overdue') {
       templateCategory = agreement.agreement_type === 'loan' ? 'overdue' : 'monthly_service_overdue';
@@ -599,29 +644,83 @@ async function sendRefinedReminder(supabase: any, agreement: any): Promise<{
     }
 
     // Obtener plantilla HSM
-    const { data: template, error: templateError } = await supabase
+    let templateQuery = supabase
       .from('templates')
       .select('*')
       .eq('category', templateCategory)
-      .eq('tenant_id', null)
-      .single();
+      .is('tenant_id', null);
 
-    if (templateError || !template) {
-      return { success: false, error: `Plantilla no encontrada para categoría: ${templateCategory}` };
+    // Para due_date, buscar por nombre específico (money vs object)
+    if (templateName) {
+      templateQuery = templateQuery.eq('meta_template_name', templateName);
     }
 
-    // Preparar variables de la plantilla
-    const variables = prepareRefinedTemplateVariables(agreement, template.category);
+    const { data: template, error: templateError } = await templateQuery.maybeSingle();
+
+    if (templateError || !template) {
+      return { success: false, error: `Plantilla no encontrada para categoría: ${templateCategory}${templateName ? ' (' + templateName + ')' : ''}` };
+    }
+
+    // Preparar variables de la plantilla (incluyendo URL del detalle)
+    const variables = await prepareRefinedTemplateVariables(agreement, template.category, template.meta_template_name);
+
+    // Separar variables del body y la URL del botón
+    // Para templates con botones CTA URL, la última variable es la URL
+    const hasUrlButton = template.button_config?.cta_url;
+    const detailUrl = hasUrlButton ? variables[variables.length - 1] : null;
+    const bodyVariables = hasUrlButton ? variables.slice(0, -1) : variables;
 
     // Crear componentes del mensaje HSM
-    const components = [
+    const components: any[] = [
       {
         type: 'body',
-        parameters: variables.map((v: string) => ({ type: 'text', text: v }))
+        parameters: bodyVariables.map((v: string) => ({ type: 'text', text: v }))
       }
     ];
 
-    // Agregar botones si la plantilla los tiene
+    // Agregar header si existe
+    if (template.header) {
+      components.unshift({
+        type: 'header',
+        parameters: []
+      });
+    }
+
+    // Agregar botones si la plantilla los tiene (formato JSONB)
+    if (template.button_config) {
+      let buttonIndex = 0;
+
+      // Quick Reply buttons
+      if (template.button_config.quick_replies && Array.isArray(template.button_config.quick_replies)) {
+        template.button_config.quick_replies.forEach((button: any) => {
+          components.push({
+            type: 'button',
+            sub_type: 'quick_reply',
+            index: buttonIndex.toString(),
+            parameters: [{
+              type: 'payload',
+              payload: `loan_${agreement.id}_mark_returned`
+            }]
+          });
+          buttonIndex++;
+        });
+      }
+
+      // CTA URL button (con variable dinámica en la URL - última variable)
+      if (template.button_config.cta_url && detailUrl) {
+        components.push({
+          type: 'button',
+          sub_type: 'url',
+          index: buttonIndex.toString(),
+          parameters: [{
+            type: 'text',
+            text: detailUrl
+          }]
+        });
+      }
+    }
+
+    // Soporte legacy para buttons_config (si existe)
     if (template.buttons_config && template.buttons_config.length > 0) {
       template.buttons_config.forEach((button: any, index: number) => {
         components.push({
@@ -640,16 +739,16 @@ async function sendRefinedReminder(supabase: any, agreement: any): Promise<{
     const messageResult = await sendWhatsAppMessage({
       phoneNumberId: agreement.tenants.whatsapp_phone_number_id,
       accessToken: agreement.tenants.whatsapp_access_token,
-      to: agreement.contacts.phone_e164,
+      to: agreement.borrower?.contact_profiles?.phone_e164,
       template: {
         name: template.meta_template_name,
-        language: { code: 'es' },
+        language: { code: 'es_CL' }, // Spanish (Chile) según Meta Business
         components
       }
     });
 
     if (messageResult.success) {
-      console.log(`✅ Recordatorio refinado enviado: ${agreement.title} -> ${agreement.contacts.name}`);
+      console.log(`✅ Recordatorio refinado enviado: ${agreement.title} -> ${agreement.borrower?.name}`);
 
       // Crear notificación al dueño si es necesario
       if (agreement.status === 'overdue') {
@@ -659,7 +758,7 @@ async function sendRefinedReminder(supabase: any, agreement: any): Promise<{
           p_title: 'Acuerdo Vencido',
           p_message: `El acuerdo "${agreement.title}" está vencido desde ${dueDate.toLocaleDateString('es-CL')}.`,
           p_agreement_id: agreement.id,
-          p_contact_id: agreement.contact_id,
+          p_contact_id: agreement.tenant_contact_id,
           p_priority: 'high'
         });
       }
@@ -674,9 +773,16 @@ async function sendRefinedReminder(supabase: any, agreement: any): Promise<{
   }
 }
 
+// Generar token de acceso para el detalle del préstamo
+function generateLoanDetailToken(tenantId: string, contactId: string): string {
+  const timestamp = Date.now();
+  return `menu_${tenantId}_${contactId}_${timestamp}`;
+}
+
 // Preparar variables para plantillas refinadas optimizadas
-function prepareRefinedTemplateVariables(agreement: any, category: string): string[] {
+async function prepareRefinedTemplateVariables(agreement: any, category: string, templateName?: string): Promise<string[]> {
   const dueDate = new Date(agreement.due_date);
+  const createdDate = new Date(agreement.created_at);
   const variables: string[] = [];
 
   // Formatear monto con separador de miles
@@ -684,11 +790,54 @@ function prepareRefinedTemplateVariables(agreement: any, category: string): stri
     return amount ? amount.toLocaleString('es-CL') : '0';
   };
 
+  // Formatear fecha en formato dd/mm/yy
+  const formatShortDate = (date: Date) => {
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = String(date.getFullYear()).slice(-2);
+    return `${day}/${month}/${year}`;
+  };
+
+  // Formatear RUT chileno: 12345678-9
+  const formatRUT = (rut: string) => {
+    if (!rut) return 'Sin RUT';
+    const clean = rut.replace(/[^0-9kK]/g, '');
+    if (clean.length < 2) return rut;
+    const dv = clean.slice(-1);
+    const num = clean.slice(0, -1);
+    return `${num.replace(/\B(?=(\d{3})+(?!\d))/g, '.')}-${dv}`;
+  };
+
+  // Extraer datos bancarios del lender
+  const getBankInfo = () => {
+    const lender = agreement.lender;
+    const profile = lender?.contact_profiles;
+    const bankAccount = profile?.bank_accounts?.[0];
+
+    return {
+      name: profile?.first_name && profile?.last_name
+        ? `${profile.first_name} ${profile.last_name}`.trim()
+        : (lender?.name || 'el prestamista'),
+      rut: bankAccount?.rut ? formatRUT(bankAccount.rut) : 'No disponible',
+      bank: bankAccount?.bank_name || 'No disponible',
+      accountType: bankAccount?.account_type || 'No disponible',
+      accountNumber: bankAccount?.account_number || 'No disponible',
+      email: profile?.email || 'No disponible'
+    };
+  };
+
+  // Generar URL del detalle del préstamo (para botones CTA)
+  const generateDetailUrl = () => {
+    const baseUrl = Deno.env.get('APP_BASE_URL') || 'https://tudominio.com';
+    const token = generateLoanDetailToken(agreement.tenant_id, agreement.tenant_contact_id);
+    return `${baseUrl}/menu/loan-detail.html?token=${token}&loan_id=${agreement.id}`;
+  };
+
   switch (category) {
     case 'opt_in':
       // Variables v2: {{1}} nombre, {{2}} empresa, {{3}} tipo_servicio
       variables.push(
-        agreement.contacts.name || 'Usuario',
+        agreement.borrower?.name || 'Usuario',
         agreement.tenants?.name || 'la empresa',
         agreement.agreement_type === 'loan' ? 'préstamos y devoluciones' : 'servicios mensuales'
       );
@@ -697,26 +846,59 @@ function prepareRefinedTemplateVariables(agreement: any, category: string): stri
     case 'before_24h':
       // Variables v2: {{1}} nombre, {{2}} fecha, {{3}} item, {{4}} prestamista
       variables.push(
-        agreement.contacts.name || 'Usuario',
+        agreement.borrower?.name || 'Usuario',
         dueDate.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' }),
         agreement.title,
-        agreement.tenants?.name || 'el prestamista'
+        agreement.lender?.name || agreement.tenants?.name || 'el prestamista'
       );
       break;
 
     case 'due_date':
-      // Variables v2: {{1}} nombre, {{2}} item, {{3}} prestamista
-      variables.push(
-        agreement.contacts.name || 'Usuario',
-        agreement.title,
-        agreement.tenants?.name || 'el prestamista'
-      );
+      // Detectar tipo de plantilla (money vs object)
+      const isMoneyTemplate = templateName === 'due_date_money_v1';
+      const borrowerProfileName = agreement.borrower?.contact_profiles?.first_name || agreement.borrower?.name || 'Usuario';
+
+      if (isMoneyTemplate) {
+        // Plantilla de dinero: 12 variables
+        // {{1}} nombre_borrower, {{2}} monto, {{3}} nombre_lender, {{4}} fecha_creación,
+        // {{5}} concepto, {{6}} nombre_completo_lender, {{7}} rut, {{8}} banco,
+        // {{9}} tipo_cuenta, {{10}} nro_cuenta, {{11}} email, {{12}} url_detalle
+        const bankInfo = getBankInfo();
+        const montoFormateado = agreement.amount ? `$${formatAmount(agreement.amount)}` : '$0';
+
+        variables.push(
+          borrowerProfileName,
+          montoFormateado,
+          agreement.lender?.name || 'el prestamista',
+          formatShortDate(createdDate),
+          agreement.item_description || agreement.title || 'préstamo',
+          bankInfo.name,
+          bankInfo.rut,
+          bankInfo.bank,
+          bankInfo.accountType,
+          bankInfo.accountNumber,
+          bankInfo.email,
+          generateDetailUrl()
+        );
+      } else {
+        // Plantilla de objeto: 6 variables
+        // {{1}} nombre_borrower, {{2}} objeto, {{3}} nombre_lender,
+        // {{4}} fecha_creación, {{5}} concepto, {{6}} url_detalle
+        variables.push(
+          borrowerProfileName,
+          agreement.item_description || agreement.title || 'objeto',
+          agreement.lender?.name || 'el prestamista',
+          formatShortDate(createdDate),
+          agreement.title || 'préstamo',
+          generateDetailUrl()
+        );
+      }
       break;
 
     case 'overdue':
       // Variables v2: {{1}} nombre, {{2}} item, {{3}} fecha_vencimiento
       variables.push(
-        agreement.contacts.name || 'Usuario',
+        agreement.borrower?.name || 'Usuario',
         agreement.title,
         dueDate.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' })
       );
@@ -725,7 +907,7 @@ function prepareRefinedTemplateVariables(agreement: any, category: string): stri
     case 'monthly_service_preview':
       // Variables v2: {{1}} nombre, {{2}} servicio, {{3}} fecha, {{4}} monto
       variables.push(
-        agreement.contacts.name || 'Usuario',
+        agreement.borrower?.name || 'Usuario',
         agreement.title,
         dueDate.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' }),
         formatAmount(agreement.amount || 0)
@@ -735,7 +917,7 @@ function prepareRefinedTemplateVariables(agreement: any, category: string): stri
     case 'monthly_service':
       // Variables v2: {{1}} nombre, {{2}} servicio, {{3}} monto
       variables.push(
-        agreement.contacts.name || 'Usuario',
+        agreement.borrower?.name || 'Usuario',
         agreement.title,
         formatAmount(agreement.amount || 0)
       );
@@ -744,7 +926,7 @@ function prepareRefinedTemplateVariables(agreement: any, category: string): stri
     case 'monthly_service_overdue':
       // Variables v2: {{1}} nombre, {{2}} servicio, {{3}} monto, {{4}} fecha_original
       variables.push(
-        agreement.contacts.name || 'Usuario',
+        agreement.borrower?.name || 'Usuario',
         agreement.title,
         formatAmount(agreement.amount || 0),
         dueDate.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' })
@@ -754,7 +936,7 @@ function prepareRefinedTemplateVariables(agreement: any, category: string): stri
     default:
       // Fallback para compatibilidad
       variables.push(
-        agreement.contacts.name || 'Usuario',
+        agreement.borrower?.name || 'Usuario',
         agreement.title,
         dueDate.toLocaleDateString('es-CL')
       );

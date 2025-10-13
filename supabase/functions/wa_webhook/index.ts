@@ -1358,231 +1358,92 @@ async function processInboundMessage(
           }
           break;
 
-        case 'paid_cash':
-          responseMessage = '✅ Pago en efectivo registrado. ¡Gracias!';
-          break;
+        default:
+          // Manejar payloads dinámicos de botones HSM (ej: loan_123_mark_returned)
+          if (buttonId.startsWith('loan_') && buttonId.endsWith('_mark_returned')) {
+            const agreementId = buttonId.split('_')[1];
+            console.log('Procesando botón "Marcar como devuelto" para préstamo:', agreementId);
 
-        case 'Sí, confirmo':
-        case '✅ Sí, confirmo':
-          // Botón de confirmación del template loan_confirmation_request_v1
-          console.log('Loan confirmation button clicked: confirmed');
-          try {
-            // Buscar el acuerdo más reciente del contacto en estado pending_confirmation o active
-            const { data: agreement } = await supabase
-              .from('agreements')
-              .select('*')
-              .eq('tenant_contact_id', contact.id)
-              .in('status', ['pending_confirmation', 'active'])
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
+            try {
+              // Buscar el préstamo específico
+              const { data: specificLoan, error: loanError } = await supabase
+                .from('agreements')
+                .select('*, lender:tenant_contacts!lender_tenant_contact_id(id, name)')
+                .eq('id', agreementId)
+                .eq('tenant_contact_id', contact.id)
+                .single();
 
-            if (agreement) {
-              // Actualizar acuerdo a activo y confirmado
+              if (loanError || !specificLoan) {
+                responseMessage = 'No encontré ese préstamo. Por favor verifica desde el menú.';
+                break;
+              }
+
+              if (specificLoan.status === 'completed') {
+                responseMessage = 'Este préstamo ya está marcado como devuelto.';
+                break;
+              }
+
+              if (specificLoan.status !== 'active' && specificLoan.status !== 'due_soon' && specificLoan.status !== 'overdue') {
+                responseMessage = 'Este préstamo no puede ser marcado como devuelto en su estado actual.';
+                break;
+              }
+
+              // Marcar como completado
               await supabase
                 .from('agreements')
                 .update({
-                  status: 'active',
-                  borrower_confirmed: true,
-                  borrower_confirmed_at: new Date().toISOString()
+                  status: 'completed',
+                  completed_at: new Date().toISOString()
                 })
-                .eq('id', agreement.id);
-
-              // Notificar al lender (prestamista)
-              if (agreement.lender_tenant_contact_id) {
-                const lenderMessage = `✅ ${contact.name} confirmó el préstamo de ${agreement.amount ? '$' + formatMoney(agreement.amount) : agreement.item_description}.\n\nLos recordatorios están activos.`;
-
-                // Enviar mensaje al lender
-                const windowManager = new WhatsAppWindowManager(supabase.supabaseUrl, supabase.supabaseKey);
-                await windowManager.sendMessage(
-                  tenant.id,
-                  agreement.lender_tenant_contact_id,
-                  lenderMessage,
-                  { priority: 'high' }
-                );
-              }
-
-              responseMessage = '✅ ¡Préstamo confirmado!\n\nTe enviaremos recordatorios cuando se acerque la fecha de devolución.';
-
-              // Verificar si es primera confirmación para enviar mensaje de engagement
-              try {
-                const { count } = await supabase
-                  .from('agreements')
-                  .select('*', { count: 'exact', head: true })
-                  .eq('tenant_contact_id', contact.id)
-                  .eq('borrower_confirmed', true);
-
-                console.log('[ENGAGEMENT] Total confirmations for contact:', count);
-
-                // Solo enviar engagement en primera confirmación
-                if (count === 1) {
-                  console.log('[ENGAGEMENT] First confirmation detected, sending engagement message');
-
-                  // Generar token del menú web para engagement
-                  try {
-                    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-                    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-
-                    const engagementTokenResponse = await fetch(
-                      `${supabaseUrl}/functions/v1/generate-menu-token`,
-                      {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          'Authorization': `Bearer ${supabaseServiceKey}`
-                        },
-                        body: JSON.stringify({
-                          tenant_id: tenant.id,
-                          contact_id: contact.id
-                        })
-                      }
-                    );
-
-                    const engagementTokenData = await engagementTokenResponse.json();
-
-                    if (engagementTokenData.success && engagementTokenData.data.url) {
-                      const engagementMenuUrl = engagementTokenData.data.url;
-                      console.log('[ENGAGEMENT] Menu URL generated:', engagementMenuUrl);
-
-                      // Preparar mensaje de engagement con botón CTA URL
-                      interactiveResponse = {
-                        type: 'cta_url',
-                        body: {
-                          text: 'Confirmado! 🎉\n\nComo a ti te prestaron, probablemente tú también prestas a amigos o familia. Registra esos préstamos y te ayudamos con recordatorios para que no se olviden.\n\n⏱️ Válido por 1 hora.'
-                        },
-                        action: {
-                          name: 'cta_url',
-                          parameters: {
-                            display_text: 'Ir a la app',
-                            url: engagementMenuUrl
-                          }
-                        }
-                      };
-                    } else {
-                      console.error('[ENGAGEMENT] Error generating menu token:', engagementTokenData);
-                      // Si falla, no bloquear - el mensaje de confirmación ya se envió
-                    }
-                  } catch (engagementTokenError) {
-                    console.error('[ENGAGEMENT] Exception generating menu token:', engagementTokenError);
-                    // Si falla, no bloquear - el mensaje de confirmación ya se envió
-                  }
-                } else if (count > 1) {
-                  console.log('[CONTINUITY] Returning user detected, sending continuity message');
-
-                  // Generar token del menú web para continuidad
-                  try {
-                    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-                    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-
-                    const continuityTokenResponse = await fetch(
-                      `${supabaseUrl}/functions/v1/generate-menu-token`,
-                      {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          'Authorization': `Bearer ${supabaseServiceKey}`
-                        },
-                        body: JSON.stringify({
-                          tenant_id: tenant.id,
-                          contact_id: contact.id
-                        })
-                      }
-                    );
-
-                    const continuityTokenData = await continuityTokenResponse.json();
-
-                    if (continuityTokenData.success && continuityTokenData.data.url) {
-                      const continuityMenuUrl = continuityTokenData.data.url;
-                      console.log('[CONTINUITY] Menu URL generated:', continuityMenuUrl);
-
-                      // Preparar mensaje de continuidad con botón CTA URL
-                      interactiveResponse = {
-                        type: 'cta_url',
-                        body: {
-                          text: 'Confirmado! ✅\n\nTu préstamo está activo. Gestiona todos tus acuerdos desde la app.\n\n⏱️ Válido por 1 hora.'
-                        },
-                        action: {
-                          name: 'cta_url',
-                          parameters: {
-                            display_text: 'Ir a la app',
-                            url: continuityMenuUrl
-                          }
-                        }
-                      };
-                    } else {
-                      console.error('[CONTINUITY] Error generating menu token:', continuityTokenData);
-                      // Si falla, no bloquear - el mensaje de confirmación ya se envió
-                    }
-                  } catch (continuityTokenError) {
-                    console.error('[CONTINUITY] Exception generating menu token:', continuityTokenError);
-                    // Si falla, no bloquear - el mensaje de confirmación ya se envió
-                  }
-                } else {
-                  console.log('[ENGAGEMENT] Count is 0 or invalid, skipping post-confirmation message');
-                }
-              } catch (engagementError) {
-                console.error('[ENGAGEMENT] Error checking confirmations:', engagementError);
-                // No bloquear flujo si falla el engagement
-              }
-            } else {
-              responseMessage = 'No encontré un préstamo pendiente de confirmación.';
-            }
-          } catch (error) {
-            console.error('Error confirming loan:', error);
-            responseMessage = 'Hubo un error al confirmar. Por favor contacta directamente.';
-          }
-          break;
-
-        case 'No, rechazar':
-        case '❌ No, rechazar':
-          // Botón de rechazo del template loan_confirmation_request_v1
-          console.log('Loan confirmation button clicked: rejected');
-          try {
-            // Buscar el acuerdo más reciente del contacto
-            const { data: agreement } = await supabase
-              .from('agreements')
-              .select('*, lender:tenant_contacts!lender_tenant_contact_id(name)')
-              .eq('tenant_contact_id', contact.id)
-              .in('status', ['pending_confirmation', 'active'])
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-
-            if (agreement) {
-              // Actualizar acuerdo a rechazado
-              await supabase
-                .from('agreements')
-                .update({
-                  status: 'rejected',
-                  borrower_confirmed: false,
-                  borrower_rejection_reason: 'user_rejected'
-                })
-                .eq('id', agreement.id);
+                .eq('id', agreementId);
 
               // Notificar al lender
-              if (agreement.lender_tenant_contact_id) {
-                const lenderMessage = `❌ ${contact.name} rechazó el préstamo de ${agreement.amount ? '$' + formatMoney(agreement.amount) : agreement.item_description}.\n\nSe ha cancelado el recordatorio.`;
+              if (specificLoan.lender_tenant_contact_id) {
+                const windowManager = new WhatsAppWindowManager(
+                  Deno.env.get('SUPABASE_URL')!,
+                  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+                );
+                const loanText = specificLoan.amount
+                  ? `$${formatMoney(specificLoan.amount)}`
+                  : specificLoan.item_description;
+                const notifyMessage = `✅ ${contact.name} marcó como devuelto el préstamo de ${loanText}.`;
 
-                const windowManager = new WhatsAppWindowManager(supabase.supabaseUrl, supabase.supabaseKey);
                 await windowManager.sendMessage(
                   tenant.id,
-                  agreement.lender_tenant_contact_id,
-                  lenderMessage,
-                  { priority: 'high' }
+                  specificLoan.lender_tenant_contact_id,
+                  notifyMessage,
+                  { priority: 'normal' }
                 );
               }
 
-              responseMessage = 'Entendido, el préstamo ha sido rechazado.\n\n¿Puedes decirnos el motivo?\n\n1️⃣ No recibí el dinero/objeto\n2️⃣ El monto es incorrecto\n3️⃣ No conozco a esta persona';
-            } else {
-              responseMessage = 'No encontré un préstamo pendiente de confirmación.';
-            }
-          } catch (error) {
-            console.error('Error rejecting loan:', error);
-            responseMessage = 'Hubo un error al procesar el rechazo. Por favor contacta directamente.';
-          }
-          break;
+              // Registrar evento
+              await supabase
+                .from('events')
+                .insert({
+                  tenant_id: tenant.id,
+                  contact_id: contact.id,
+                  agreement_id: agreementId,
+                  event_type: 'loan_marked_returned_from_reminder',
+                  payload: {
+                    contact_name: contact.name,
+                    agreement_title: specificLoan.title,
+                    confirmed_at: new Date().toISOString(),
+                    source: 'quick_reply_button'
+                  }
+                });
 
-        default:
+              const loanDescription = specificLoan.amount
+                ? `$${formatMoney(specificLoan.amount)}`
+                : specificLoan.item_description;
+
+              responseMessage = `✅ ¡Perfecto! He registrado que devolviste "${loanDescription}". ¡Gracias!`;
+            } catch (error) {
+              console.error('Error procesando marcar como devuelto:', error);
+              responseMessage = 'Hubo un error al procesar tu solicitud. Por favor intenta de nuevo.';
+            }
+            break;
+          }
+
           responseMessage = 'No reconozco esa opción. Por favor usa los botones disponibles.';
       }
       } // Cierre del else que maneja botones tradicionales
