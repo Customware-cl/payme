@@ -2,12 +2,135 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-13b] - ✅ Fix Implementado: Sistema de Recordatorios Funcional
+
+### 🎯 Problema Resuelto
+
+**Severidad**: 🔴 **CRÍTICA**
+**Estado**: ✅ **RESUELTO** - Implementación completa
+
+Se implementó el fix para generar automáticamente `reminder_instances` cuando se crean préstamos y para usar el timezone correcto del tenant.
+
+### 🛠️ Cambios Implementados
+
+#### 1. Modificación de `setupDefaultReminders()`
+**Archivo**: `/supabase/functions/_shared/flow-handlers.ts` (línea 560)
+
+**Cambios**:
+- ✅ Agregado parámetro `dueDate: string`
+- ✅ Obtener `timezone` del tenant (fallback: `America/Santiago`)
+- ✅ Insertar reminders con `.select('id').single()` para obtener ID
+- ✅ Llamar `generate_reminder_instances()` para cada reminder con timezone correcto
+- ✅ Agregados logs de debugging con prefijo `[REMINDERS]`
+
+**Resultado**: Por cada préstamo creado se generan:
+- 3 reminders (configuraciones): `before_24h`, `due_date`, `overdue`
+- 1-3 reminder_instances (tareas ejecutables), según la hora de creación
+
+#### 2. Modificación de `regenerateReminders()`
+**Archivo**: `/supabase/functions/_shared/flow-handlers.ts` (línea 650)
+
+**Cambios**:
+- ✅ Agregado parámetro `tenantId: string`
+- ✅ Obtener `timezone` del tenant
+- ✅ Pasar `p_timezone` a `generate_reminder_instances()`
+- ✅ Agregados logs de debugging
+
+**Resultado**: Reprogramaciones ahora usan timezone correcto (Chile UTC-3) en vez de default incorrecto (México UTC-6).
+
+#### 3. Actualización de Llamadas
+
+**Línea 242** - `handleNewLoanFlow()`:
+```typescript
+await this.setupDefaultReminders(agreementId, tenantId, dueDate);
+```
+
+**Línea 348** - `handleRescheduleFlow()`:
+```typescript
+await this.regenerateReminders(agreement.id, newDate, tenantId);
+```
+
+**Línea 479** - `handleNewServiceFlow()`:
+```typescript
+await this.setupDefaultReminders(agreementId, tenantId, nextDueDate);
+```
+
+### 📦 Deployment
+
+**Funciones desplegadas**:
+- ✅ `flows-handler` (script size: 99.63kB)
+- ✅ `wa_webhook` (script size: 142.1kB)
+
+**Dashboard**: https://supabase.com/dashboard/project/qgjxkszfdoolaxmsupil/functions
+
+### 🔍 Verificación de Timezone
+
+**Tenant configurado**:
+```sql
+SELECT timezone FROM tenants WHERE name = 'PrestaBot Chile';
+-- Resultado: 'America/Santiago' (Chile, UTC-3) ✅
+```
+
+**Cálculo correcto de scheduled_for**:
+```sql
+-- Ejemplo: Recordatorio "due_date" para 13/10 a las 09:00 Chile
+'2025-10-13 09:00:00' AT TIME ZONE 'America/Santiago'
+= '2025-10-13 12:00:00+00' (almacenado como 12:00 UTC)
+
+-- Cron ejecuta a las 12:00 UTC = 09:00 Chile ✅
+```
+
+**Problema evitado**:
+```sql
+-- Con timezone incorrecto (default 'America/Mexico_City' UTC-6):
+'2025-10-13 09:00:00' AT TIME ZONE 'America/Mexico_City'
+= '2025-10-13 15:00:00+00' (almacenado como 15:00 UTC)
+
+-- Cron ejecutaría a las 15:00 UTC = 12:00 Chile ❌ (3 horas tarde)
+```
+
+### 📊 Impacto Esperado
+
+**Funcionalidad restaurada**:
+- ✅ Recordatorios 24h antes del vencimiento (10:00 Chile)
+- ✅ Recordatorios el día del vencimiento (09:00 Chile)
+- ✅ Recordatorios post-vencimiento (16:00 Chile)
+
+**Métricas objetivo**:
+- Instancias creadas: ≈ 3 × préstamos creados
+- Tasa de envío: > 90% en horario correcto
+- Errores de timezone: 0
+
+### ✅ Testing Pendiente
+
+- [ ] Crear préstamo nuevo via WhatsApp
+- [ ] Verificar 3 reminders + 1-3 instances creadas
+- [ ] Verificar `scheduled_for` con timezone correcto (Chile UTC-3)
+- [ ] Esperar a hora programada y verificar mensaje enviado
+- [ ] Reprogramar préstamo y verificar nuevas instances con timezone correcto
+- [ ] Monitorear logs por 24-48 horas
+
+### 📚 Documentación Relacionada
+
+- `/docs/PROBLEMA_ARQUITECTURAL_REMINDER_INSTANCES.md` - Análisis del problema
+- `/docs/TIMEZONE_MANEJO_RECORDATORIOS.md` - Manejo de timezones
+- Commit: Ver git log para detalles
+
+### 🎯 Próximos Pasos
+
+1. **Testing en producción**: Crear préstamo real y verificar funcionamiento
+2. **Fix retroactivo (opcional)**: Decidir si generar instances para préstamos existentes
+3. **Monitoreo**: Revisar logs de Edge Functions y métricas de envío
+4. **Validación end-to-end**: Confirmar que usuarios reciben mensajes a hora correcta
+
+---
+
 ## [2025-10-13a] - 🚨 Problema Crítico Arquitectural: Reminder Instances No Se Generan
 
 ### 🎯 Problema Identificado
 
 **Severidad**: 🔴 **CRÍTICA**
-**Estado**: ⚠️ **NO RESUELTO** - Requiere implementación
+**Estado**: ✅ **RESUELTO** - Ver entrada [2025-10-13b]
 
 El sistema de recordatorios de préstamos **NO está funcionando** porque las instancias ejecutables (`reminder_instances`) nunca se generan automáticamente cuando se crean los préstamos.
 

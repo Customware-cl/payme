@@ -239,7 +239,7 @@ export class FlowHandlers {
       }
 
       // 4. Configurar recordatorios automáticamente
-      await this.setupDefaultReminders(agreementId, tenantId);
+      await this.setupDefaultReminders(agreementId, tenantId, dueDate);
 
       // 5. Registrar evento de flujo completado
       await this.supabase
@@ -345,7 +345,7 @@ export class FlowHandlers {
         .eq('status', 'pending');
 
       // 4. Generar nuevos recordatorios para la nueva fecha
-      await this.regenerateReminders(agreement.id, newDate);
+      await this.regenerateReminders(agreement.id, newDate, tenantId);
 
       // 5. Registrar evento de reprogramación
       await this.supabase
@@ -476,7 +476,7 @@ export class FlowHandlers {
       }
 
       // 5. Configurar recordatorios
-      await this.setupDefaultReminders(agreementId, tenantId);
+      await this.setupDefaultReminders(agreementId, tenantId, nextDueDate);
 
       // 6. Registrar evento
       await this.supabase
@@ -557,8 +557,18 @@ export class FlowHandlers {
     return newTenantContact;
   }
 
-  private async setupDefaultReminders(agreementId: string, tenantId: string): Promise<void> {
-    // Obtener templates por defecto del tenant
+  private async setupDefaultReminders(agreementId: string, tenantId: string, dueDate: string): Promise<void> {
+    // 1. Obtener timezone del tenant
+    const { data: tenant } = await this.supabase
+      .from('tenants')
+      .select('timezone')
+      .eq('id', tenantId)
+      .single();
+
+    const timezone = tenant?.timezone || 'America/Santiago'; // Fallback a Chile
+    console.log(`[REMINDERS] Setting up reminders for agreement ${agreementId} with timezone ${timezone}`);
+
+    // 2. Obtener templates por defecto del tenant
     const { data: templates } = await this.supabase
       .from('templates')
       .select('*')
@@ -567,63 +577,116 @@ export class FlowHandlers {
       .in('category', ['before_24h', 'due_date', 'overdue']);
 
     if (!templates || templates.length === 0) {
-      console.warn('No templates found for reminders');
+      console.warn('[REMINDERS] No templates found for reminders');
       return;
     }
 
-    // Crear recordatorios estándar
-    const reminders = [
+    // 3. Crear recordatorios estándar con generación de instances
+    const remindersConfig = [
       {
-        agreement_id: agreementId,
         reminder_type: 'before_24h',
         days_offset: -1,
         time_of_day: '10:00',
         recipients: 'contact',
-        template_id: templates.find(t => t.category === 'before_24h')?.id || templates[0].id,
-        is_active: true
+        template_id: templates.find(t => t.category === 'before_24h')?.id || templates[0].id
       },
       {
-        agreement_id: agreementId,
         reminder_type: 'due_date',
         days_offset: 0,
         time_of_day: '09:00',
         recipients: 'contact',
-        template_id: templates.find(t => t.category === 'due_date')?.id || templates[0].id,
-        is_active: true
+        template_id: templates.find(t => t.category === 'due_date')?.id || templates[0].id
       },
       {
-        agreement_id: agreementId,
         reminder_type: 'overdue',
         days_offset: 1,
         time_of_day: '16:00',
         recipients: 'both',
-        template_id: templates.find(t => t.category === 'overdue')?.id || templates[0].id,
-        is_active: true
+        template_id: templates.find(t => t.category === 'overdue')?.id || templates[0].id
       }
     ];
 
-    await this.supabase
-      .from('reminders')
-      .insert(reminders);
+    for (const config of remindersConfig) {
+      // Insertar reminder y obtener ID
+      const { data: insertedReminder, error: insertError } = await this.supabase
+        .from('reminders')
+        .insert({
+          agreement_id: agreementId,
+          reminder_type: config.reminder_type,
+          days_offset: config.days_offset,
+          time_of_day: config.time_of_day,
+          recipients: config.recipients,
+          template_id: config.template_id,
+          is_active: true
+        })
+        .select('id')
+        .single();
+
+      if (insertError || !insertedReminder) {
+        console.error(`[REMINDERS] Error creating reminder ${config.reminder_type}:`, insertError);
+        continue;
+      }
+
+      console.log(`[REMINDERS] Created reminder ${config.reminder_type} with ID ${insertedReminder.id}`);
+
+      // Generar reminder_instance con timezone correcto
+      const { data: instanceResult, error: instanceError } = await this.supabase
+        .rpc('generate_reminder_instances', {
+          p_reminder_id: insertedReminder.id,
+          p_due_date: dueDate,
+          p_timezone: timezone
+        });
+
+      if (instanceError) {
+        console.error(`[REMINDERS] Error generating instance for ${config.reminder_type}:`, instanceError);
+      } else {
+        console.log(`[REMINDERS] Created ${instanceResult} instance(s) for ${config.reminder_type}`);
+      }
+    }
+
+    console.log('[REMINDERS] Default reminders setup completed');
   }
 
-  private async regenerateReminders(agreementId: string, newDueDate: string): Promise<void> {
-    // Obtener recordatorios activos
+  private async regenerateReminders(agreementId: string, newDueDate: string, tenantId: string): Promise<void> {
+    // 1. Obtener timezone del tenant
+    const { data: tenant } = await this.supabase
+      .from('tenants')
+      .select('timezone')
+      .eq('id', tenantId)
+      .single();
+
+    const timezone = tenant?.timezone || 'America/Santiago'; // Fallback a Chile
+    console.log(`[REMINDERS] Regenerating reminders for agreement ${agreementId} with timezone ${timezone}`);
+
+    // 2. Obtener recordatorios activos
     const { data: reminders } = await this.supabase
       .from('reminders')
       .select('*')
       .eq('agreement_id', agreementId)
       .eq('is_active', true);
 
-    if (!reminders) return;
-
-    // Generar nuevas instancias para cada recordatorio
-    for (const reminder of reminders) {
-      await this.supabase.rpc('generate_reminder_instances', {
-        reminder_id: reminder.id,
-        due_date: newDueDate
-      });
+    if (!reminders || reminders.length === 0) {
+      console.warn('[REMINDERS] No active reminders found for agreement');
+      return;
     }
+
+    // 3. Generar nuevas instancias para cada recordatorio con timezone correcto
+    for (const reminder of reminders) {
+      const { data: instanceResult, error: instanceError } = await this.supabase
+        .rpc('generate_reminder_instances', {
+          p_reminder_id: reminder.id,
+          p_due_date: newDueDate,
+          p_timezone: timezone  // ✅ Pasar timezone del tenant
+        });
+
+      if (instanceError) {
+        console.error(`[REMINDERS] Error regenerating instance for reminder ${reminder.id}:`, instanceError);
+      } else {
+        console.log(`[REMINDERS] Regenerated ${instanceResult} instance(s) for reminder ${reminder.reminder_type}`);
+      }
+    }
+
+    console.log('[REMINDERS] Reminders regeneration completed');
   }
 
   private generateRRule(recurrence: string): string {
