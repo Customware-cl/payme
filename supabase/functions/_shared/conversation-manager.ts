@@ -916,6 +916,14 @@ export class ConversationManager {
     return `${day}/${month}/${year}`;
   }
 
+  // Helper para formatear fecha como YYYY-MM-DD sin conversión UTC
+  private formatDateLocal(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
   private parseDate(input: string): string | null {
     const text = input.toLowerCase().trim();
 
@@ -928,11 +936,11 @@ export class ConversationManager {
     if (text === 'mañana') {
       const tomorrow = new Date(localTime);
       tomorrow.setDate(tomorrow.getDate() + 1);
-      return tomorrow.toISOString().split('T')[0];
+      return this.formatDateLocal(tomorrow);
     }
 
     if (text === 'hoy') {
-      return localTime.toISOString().split('T')[0];
+      return this.formatDateLocal(localTime);
     }
 
     // Parser para fechas con nombres de meses (debe ir ANTES de validación genérica de "mes")
@@ -959,28 +967,28 @@ export class ConversationManager {
           targetDate.setFullYear(year + 1);
         }
 
-        return targetDate.toISOString().split('T')[0];
+        return this.formatDateLocal(targetDate);
       }
     }
 
     if (text.includes('semana')) {
       const nextWeek = new Date(localTime);
       nextWeek.setDate(nextWeek.getDate() + 7);
-      return nextWeek.toISOString().split('T')[0];
+      return this.formatDateLocal(nextWeek);
     }
 
     // Validación más específica para "mes" (evitar conflictos con nombres de meses)
     if (text.match(/\b(en\s+)?(un\s+)?mes\b/) || text.match(/pr[oó]ximo\s+mes/)) {
       const nextMonth = new Date(localTime);
       nextMonth.setMonth(nextMonth.getMonth() + 1);
-      return nextMonth.toISOString().split('T')[0];
+      return this.formatDateLocal(nextMonth);
     }
 
     // Intentar parsear fecha específica (formato flexible)
     try {
       const date = new Date(input);
       if (!isNaN(date.getTime())) {
-        return date.toISOString().split('T')[0];
+        return this.formatDateLocal(date);
       }
     } catch {
       // Fallar silenciosamente

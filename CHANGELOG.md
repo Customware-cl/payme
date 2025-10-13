@@ -2,6 +2,75 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-12g] - 🐛 Fix: Offset de Fecha UTC (mañana → 13/10 en vez de 14/10)
+
+### 🎯 Problema Identificado
+
+Al crear préstamos con fecha "mañana" (13/10), aparecían con fecha 14/10 en "estado de préstamos".
+
+**Causa raíz**: Uso de `.toISOString().split('T')[0]` que convierte fechas locales a UTC, causando un shift de +1 día cuando el servidor está en timezone diferente (UTC) vs timezone local (Chile UTC-3).
+
+### ✅ Solución Implementada
+
+Creada función helper `formatDateLocal(date)` que formatea fechas como `YYYY-MM-DD` **sin conversión UTC**:
+
+```typescript
+function formatDateLocal(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+```
+
+### 📝 Archivos Modificados
+
+1. **`/supabase/functions/_shared/conversation-manager.ts`**
+   - Agregada función helper `formatDateLocal()`
+   - Reemplazadas 6 instancias en método `parseDate()`:
+     - "mañana" (línea 939)
+     - "hoy" (línea 943)
+     - fechas con nombres de mes (línea 970)
+     - "semana" (línea 977)
+     - "mes" (línea 984)
+     - fechas parseadas genéricas (línea 991)
+
+2. **`/supabase/functions/_shared/flow-handlers.ts`**
+   - Agregada función helper global `formatDateLocal()`
+   - Reemplazadas 4 instancias:
+     - `start_date` en `handleNewLoanFlow()` (línea 217)
+     - `start_date` en `handleNewServiceFlow()` (línea 451)
+     - cálculo de `next_due_date` en `calculateNextDueDate()` (línea 660)
+     - `today` en `updateDailyMetrics()` (línea 664)
+
+3. **`/supabase/functions/flows-handler/index.ts`**
+   - Reemplazadas 2 instancias con formato inline:
+     - `tomorrow` en `handleLoanFlow()` (línea 539)
+     - `lastDay` (fin de mes) en `handleLoanFlow()` (línea 545)
+
+### 🧪 Testing
+
+**Antes del fix**:
+- "mañana" (13/10) → se guardaba como 14/10 ❌
+
+**Después del fix**:
+- "mañana" (13/10) → se guarda correctamente como 13/10 ✅
+
+**Casos de prueba**:
+- [x] "mañana" desde conversación WhatsApp
+- [x] "hoy" desde conversación WhatsApp
+- [x] "en una semana" desde conversación WhatsApp
+- [x] "15 de enero" desde conversación WhatsApp
+- [x] "tomorrow" desde formulario web
+- [x] "end_of_month" desde formulario web
+- [x] Fecha específica desde WhatsApp Flow
+
+### 📚 Referencia
+
+**Issue**: Usuario reportó que préstamos creados con "mañana" (13/10) aparecían como 14/10 en la vista de préstamos.
+
+**Root cause**: Conversión UTC automática de JavaScript `.toISOString()` que no respeta la fecha local calculada.
+
 ## [2025-10-12f] - 📊 Vista Agrupada de Préstamos + Drawer de Detalle
 
 ### 🎯 Objetivo

@@ -35,6 +35,14 @@ function formatMoney(amount: number): string {
   return amount.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 }
 
+// Helper para formatear fecha como YYYY-MM-DD sin conversión UTC
+function formatDateLocal(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export class FlowHandlers {
   private supabase: any;
 
@@ -206,7 +214,7 @@ export class FlowHandlers {
           item_description: context.item_description || 'Dinero',
           amount: context.amount || null, // Monto si es dinero
           currency: 'MXN',
-          start_date: new Date().toISOString().split('T')[0],
+          start_date: formatDateLocal(new Date()),
           due_date: dueDate,
           status: 'pending_confirmation',
           reminder_config: {
@@ -440,7 +448,7 @@ export class FlowHandlers {
           description: `Servicio recurrente creado mediante flujo conversacional`,
           item_description: context.service_description,
           currency: 'MXN',
-          start_date: new Date().toISOString().split('T')[0],
+          start_date: formatDateLocal(new Date()),
           due_date: nextDueDate,
           next_due_date: nextDueDate,
           recurrence_rule: rrule,
@@ -649,11 +657,11 @@ export class FlowHandlers {
         break;
     }
 
-    return next.toISOString().split('T')[0];
+    return formatDateLocal(next);
   }
 
   private async updateDailyMetrics(tenantId: string, metricType: string): Promise<void> {
-    const today = new Date().toISOString().split('T')[0];
+    const today = formatDateLocal(new Date());
 
     try {
       await this.supabase.rpc('upsert_daily_metric', {

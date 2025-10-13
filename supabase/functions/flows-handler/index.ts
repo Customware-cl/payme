@@ -535,12 +535,14 @@ async function handleLoanFlow(
       // Opción rápida: Mañana
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
-      dueDate = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD
+      // Formatear como YYYY-MM-DD sin conversión UTC
+      dueDate = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
     } else if (data.quick_date === 'end_of_month') {
       // Opción rápida: Fin de mes
       const today = new Date();
       const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-      dueDate = lastDay.toISOString().split('T')[0];
+      // Formatear como YYYY-MM-DD sin conversión UTC
+      dueDate = `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
     } else {
       // Error: No seleccionó ninguna fecha
       return createFlowResponse({
