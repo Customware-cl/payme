@@ -722,8 +722,18 @@ export class FlowHandlers {
       // 4. Preparar variable {{3}} según tipo de préstamo
       let loanItem = '';
       if (context.amount) {
-        // Préstamo de dinero: "$49.000"
-        loanItem = `$${formatMoney(context.amount)}`;
+        // Préstamo de dinero: formatear monto con concepto
+        const formattedAmount = `$${formatMoney(context.amount)}`;
+
+        // Si hay concepto personalizado (no genérico), incluirlo
+        if (context.item_description &&
+            context.item_description !== 'Dinero' &&
+            context.item_description !== 'Préstamo en efectivo') {
+          loanItem = `${formattedAmount} bajo el concepto "${context.item_description}"`;
+        } else {
+          // Usar concepto genérico por defecto
+          loanItem = `${formattedAmount} bajo el concepto "Préstamo en efectivo"`;
+        }
       } else {
         // Préstamo de objeto: "un HP Pavilion", "una bicicleta", etc.
         loanItem = context.item_description;

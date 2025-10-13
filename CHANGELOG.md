@@ -2,6 +2,85 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-12d] - 📱 Incluir Concepto en Mensaje de Confirmación WhatsApp
+
+### 🎯 Objetivo
+
+Modificar el mensaje de confirmación de WhatsApp que se envía al prestatario (borrower) para que incluya el concepto del préstamo junto al monto, usando el formato: "$4.000 bajo el concepto 'cosas para el pan'".
+
+### ✅ Cambios Realizados
+
+**Archivo**: `/supabase/functions/_shared/flow-handlers.ts` (líneas 722-740)
+
+**Modificación**: Actualizar construcción de variable `{{3}}` del template WhatsApp:
+
+```typescript
+// ANTES:
+if (context.amount) {
+  loanItem = `$${formatMoney(context.amount)}`;
+}
+
+// DESPUÉS:
+if (context.amount) {
+  const formattedAmount = `$${formatMoney(context.amount)}`;
+
+  // Si hay concepto personalizado, incluirlo
+  if (context.item_description &&
+      context.item_description !== 'Dinero' &&
+      context.item_description !== 'Préstamo en efectivo') {
+    loanItem = `${formattedAmount} bajo el concepto "${context.item_description}"`;
+  } else {
+    // Usar concepto genérico por defecto
+    loanItem = `${formattedAmount} bajo el concepto "Préstamo en efectivo"`;
+  }
+}
+```
+
+### 📱 Mensajes Resultantes
+
+**Template WhatsApp (sin cambios):**
+```
+Hola {{1}} 👋
+
+{{2}} registró un préstamo a tu nombre por *{{3}}*.
+```
+
+**Con concepto personalizado:**
+```
+Hola Caty 👋
+
+Felipe registró un préstamo a tu nombre por *$4.000 bajo el concepto "cosas para el pan"*.
+```
+
+**Sin concepto (genérico):**
+```
+Hola Juan 👋
+
+María registró un préstamo a tu nombre por *$10.000 bajo el concepto "Préstamo en efectivo"*.
+```
+
+**Préstamos de objetos (sin cambios):**
+```
+Hola Pedro 👋
+
+Ana registró un préstamo a tu nombre por *Bicicleta*.
+```
+
+### 📊 Impacto
+
+- ✅ **Contexto completo**: El prestatario ve exactamente para qué es el préstamo
+- ✅ **Sin cambios en template**: No requiere aprobación de Meta
+- ✅ **Deploy inmediato**: Solo modificación de código
+- ✅ **Siempre con concepto**: Explícito o genérico ("Préstamo en efectivo")
+- ✅ **Retrocompatibilidad**: Funciona con préstamos existentes
+
+### 🔗 Archivos Modificados
+
+1. `/supabase/functions/_shared/flow-handlers.ts` - Lógica de construcción de mensaje
+2. `/CHANGELOG.md` - Este archivo
+
+---
+
 ## [2025-10-12c] - 🎨 Mejorar Vista de Confirmación: Separar Monto y Concepto
 
 ### 🎯 Objetivo
