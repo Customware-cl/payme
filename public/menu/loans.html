@@ -55,6 +55,19 @@
             <!-- Préstamos que hiciste -->
             <section class="loans-section" id="lent-section">
                 <h2 class="section-title">💰 Préstamos que hiciste</h2>
+
+                <!-- Toggle de vista -->
+                <div class="view-toggle">
+                    <button class="toggle-btn active" data-view="grouped">
+                        <span class="toggle-icon">📊</span>
+                        <span>Agrupada</span>
+                    </button>
+                    <button class="toggle-btn" data-view="detailed">
+                        <span class="toggle-icon">📋</span>
+                        <span>Detallada</span>
+                    </button>
+                </div>
+
                 <div id="lent-list" class="loans-list">
                     <!-- Se llena dinámicamente -->
                 </div>
@@ -63,6 +76,19 @@
             <!-- Préstamos que te hicieron -->
             <section class="loans-section" id="borrowed-section">
                 <h2 class="section-title">📥 Préstamos que te hicieron</h2>
+
+                <!-- Toggle de vista -->
+                <div class="view-toggle">
+                    <button class="toggle-btn active" data-view="grouped">
+                        <span class="toggle-icon">📊</span>
+                        <span>Agrupada</span>
+                    </button>
+                    <button class="toggle-btn" data-view="detailed">
+                        <span class="toggle-icon">📋</span>
+                        <span>Detallada</span>
+                    </button>
+                </div>
+
                 <div id="borrowed-list" class="loans-list">
                     <!-- Se llena dinámicamente -->
                 </div>
@@ -73,6 +99,30 @@
         <footer class="footer">
             <p>Powered by PayME</p>
         </footer>
+    </div>
+
+    <!-- Drawer para préstamos agrupados -->
+    <div id="drawer-grouped-loans" class="drawer hidden">
+        <div class="drawer-overlay"></div>
+        <div class="drawer-content">
+            <!-- Header -->
+            <div class="drawer-header">
+                <button class="btn-close-drawer" id="btn-close-drawer">✕</button>
+                <h3>Préstamos a <strong id="drawer-contact-name">Contacto</strong></h3>
+                <div class="drawer-meta">
+                    <span id="drawer-total">💰 $0</span>
+                    <span>•</span>
+                    <span id="drawer-count">0 préstamos</span>
+                </div>
+            </div>
+
+            <!-- Lista de préstamos -->
+            <div class="drawer-body">
+                <div id="drawer-loans-list">
+                    <!-- Se llena dinámicamente con sub-tarjetas -->
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="loans.js"></script>

@@ -2,6 +2,148 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-12f] - 📊 Vista Agrupada de Préstamos + Drawer de Detalle
+
+### 🎯 Objetivo
+
+Agrupar préstamos de dinero por (contacto + fecha de devolución) para reducir la saturación visual en la lista de préstamos. Implementar toggle de vista (agrupada/detallada) y drawer para ver detalles de préstamos agrupados.
+
+### ✅ Cambios Realizados
+
+#### 1. Toggle de Vista
+**Archivos**: `loans.html`, `loans.js`, `styles.css`
+
+**Funcionalidad**:
+- Toggle switch con 2 opciones: "📊 Agrupada" (default) | "📋 Detallada"
+- Preferencia guardada en `localStorage`
+- Se muestra arriba de cada sección (lent/borrowed)
+
+#### 2. Lógica de Agrupación
+**Archivo**: `loans.js` - Nueva función `groupLoansByContactAndDate(loans, type)`
+
+**Reglas**:
+- ✅ **Agrupar**: Préstamos de DINERO (amount !== null) con mismo contacto + misma fecha
+- ❌ **NO agrupar**: Objetos (siempre individuales), préstamos únicos (solo 1)
+- **Resultado**: Grupo con 2+ préstamos → tarjeta agrupada con total
+- **Orden interno**: Préstamos dentro del grupo ordenados por fecha de creación (ascendente)
+
+**Ejemplo**:
+```
+Input (3 préstamos a Caty - 12 Oct 2025):
+- $4.000 - Compra de pan
+- $10.000 - Préstamo en efectivo
+- $50.000 - Dividendo
+
+Output (1 tarjeta agrupada):
+- Caty - $64.000 - 12 Oct 2025 (3 préstamos) ← Click para ver detalle
+```
+
+#### 3. Drawer de Detalle
+**Archivos**: `loans.html`, `loans.js`, `styles.css`
+
+**Funcionalidad**:
+- Click en tarjeta agrupada → abre drawer desde abajo (animación smooth)
+- Muestra: contacto, total, cantidad de préstamos
+- Lista de préstamos individuales con:
+  - Monto
+  - Concepto del préstamo
+  - Fecha de creación (timestamp completo)
+- Click en sub-item → cierra drawer → abre detalle individual
+- Cerrar: botón X o click en overlay
+
+#### 4. Vista Detallada
+**Funcionalidad**:
+- Comportamiento original (sin cambios)
+- Muestra todas las tarjetas individuales
+- Útil para ver todos los conceptos sin expandir
+
+### 📋 Archivos Modificados
+
+**`/public/menu/loans.html`**:
+- Agregado: Toggle switch en ambas secciones (lent/borrowed)
+- Agregado: Estructura HTML del drawer al final
+
+**`/public/menu/loans.js`**:
+- Estado: Agregado `viewMode`, `drawerOpen`, `currentGroup`
+- Nueva función: `groupLoansByContactAndDate()`
+- Nueva función: `renderGroupedView()`
+- Nueva función: `renderDetailedView()`
+- Nueva función: `renderGroupedLoanCard()`
+- Nueva función: `attachLoanCardListeners()`
+- Nueva función: `openDrawer()`
+- Nueva función: `closeDrawer()`
+- Nueva función: `formatDateTime()` (helper)
+- Modificado: `renderLoans()` - router según viewMode
+- Modificado: `setupEventListeners()` - agregado toggle y drawer listeners
+- Agregado: Carga de preferencia desde localStorage
+
+**`/public/menu/styles.css`**:
+- Agregado: Estilos para `.view-toggle` y `.toggle-btn`
+- Agregado: Estilos para `.loan-card-grouped`, `.loan-meta`, `.loan-count`
+- Agregado: Estilos para `.drawer`, `.drawer-overlay`, `.drawer-content`
+- Agregado: Estilos para `.drawer-header`, `.drawer-body`
+- Agregado: Estilos para `.drawer-loan-item` y sub-elementos
+- Agregado: Animaciones smooth para drawer (slide-up)
+
+### 🎯 Comportamiento
+
+#### Vista Agrupada (Default)
+1. Préstamos de dinero con mismo contacto + fecha → **1 tarjeta agrupada**
+   - Muestra: total, cantidad, fecha
+   - Border izquierdo verde para destacar
+   - Click → abre drawer
+2. Préstamos únicos (1 solo) → **tarjeta individual normal**
+3. Objetos → **siempre tarjeta individual**
+
+#### Vista Detallada
+- Comportamiento original (todas las tarjetas individuales)
+
+#### Drawer
+- Slide-up animation (300ms)
+- Overlay semitransparente (backdrop)
+- Max height: 80vh (scroll si hay muchos)
+- Cada préstamo clickeable → navega a detalle
+
+### 💾 Persistencia
+- Preferencia de vista guardada en `localStorage` como `'loansViewMode'`
+- Valores: `'grouped'` | `'detailed'`
+- Se carga automáticamente al iniciar
+
+### 🎨 UX Mejorada
+
+**Antes**:
+```
+┌────────────────────────────────┐
+│ A Caty - $4.000 - 12 Oct      │
+├────────────────────────────────┤
+│ A Caty - $10.000 - 12 Oct     │
+├────────────────────────────────┤
+│ A Caty - $50.000 - 12 Oct     │
+└────────────────────────────────┘
+3 tarjetas repetitivas
+```
+
+**Después (Vista Agrupada)**:
+```
+┌────────────────────────────────┐
+│ A Caty - $64.000 - 12 Oct     │
+│ 3 préstamos •  Vence: 12 Oct  │
+│                             ›  │
+└────────────────────────────────┘
+1 tarjeta limpia, click para detalle
+```
+
+### 🚀 Beneficios
+
+1. ✅ **Menos scroll**: Reduce tarjetas repetitivas
+2. ✅ **Vista limpia**: Totales a primera vista
+3. ✅ **Flexibilidad**: Toggle permite elegir preferencia
+4. ✅ **Detalle on-demand**: Drawer revela conceptos individuales
+5. ✅ **Persistencia**: Recuerda preferencia del usuario
+6. ✅ **Backward compatible**: Vista detallada mantiene comportamiento original
+
+---
+
 ## [2025-10-12e] - 🔄 Simplificar Comandos: Redirigir Todo al Menú Web
 
 ### 🎯 Objetivo
