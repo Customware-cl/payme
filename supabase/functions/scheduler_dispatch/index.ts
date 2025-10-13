@@ -19,6 +19,29 @@ interface ProcessingStats {
   queued: number;
 }
 
+/**
+ * Detecta si la hora actual (en timezone especificado) es la hora oficial de envío
+ * @param timezone Timezone del tenant (ej: 'America/Santiago')
+ * @param officialHour Hora oficial de envío (0-23, por defecto 9)
+ * @returns true si estamos en la hora oficial
+ */
+function isOfficialSendHour(timezone: string = 'America/Santiago', officialHour: number = 9): boolean {
+  const now = new Date();
+
+  // Obtener hora actual en el timezone especificado
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hour: 'numeric',
+    hour12: false
+  });
+
+  const parts = formatter.formatToParts(now);
+  const hourPart = parts.find(p => p.type === 'hour');
+  const currentHourInTz = hourPart ? parseInt(hourPart.value) : 0;
+
+  return currentHourInTz === officialHour;
+}
+
 serve(async (req: Request) => {
   try {
     // Handle CORS preflight
@@ -56,6 +79,11 @@ serve(async (req: Request) => {
     const body = await req.json().catch(() => ({}));
     const { tenant_id, dry_run = false, max_instances = 100 } = body;
 
+    // Detectar modo de operación
+    const isOfficialHour = isOfficialSendHour('America/Santiago', 9);
+    const mode = isOfficialHour ? 'normal' : 'catchup';
+    console.log(`🕐 Scheduler running in ${mode.toUpperCase()} mode (official hour: ${isOfficialHour})`);
+
     // Estadísticas de procesamiento
     const stats: ProcessingStats = {
       processed: 0,
@@ -65,20 +93,32 @@ serve(async (req: Request) => {
       queued: 0
     };
 
-    // 1. Actualizar estados de acuerdos basado en tiempo (nuevo sistema refinado)
+    // Variables para estadísticas opcionales
+    let refinedProcessingResult = { processed: 0, sent: 0, failed: 0, skipped: 0, queued: 0 };
+    let generationResult = { generated: 0, agreements_processed: 0 };
+
+    // 1. Actualizar estados de acuerdos basado en tiempo (siempre)
     const statusUpdateResult = await supabase.rpc('update_agreement_status_by_time');
     console.log('📊 Estados de acuerdos actualizados:', statusUpdateResult.data || 0);
 
-    // 2. Procesar acuerdos con nuevos estados temporales
-    const refinedProcessingResult = await processRefinedAgreementStates(supabase, tenant_id, dry_run);
-    console.log('🔄 Acuerdos refinados procesados:', refinedProcessingResult);
+    // 2. Procesar acuerdos con nuevos estados temporales (solo hora oficial)
+    if (mode === 'normal') {
+      refinedProcessingResult = await processRefinedAgreementStates(supabase, tenant_id, dry_run);
+      console.log('🔄 Acuerdos refinados procesados:', refinedProcessingResult);
+    } else {
+      console.log('⏭️  Skipping refined state processing (not official hour)');
+    }
 
-    // 3. Generar instancias de recordatorios (sistema legacy)
-    const generationResult = await generateReminderInstances(supabase, tenant_id, max_instances);
-    console.log('📅 Generated reminder instances:', generationResult);
+    // 3. Generar instancias de recordatorios (solo hora oficial)
+    if (mode === 'normal') {
+      generationResult = await generateReminderInstances(supabase, tenant_id, max_instances);
+      console.log('📅 Generated reminder instances:', generationResult);
+    } else {
+      console.log('⏭️  Skipping reminder generation (not official hour)');
+    }
 
-    // 4. Procesar instancias pendientes (sistema legacy)
-    const processingResult = await processScheduledReminders(supabase, tenant_id, dry_run);
+    // 4. Procesar instancias pendientes (siempre, pero con filtro según modo)
+    const processingResult = await processScheduledReminders(supabase, tenant_id, dry_run, mode);
 
     // Combinar estadísticas
     stats.processed = processingResult.processed + refinedProcessingResult.processed;
@@ -103,6 +143,8 @@ serve(async (req: Request) => {
         tenant_id: tenant_id || null,
         event_type: 'scheduler_executed',
         payload: {
+          mode,
+          is_official_hour: isOfficialHour,
           stats,
           generation: generationResult,
           queue_stats: queueStats,
@@ -117,6 +159,8 @@ serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         success: true,
+        mode,
+        is_official_hour: isOfficialHour,
         stats,
         generation: generationResult,
         queue_processing: queueStats,
@@ -244,10 +288,24 @@ async function generateReminderInstances(
 async function processScheduledReminders(
   supabase: any,
   tenantId?: string,
-  dryRun: boolean = false
+  dryRun: boolean = false,
+  mode: 'normal' | 'catchup' = 'normal'
 ): Promise<ProcessingStats> {
   try {
     const stats: ProcessingStats = { processed: 0, sent: 0, failed: 0, skipped: 0, queued: 0 };
+
+    // Calcular filtro de tiempo según modo
+    let timeFilter: string;
+    if (mode === 'catchup') {
+      // Solo procesar mensajes atrasados (>1 hora)
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      timeFilter = oneHourAgo.toISOString();
+      console.log(`🔄 [CATCHUP MODE] Processing reminders delayed by >1 hour (before ${oneHourAgo.toISOString()})`);
+    } else {
+      // Modo normal: procesar todos los pendientes
+      timeFilter = new Date().toISOString();
+      console.log(`✅ [NORMAL MODE] Processing all pending reminders (before ${timeFilter})`);
+    }
 
     // Obtener instancias que deben enviarse ahora
     let instancesQuery = supabase
@@ -260,7 +318,7 @@ async function processScheduledReminders(
         templates(meta_template_name, body, variables_count)
       `)
       .eq('status', 'pending')
-      .lte('scheduled_time', new Date().toISOString());
+      .lte('scheduled_time', timeFilter);
 
     if (tenantId) {
       instancesQuery = instancesQuery.eq('tenant_id', tenantId);

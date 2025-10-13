@@ -2,6 +2,151 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-13c] - Sistema Horario de Verificación de Recordatorios
+
+### 🎯 Objetivo
+
+Implementar sistema robusto de recordatorios con verificación horaria:
+- **Hora oficial**: 09:00 Chile para procesamiento completo
+- **Safety net**: Cada hora verificar mensajes pendientes/atrasados (>1 hora)
+
+**Estado**: ✅ **IMPLEMENTADO**
+
+### 🛠️ Cambios Implementados
+
+#### 1. Nueva Función `isOfficialSendHour()`
+**Archivo**: `/supabase/functions/scheduler_dispatch/index.ts` (línea 28)
+
+**Funcionalidad**:
+```typescript
+function isOfficialSendHour(timezone: string = 'America/Santiago', officialHour: number = 9): boolean
+```
+
+**Propósito**: Detecta si la hora actual (en timezone del tenant) es la hora oficial de envío.
+
+**Implementación**:
+- Usa `Intl.DateTimeFormat` para obtener hora en timezone específico
+- Compara hora actual con hora oficial configurada (default: 9)
+- Retorna `true` si estamos en hora oficial (09:00-09:59 Chile)
+
+#### 2. Parámetro `mode` en `processScheduledReminders()`
+**Archivo**: `/supabase/functions/scheduler_dispatch/index.ts` (línea 271)
+
+**Cambios**:
+- ✅ Agregado parámetro `mode: 'normal' | 'catchup' = 'normal'`
+- ✅ Modo **normal**: Procesa TODOS los pendientes (`scheduled_time <= NOW()`)
+- ✅ Modo **catchup**: Solo procesa atrasados >1 hora (`scheduled_time <= NOW() - 1 hour`)
+- ✅ Agregados logs claros para cada modo
+
+**Lógica de filtrado**:
+```typescript
+if (mode === 'catchup') {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  timeFilter = oneHourAgo.toISOString();
+  console.log(`🔄 [CATCHUP MODE] Processing reminders delayed by >1 hour`);
+} else {
+  timeFilter = new Date().toISOString();
+  console.log(`✅ [NORMAL MODE] Processing all pending reminders`);
+}
+```
+
+#### 3. Lógica Condicional en Handler Principal
+**Archivo**: `/supabase/functions/scheduler_dispatch/index.ts` (línea 82-121)
+
+**Flujo implementado**:
+
+```typescript
+// 1. Detectar modo
+const isOfficialHour = isOfficialSendHour('America/Santiago', 9);
+const mode = isOfficialHour ? 'normal' : 'catchup';
+
+// 2. Ejecutar pasos según modo
+// ✅ SIEMPRE: Actualizar estados de acuerdos
+await supabase.rpc('update_agreement_status_by_time');
+
+// 🔹 SOLO HORA OFICIAL: Procesar acuerdos refinados
+if (mode === 'normal') {
+  await processRefinedAgreementStates(...);
+}
+
+// 🔹 SOLO HORA OFICIAL: Generar nuevas instancias
+if (mode === 'normal') {
+  await generateReminderInstances(...);
+}
+
+// ✅ SIEMPRE: Procesar instancias (con filtro según modo)
+await processScheduledReminders(..., mode);
+```
+
+**Resultado esperado por hora**:
+- **09:05 Chile** (hora oficial):
+  - Procesar todos los pendientes
+  - Generar nuevas instancias
+  - Enviar mensajes refinados
+- **10:05, 11:05, ..., 08:05** (otras horas):
+  - Solo procesar atrasados >1 hora (safety net)
+  - No generar nuevas instancias
+  - No enviar mensajes refinados
+
+#### 4. Actualización de Cron Job
+**Archivo**: `/supabase/migrations/004_setup_cron_jobs.sql` (líneas 83-86, 287)
+
+**Cambios**:
+- ❌ Antes: `'* * * * *'` (cada minuto)
+- ✅ Ahora: `'5 * * * *'` (minuto 5 de cada hora)
+
+**Comando actualizado**:
+```sql
+SELECT cron.schedule('scheduler-dispatch', '5 * * * *', 'SELECT trigger_scheduler_dispatch();');
+```
+
+**Horarios de ejecución**:
+- 00:05, 01:05, 02:05, ..., 23:05 (24 ejecuciones/día)
+- **09:05** es la hora oficial de procesamiento completo
+
+#### 5. Estadísticas y Logging Mejorados
+
+**Agregado a eventos y respuestas**:
+```typescript
+{
+  mode: 'normal' | 'catchup',
+  is_official_hour: boolean,
+  stats: { processed, sent, failed, skipped, queued },
+  // ...
+}
+```
+
+**Logs distintivos**:
+- `🕐 Scheduler running in NORMAL mode (official hour: true)`
+- `🕐 Scheduler running in CATCHUP mode (official hour: false)`
+- `✅ [NORMAL MODE] Processing all pending reminders`
+- `🔄 [CATCHUP MODE] Processing reminders delayed by >1 hour`
+
+### 📦 Deployment
+
+**Funciones desplegadas**:
+- ✅ `scheduler_dispatch` (script size: 91.81kB)
+
+**Dashboard**: https://supabase.com/dashboard/project/qgjxkszfdoolaxmsupil/functions
+
+### 📊 Beneficios del Sistema
+
+1. **Robustez**: No perder mensajes por fallas temporales
+2. **Eficiencia**: Procesamiento completo solo 1 vez/día
+3. **Safety net**: Verificación horaria de mensajes atrasados
+4. **Escalabilidad**: Reduce carga del sistema (24 vs 1440 ejecuciones/día)
+5. **Observabilidad**: Logs claros del modo de operación
+
+### 🔍 Próximos Pasos (Testing)
+
+- [ ] Monitorear ejecuciones horarias durante 24h
+- [ ] Verificar logs de modo NORMAL a las 09:05
+- [ ] Verificar logs de modo CATCHUP en otras horas
+- [ ] Comprobar que mensajes atrasados se procesan correctamente
+- [ ] Validar que no se generan instancias duplicadas
+
+---
+
 ## [2025-10-13b] - ✅ Fix Implementado: Sistema de Recordatorios Funcional
 
 ### 🎯 Problema Resuelto

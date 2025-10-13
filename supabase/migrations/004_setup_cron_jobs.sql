@@ -80,8 +80,10 @@ $$;
 -- CONFIGURACIÓN DE CRON JOBS
 -- Estos comandos solo funcionan en entornos donde pg_cron está disponible
 
--- Scheduler principal: cada minuto
--- SELECT cron.schedule('scheduler-dispatch', '* * * * *', 'SELECT trigger_scheduler_dispatch();');
+-- Scheduler principal: cada hora al minuto 5 (ej: 08:05, 09:05, 10:05, etc.)
+-- Hora oficial: 09:05 Chile (procesamiento completo)
+-- Otras horas: solo catch-up de mensajes atrasados >1 hora
+-- SELECT cron.schedule('scheduler-dispatch', '5 * * * *', 'SELECT trigger_scheduler_dispatch();');
 
 -- Cleanup de datos antiguos: diario a las 2 AM
 -- SELECT cron.schedule('cleanup-old-data', '0 2 * * *', 'SELECT cleanup_old_data();');
@@ -282,7 +284,7 @@ COMMENT ON FUNCTION system_health_check() IS 'Verifica la salud del sistema y ge
 -- NOTA IMPORTANTE:
 -- Para habilitar los cron jobs en producción, ejecutar manualmente:
 --
--- SELECT cron.schedule('scheduler-dispatch', '* * * * *', 'SELECT trigger_scheduler_dispatch();');
+-- SELECT cron.schedule('scheduler-dispatch', '5 * * * *', 'SELECT trigger_scheduler_dispatch();');
 -- SELECT cron.schedule('cleanup-old-data', '0 2 * * *', 'SELECT cleanup_old_data();');
 -- SELECT cron.schedule('generate-recurring', '0 6 * * *', 'SELECT generate_recurring_reminders();');
 -- SELECT cron.schedule('health-check', '*/15 * * * *', 'SELECT system_health_check();');
