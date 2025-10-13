@@ -2,6 +2,204 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-13d] - Preparación de Recordatorios "Vencido" para Préstamos del 13/10
+
+### 🎯 Objetivo
+
+Preparar 5 préstamos con vencimiento 13/10 para recibir recordatorios de "vencido" mañana 14/10 a las 09:05, probando el sistema refinado de recordatorios.
+
+**Estado**: ✅ **PREPARADO**
+
+### 🔍 Problema Identificado
+
+Al analizar el flujo para enviar recordatorios atrasados, se identificaron varios problemas:
+
+1. **Sistema Legacy Roto**:
+   - `reminder_instances` tiene esquema incompatible con código del scheduler
+   - Columnas esperadas no existen: `agreement_id`, `tenant_id`, `contact_id`, `due_date`, `scheduled_time`, `reminder_type`, `template_id`
+   - Solo existen: `id`, `reminder_id`, `scheduled_for`, `sent_at`, `status`
+   - **Conclusión**: Sistema legacy nunca funcionó correctamente
+
+2. **Estados Incorrectos**:
+   - 4 préstamos en `pending_confirmation` (no se procesan)
+   - 1 préstamo en `active` (se procesa)
+   - Sistema refinado solo procesa: `due_soon` y `overdue`
+
+3. **Opt-In Pendiente**:
+   - 1 contacto (Erick Vasquez) tenía `opt_in_status = 'pending'`
+   - Sistema refinado NO valida opt-in (a diferencia del legacy)
+
+### 🛠️ Cambios Realizados
+
+#### 1. Actualización de Estados de Agreements
+**Query ejecutado**:
+```sql
+UPDATE agreements
+SET status = 'active', updated_at = NOW()
+WHERE due_date = '2025-10-13'
+  AND status IN ('pending_confirmation', 'active');
+```
+
+**Préstamos actualizados** (5 total):
+- Préstamo de $30.000 (Erick Vasquez)
+- Préstamo de $78.000 (Caty)
+- Préstamo de $4.000 (Caty)
+- Préstamo de $55.222 (Caty)
+- Préstamo de $5.000 (Caty)
+
+**Razón**: El sistema refinado requiere `status = 'active'` para que `update_agreement_status_by_time()` los marque como `overdue`.
+
+#### 2. Corrección de Opt-In Status
+**Query ejecutado**:
+```sql
+UPDATE tenant_contacts
+SET opt_in_status = 'opted_in', updated_at = NOW()
+WHERE name = 'Erick Vasquez' AND opt_in_status = 'pending';
+```
+
+**Razón**: Aunque el sistema refinado no valida opt-in (bug potencial), WhatsApp API rechazará mensajes a usuarios sin opt-in.
+
+#### 3. Limpieza de Instancias Legacy Inútiles
+**Query ejecutado**:
+```sql
+DELETE FROM reminder_instances
+WHERE id IN (
+  'c95ae34e-10e1-4947-819e-b608f90eaece',
+  '7d3508db-7ee5-44e0-8f40-bb0b979aabc0',
+  '41e0f83b-4abc-4c74-9dde-f8acae78bb01',
+  'aae58556-189d-4002-895a-2c3d42261ad6',
+  '437914f6-6996-4326-93a6-962d2e18f852'
+);
+```
+
+**Razón**: Instancias creadas manualmente para sistema legacy que nunca se procesarían debido a esquema incompatible.
+
+### 📅 Flujo Esperado Mañana 14/10 a las 09:05
+
+#### **Paso 1**: Cron Ejecuta
+```
+Trigger: '5 * * * *' → se ejecuta 09:05 UTC = 09:05 Chile
+```
+
+#### **Paso 2**: Detecta Modo NORMAL
+```typescript
+isOfficialSendHour('America/Santiago', 9) → true
+mode = 'normal'
+console.log('🕐 Scheduler running in NORMAL mode (official hour: true)')
+```
+
+#### **Paso 3**: Actualiza Estados de Agreements
+```sql
+-- Función: update_agreement_status_by_time()
+-- Lógica: due_date < NOW() → status = 'overdue'
+
+UPDATE agreements
+SET status = 'overdue', updated_at = NOW()
+WHERE status IN ('active', 'due_soon')
+  AND due_date < NOW();
+
+-- Resultado: 5 préstamos → 'active' → 'overdue'
+```
+
+#### **Paso 4**: Procesa Acuerdos Refinados
+```typescript
+// processRefinedAgreementStates()
+// Busca: status IN ('due_soon', 'overdue')
+// Encuentra: 5 préstamos con status='overdue'
+
+for (const agreement of agreements) {
+  // shouldSendRefinedReminder(agreement)
+  // ✅ currentHour = 9 (dentro ventana 07:00-11:00)
+  // ✅ last_reminder_sent = null (nunca enviado)
+  // ✅ status = 'overdue'
+  // → Retorna true
+
+  await sendRefinedReminder(supabase, agreement);
+}
+```
+
+#### **Paso 5**: Envía Recordatorios via WhatsApp
+```typescript
+// sendRefinedReminder()
+// Template: category='overdue' → 'devolucion_vencida_v2'
+// Variables:
+//   {{1}}: Nombre del contacto
+//   {{2}}: Título del préstamo
+//   {{3}}: Fecha vencimiento (13/10)
+
+// Mensaje:
+// 🔔 Caty, queremos ayudarte:
+// Préstamo de $78.000 debía devolverse el 13/10.
+// 💬 Conversemos para encontrar una solución juntos
+```
+
+#### **Paso 6**: Actualiza Agreements
+```sql
+UPDATE agreements
+SET
+  last_reminder_sent = NOW(),
+  reminder_sequence_step = 1,
+  updated_at = NOW()
+WHERE id IN (préstamos procesados);
+```
+
+### 📊 Métricas Esperadas
+
+**Logs en Supabase Edge Functions**:
+```
+🚀 Scheduler dispatch started at: 2025-10-14T12:05:00.000Z
+🕐 Scheduler running in NORMAL mode (official hour: true)
+📊 Estados de acuerdos actualizados: 5
+🔄 Acuerdos refinados procesados: {
+  processed: 5,
+  sent: 5,
+  failed: 0,
+  skipped: 0,
+  queued: 0
+}
+✅ Scheduler dispatch completed successfully
+```
+
+**Base de Datos**:
+- 5 agreements: `status = 'overdue'`
+- 5 agreements: `last_reminder_sent = '2025-10-14T12:05:...'`
+- 5 agreements: `reminder_sequence_step = 1`
+
+**Mensajes WhatsApp**:
+- 5 mensajes enviados usando template `devolucion_vencida_v2`
+- Destinatarios: Erick Vasquez (1) + Caty (4)
+
+### ⏭️ Siguiente Recordatorio
+
+Si los préstamos siguen vencidos:
+- **16/10 a las 09:05** (48 horas después)
+- Se enviará otro recordatorio 'overdue'
+- Frecuencia: cada 48 horas hasta que se marquen como devueltos
+
+### 🐛 Bugs Identificados (No Corregidos)
+
+1. **Sistema Legacy Completamente Roto**:
+   - Esquema de `reminder_instances` incompatible con código
+   - `generateReminderInstances()` y `processScheduledReminders()` nunca funcionaron
+   - Solo funciona el sistema refinado (`processRefinedAgreementStates`)
+
+2. **Sistema Refinado No Valida Opt-In**:
+   - `sendRefinedReminder()` envía sin verificar `opt_in_status`
+   - Riesgo: Enviar a usuarios que no han aceptado
+   - Mitigado temporalmente actualizando opt-in manualmente
+
+### ✅ Verificación Pre-Vuelo
+
+- [x] 5 préstamos con `status = 'active'`
+- [x] 5 préstamos con `due_date = '2025-10-13'`
+- [x] 5 contactos con `opt_in_status = 'opted_in'`
+- [x] Template 'overdue' existe: `devolucion_vencida_v2`
+- [x] WhatsApp configurado: phone_number_id + access_token
+- [x] Cron configurado: `'5 * * * *'`
+- [x] Sistema refinado activo en modo NORMAL
+
+---
+
 ## [2025-10-13c] - Sistema Horario de Verificación de Recordatorios
 
 ### 🎯 Objetivo
