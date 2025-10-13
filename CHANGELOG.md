@@ -2,6 +2,74 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-12e] - 🔄 Simplificar Comandos: Redirigir Todo al Menú Web
+
+### 🎯 Objetivo
+
+Simplificar la experiencia del usuario eliminando el mensaje de "Comandos disponibles" y redirigiendo TODOS los comandos de activación directamente al menú web con acceso de 1 hora.
+
+### ✅ Cambios Realizados
+
+**Archivo**: `/supabase/functions/wa_webhook/index.ts` (líneas 282-337)
+
+**Modificación**: Unificar todos los comandos en una sola condición que genera acceso al menú:
+
+```typescript
+// ANTES: Comandos separados
+- 'hola' → menú web
+- 'ayuda' → botones de ayuda
+- 'estado' → lista de préstamos
+- 'cancelar' → cancelar conversación
+- 'menú web' → plantilla de menú
+
+// DESPUÉS: Todos redirigen al menú
+if (lowerText === 'hola' || lowerText === 'hi' || lowerText === 'menu' || lowerText === 'inicio' ||
+    lowerText === 'ayuda' || lowerText === 'help' ||
+    lowerText === 'estado' || lowerText === 'status' ||
+    lowerText === 'cancelar' || lowerText === 'cancel' ||
+    lowerText === 'menú web' || lowerText === 'menu web' || lowerText === 'acceso web') {
+  // Generar acceso al menú web con botón CTA
+}
+```
+
+### 📱 Comandos Afectados
+
+Todos estos comandos ahora responden con el mismo mensaje y botón de acceso al menú:
+
+- `hola`, `hi`, `menu`, `inicio`
+- `ayuda`, `help`
+- `estado`, `status`
+- `cancelar`, `cancel`
+- `menú web`, `menu web`, `acceso web`
+
+### 💬 Mensaje Unificado
+
+```
+¡Hola! 👋 Soy tu asistente de préstamos.
+
+Registra préstamos, ve su estado y gestiona tu información.
+
+⏱️ Válido por 1 hora.
+```
+
+**Botón**: "Ingresar al menú" → Abre el menú web con token temporal
+
+### 🎯 Beneficios
+
+1. **Experiencia simplificada**: Un solo punto de entrada para todas las funciones
+2. **Consistencia**: Todos los comandos responden de la misma manera
+3. **Menú centralizado**: Todas las funciones accesibles desde un lugar
+4. **Menos confusión**: Elimina opciones redundantes y botones innecesarios
+
+### 🗑️ Eliminado
+
+- ❌ Mensaje "Comandos disponibles" con botones
+- ❌ Respuesta de estado con lista de préstamos por WhatsApp
+- ❌ Comando para cancelar conversación por WhatsApp
+- ❌ Diferentes respuestas según el comando
+
+---
+
 ## [2025-10-12d] - 📱 Incluir Concepto en Mensaje de Confirmación WhatsApp
 
 ### 🎯 Objetivo

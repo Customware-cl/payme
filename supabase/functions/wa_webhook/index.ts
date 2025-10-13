@@ -279,9 +279,13 @@ async function processInboundMessage(
         // Convertir a comando para iniciar flujo
         console.log('Detected button text for new_loan, converting to command');
         // Procesar como si fuera el comando directo - continuar con flujo conversacional
-      } else if (lowerText === 'hola' || lowerText === 'hi' || lowerText === 'menu' || lowerText === 'inicio') {
-        // Generar token del menú web y enviar botón de acceso
-        console.log('[WELCOME] Generating menu web access for welcome message');
+      } else if (lowerText === 'hola' || lowerText === 'hi' || lowerText === 'menu' || lowerText === 'inicio' ||
+                 lowerText === 'ayuda' || lowerText === 'help' ||
+                 lowerText === 'estado' || lowerText === 'status' ||
+                 lowerText === 'cancelar' || lowerText === 'cancel' ||
+                 lowerText === 'menú web' || lowerText === 'menu web' || lowerText === 'acceso web') {
+        // Todos los comandos ahora generan acceso al menú web
+        console.log(`[MENU_ACCESS] Command "${lowerText}" redirecting to menu access`);
         try {
           const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
           const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -306,7 +310,7 @@ async function processInboundMessage(
 
           if (tokenData.success && tokenData.data.url) {
             const menuUrl = tokenData.data.url;
-            console.log('[WELCOME] Menu URL generated:', menuUrl);
+            console.log('[MENU_ACCESS] Menu URL generated:', menuUrl);
 
             // 2. Enviar mensaje interactivo con botón CTA URL
             interactiveResponse = {
@@ -323,144 +327,12 @@ async function processInboundMessage(
               }
             };
           } else {
-            console.error('[WELCOME] Error generating menu token:', tokenData);
-            responseMessage = '¡Hola! 👋 Soy tu asistente de préstamos.\n\nHubo un error generando tu acceso. Por favor intenta escribir "menú web".';
+            console.error('[MENU_ACCESS] Error generating menu token:', tokenData);
+            responseMessage = '¡Hola! 👋 Soy tu asistente de préstamos.\n\nHubo un error generando tu acceso. Por favor intenta de nuevo.';
           }
         } catch (error) {
-          console.error('[WELCOME] Exception generating menu access:', error);
-          responseMessage = '¡Hola! 👋 Soy tu asistente de préstamos.\n\nHubo un error generando tu acceso. Por favor intenta escribir "menú web".';
-        }
-      } else if (lowerText === 'ayuda' || lowerText === 'help') {
-        // Mensaje de ayuda con botones
-        interactiveResponse = {
-          type: 'button',
-          body: {
-            text: '🤖 *Comandos disponibles:*\n\nPuedes usar los botones o escribir:\n• Nuevo préstamo\n• Reprogramar\n• Servicio mensual\n• Estado\n• Cancelar'
-          },
-          action: {
-            buttons: [
-              {
-                type: 'reply',
-                reply: {
-                  id: 'new_loan',
-                  title: '💰 Nuevo préstamo'
-                }
-              },
-              {
-                type: 'reply',
-                reply: {
-                  id: 'reschedule',
-                  title: '📅 Reprogramar'
-                }
-              },
-              {
-                type: 'reply',
-                reply: {
-                  id: 'new_service',
-                  title: '🔄 Servicio mensual'
-                }
-              }
-            ]
-          }
-        };
-      } else if (lowerText === 'estado' || lowerText === 'status') {
-        // Buscar préstamos que YO hice (lender)
-        const { data: lentAgreements } = await supabase
-          .from('agreements')
-          .select('*, borrower:tenant_contacts!tenant_contact_id(name)')
-          .eq('lender_tenant_contact_id', contact.id)
-          .in('status', ['active', 'pending_confirmation']);
-
-        // Buscar préstamos que me hicieron (borrower)
-        const { data: borrowedAgreements } = await supabase
-          .from('agreements')
-          .select('*, lender:tenant_contacts!lender_tenant_contact_id(name)')
-          .eq('tenant_contact_id', contact.id)
-          .in('status', ['active', 'pending_confirmation']);
-
-        const hasLent = lentAgreements && lentAgreements.length > 0;
-        const hasBorrowed = borrowedAgreements && borrowedAgreements.length > 0;
-
-        if (!hasLent && !hasBorrowed) {
-          responseMessage = 'No tienes acuerdos activos en este momento.';
-        } else {
-          let statusText = '*📋 Estado de préstamos:*\n\n';
-
-          // Mostrar préstamos que hice
-          if (hasLent) {
-            statusText += '*💰 Préstamos que hiciste:*\n';
-            const groupedLent = sortAndGroupAgreements(lentAgreements);
-            groupedLent.forEach((agreement: any, index: number) => {
-              const borrowerName = agreement.borrower?.name || 'Desconocido';
-              const isPending = agreement.status === 'pending_confirmation';
-              statusText += `${index + 1}. A *${borrowerName}*: ${agreement.item_description || agreement.title}\n`;
-              if (agreement.due_date) {
-                statusText += `   Vence: ${formatDate(agreement.due_date)}\n`;
-              }
-              if (agreement.amount) {
-                statusText += `   Monto: $${formatMoney(agreement.amount)}\n`;
-              }
-              if (isPending) {
-                statusText += `   ⏳ _Confirmación pendiente_\n`;
-              }
-              statusText += '\n';
-            });
-          }
-
-          // Mostrar préstamos que me hicieron
-          if (hasBorrowed) {
-            statusText += '*📥 Préstamos que te hicieron:*\n';
-            const groupedBorrowed = sortAndGroupAgreements(borrowedAgreements);
-            groupedBorrowed.forEach((agreement: any, index: number) => {
-              const lenderName = agreement.lender?.name || 'Desconocido';
-              const isPending = agreement.status === 'pending_confirmation';
-              statusText += `${index + 1}. De *${lenderName}*: ${agreement.item_description || agreement.title}\n`;
-              if (agreement.due_date) {
-                statusText += `   Vence: ${formatDate(agreement.due_date)}\n`;
-              }
-              if (agreement.amount) {
-                statusText += `   Monto: $${formatMoney(agreement.amount)}\n`;
-              }
-              if (isPending) {
-                statusText += `   ⏳ _Confirmación pendiente_\n`;
-              }
-              statusText += '\n';
-            });
-          }
-
-          responseMessage = statusText;
-        }
-      } else if (lowerText === 'cancelar' || lowerText === 'cancel') {
-        // Cancelar conversación activa
-        const conversationManager = new ConversationManager(supabase.supabaseUrl, supabase.supabaseKey);
-        await conversationManager.cancelCurrentConversation(tenant.id, contact.id);
-        responseMessage = '❌ Conversación cancelada. Puedes iniciar una nueva cuando gustes.';
-      } else if (lowerText === 'menú web' || lowerText === 'menu web' || lowerText === 'acceso web') {
-        // Enviar plantilla de menú web
-        console.log('[MENU_WEB] Sending menu web template');
-        try {
-          const { WhatsAppTemplates } = await import('../_shared/whatsapp-templates.ts');
-          const templates = new WhatsAppTemplates(
-            phoneNumberId,
-            Deno.env.get('WHATSAPP_ACCESS_TOKEN')!
-          );
-
-          const result = await templates.generateAndSendMenuAccess(
-            Deno.env.get('SUPABASE_URL')!,
-            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-            tenant.id,
-            contact.id,
-            contact.contact_profiles.phone_e164,
-            contact.name
-          );
-
-          if (!result.success) {
-            responseMessage = 'Hubo un error al generar el link del menú. Por favor intenta de nuevo.';
-          }
-          // Si es exitoso, la plantilla se envió automáticamente, no necesitamos responseMessage
-        } catch (error) {
-          console.error('[MENU_WEB] Error:', error);
-          responseMessage = 'Hubo un error al enviar el menú. Por favor intenta de nuevo.';
+          console.error('[MENU_ACCESS] Exception generating menu access:', error);
+          responseMessage = '¡Hola! 👋 Soy tu asistente de préstamos.\n\nHubo un error generando tu acceso. Por favor intenta de nuevo.';
         }
       }
 
