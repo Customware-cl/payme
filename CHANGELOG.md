@@ -2,6 +2,71 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-12c] - 🎨 Mejorar Vista de Confirmación: Separar Monto y Concepto
+
+### 🎯 Objetivo
+
+Mejorar la legibilidad de la pantalla de confirmación mostrando el monto y el concepto en filas separadas en lugar de combinados en una sola línea.
+
+### ✅ Cambios Realizados
+
+#### 1. **HTML Actualizado** (`/public/loan-form/index.html`)
+- ➕ Nueva fila "Concepto" agregada en pantalla de confirmación (screen-confirm)
+- ➕ Nueva fila "Concepto" agregada en pantalla de éxito (screen-success)
+- 🙈 Ambas filas ocultas por defecto (`display: none`)
+
+#### 2. **JavaScript Actualizado** (`/public/loan-form/app.js`)
+- 📊 Función `updateSummary()` refactorizada:
+  - **Para dinero**: "Préstamo" muestra solo el monto, "Concepto" en fila separada
+  - **Para objetos**: "Préstamo" muestra la descripción, fila de concepto oculta
+  - Fila de concepto solo visible si hay concepto ingresado
+
+### 📸 Resultado Visual
+
+**Antes:**
+```
+Para:        Caty
+Préstamo:    $4.000 - cosas para el pan
+Devolución:  Mañana
+```
+
+**Después:**
+```
+Para:        Caty
+Préstamo:    $4.000
+Concepto:    cosas para el pan
+Devolución:  Mañana
+```
+
+**Sin concepto:**
+```
+Para:        Juan
+Préstamo:    $10.000
+Devolución:  Fin de mes
+```
+
+**Préstamo de objeto (sin cambios):**
+```
+Para:        María
+Préstamo:    Bicicleta
+Devolución:  En una semana
+```
+
+### 📊 Impacto
+
+- ✅ **Mejor legibilidad**: Información más clara y estructurada
+- ✅ **Escaneabilidad**: Fácil identificar monto vs concepto
+- ✅ **Retrocompatibilidad**: Préstamos sin concepto funcionan correctamente
+- ✅ **Consistencia**: Mismo formato en confirmación y pantalla de éxito
+
+### 🔗 Archivos Modificados
+
+1. `/public/loan-form/index.html` - Nuevas filas de concepto
+2. `/public/loan-form/app.js` - Lógica de separación monto/concepto
+3. `/CHANGELOG.md` - Este archivo
+
+---
+
 ## [2025-10-12b] - 💰 Campo de Concepto en Formulario Web para Préstamos de Dinero
 
 ### 🎯 Objetivo

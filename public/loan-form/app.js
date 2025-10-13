@@ -453,20 +453,35 @@ function updateSummary() {
     $('#success-who').textContent = contactName;
 
     // What
-    let whatText = '';
-    if (loanType === 'money') {
-        const amount = loanDetail.replace(/[.,\s]/g, '');
-        whatText = `$${formatMoney(parseInt(amount))}`;
+    const summaryConceptRow = $('#summary-concept-row');
+    const successConceptRow = $('#success-concept-row');
 
-        // Agregar concepto si existe
+    if (loanType === 'money') {
+        // Para dinero: mostrar solo el monto en "Préstamo"
+        const amount = loanDetail.replace(/[.,\s]/g, '');
+        const amountText = `$${formatMoney(parseInt(amount))}`;
+        $('#summary-what').textContent = amountText;
+        $('#success-what').textContent = amountText;
+
+        // Mostrar concepto en fila separada si existe
         if (loanConcept && loanConcept.trim()) {
-            whatText += ` - ${loanConcept}`;
+            $('#summary-concept').textContent = loanConcept.trim();
+            $('#success-concept').textContent = loanConcept.trim();
+            summaryConceptRow.style.display = 'flex';
+            successConceptRow.style.display = 'flex';
+        } else {
+            summaryConceptRow.style.display = 'none';
+            successConceptRow.style.display = 'none';
         }
     } else {
-        whatText = loanDetail;
+        // Para objetos: mostrar solo la descripción en "Préstamo"
+        $('#summary-what').textContent = loanDetail;
+        $('#success-what').textContent = loanDetail;
+
+        // Ocultar fila de concepto para objetos
+        summaryConceptRow.style.display = 'none';
+        successConceptRow.style.display = 'none';
     }
-    $('#summary-what').textContent = whatText;
-    $('#success-what').textContent = whatText;
 
     // When
     let whenText = '';
