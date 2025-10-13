@@ -9,6 +9,7 @@ const state = {
         newContact: false,
         loanType: null,
         loanDetail: null,
+        loanConcept: null,
         dateOption: null,
         customDate: null
     }
@@ -259,8 +260,10 @@ function setupEventListeners() {
 
             // Mostrar input correspondiente
             const detailInput = $('#detail-input');
+            const conceptInput = $('#concept-input');
             const detailLabel = $('#detail-label');
             const input = $('#loan-detail');
+            const conceptField = $('#loan-concept');
             const hint = $('#detail-hint');
 
             if (type === 'money') {
@@ -269,12 +272,21 @@ function setupEventListeners() {
                 input.placeholder = 'Ej: $50.000';
                 input.value = '';
                 hint.textContent = 'Se formateará automáticamente';
+
+                // Mostrar campo de concepto para dinero
+                conceptInput.classList.remove('hidden');
+                conceptField.value = '';
             } else {
                 detailLabel.textContent = 'Descripción';
                 input.type = 'text';
                 input.placeholder = 'Ej: Bicicleta';
                 input.value = '';
                 hint.textContent = 'Describe el objeto prestado';
+
+                // Ocultar campo de concepto para objetos
+                conceptInput.classList.add('hidden');
+                conceptField.value = '';
+                state.formData.loanConcept = null;
             }
 
             detailInput.classList.remove('hidden');
@@ -320,6 +332,11 @@ function setupEventListeners() {
         }
 
         btn.classList.toggle('hidden', !isValid);
+    });
+
+    $('#loan-concept').addEventListener('input', (e) => {
+        const value = e.target.value.trim();
+        state.formData.loanConcept = value || null;
     });
 
     $('#btn-continue-what').addEventListener('click', () => {
@@ -400,6 +417,7 @@ function setupEventListeners() {
             newContact: false,
             loanType: null,
             loanDetail: null,
+            loanConcept: null,
             dateOption: null,
             customDate: null
         };
@@ -409,10 +427,12 @@ function setupEventListeners() {
         $$('.type-btn').forEach(b => b.classList.remove('selected'));
         $$('.date-chip').forEach(c => c.classList.remove('selected'));
         $('#detail-input').classList.add('hidden');
+        $('#concept-input').classList.add('hidden');
         $('#custom-date-input').classList.add('hidden');
         $('#btn-continue-what').classList.add('hidden');
         $('#btn-continue-when').classList.add('hidden');
         $('#loan-detail').value = '';
+        $('#loan-concept').value = '';
         $('#custom-date').value = '';
 
         showScreen('screen-who');
@@ -426,7 +446,7 @@ function closeModal() {
 }
 
 function updateSummary() {
-    const { contactName, loanType, loanDetail, dateOption, customDate } = state.formData;
+    const { contactName, loanType, loanDetail, loanConcept, dateOption, customDate } = state.formData;
 
     // Who
     $('#summary-who').textContent = contactName;
@@ -437,6 +457,11 @@ function updateSummary() {
     if (loanType === 'money') {
         const amount = loanDetail.replace(/[.,\s]/g, '');
         whatText = `$${formatMoney(parseInt(amount))}`;
+
+        // Agregar concepto si existe
+        if (loanConcept && loanConcept.trim()) {
+            whatText += ` - ${loanConcept}`;
+        }
     } else {
         whatText = loanDetail;
     }
@@ -463,7 +488,7 @@ async function createLoan() {
     showLoader(true);
 
     try {
-        const { contactId, contactName, contactPhone, newContact, loanType, loanDetail, dateOption, customDate } = state.formData;
+        const { contactId, contactName, contactPhone, newContact, loanType, loanDetail, loanConcept, dateOption, customDate } = state.formData;
 
         const payload = {
             token: state.token,
@@ -473,6 +498,7 @@ async function createLoan() {
             new_contact: newContact,
             loan_type: loanType,
             loan_detail: loanDetail,
+            loan_concept: loanConcept,
             date_option: dateOption,
             custom_date: customDate
         };

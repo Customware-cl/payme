@@ -2,6 +2,109 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-12b] - 💰 Campo de Concepto en Formulario Web para Préstamos de Dinero
+
+### 🎯 Objetivo
+
+Agregar un campo de concepto/descripción al formulario web HTML cuando el usuario selecciona préstamo de **dinero**, permitiendo describir el propósito del préstamo (ej: "almuerzo", "salida con amigos", "salida al cine").
+
+### ✅ Cambios Realizados
+
+#### 1. **Formulario Web HTML** (`/public/loan-form/index.html`)
+- ➕ Nuevo campo de input agregado en Pantalla 2 ("¿Qué le prestas?"):
+  ```html
+  <div id="concept-input" class="detail-input hidden">
+      <label for="loan-concept">Concepto del préstamo</label>
+      <input type="text" id="loan-concept" placeholder="Ej: almuerzo, salida con amigos" autocomplete="off">
+      <p class="hint">Describe el propósito del préstamo (opcional)</p>
+  </div>
+  ```
+- 📍 Posicionado después del campo de monto y antes del botón "Continuar"
+- 🔒 Visible solo cuando se selecciona "💰 Dinero"
+
+#### 2. **JavaScript del Formulario** (`/public/loan-form/app.js`)
+- ➕ Campo `loanConcept` agregado al estado de la aplicación
+- ✏️ Handler de botones de tipo actualizado:
+  - Al seleccionar "Dinero": muestra campo de monto + campo de concepto
+  - Al seleccionar "Objeto": muestra solo campo de descripción (oculta concepto)
+- ✅ Event listener agregado para capturar input del concepto
+- 📊 Función `updateSummary()` actualizada para mostrar concepto en resumen:
+  ```javascript
+  // Si hay concepto, lo agrega al monto
+  whatText = `$50.000 - Almuerzo con amigos`
+  ```
+- 📤 Función `createLoan()` actualizada para incluir `loan_concept` en payload
+- 🔄 Reset del formulario actualizado para limpiar campo de concepto
+
+#### 3. **Backend Edge Function** (`/supabase/functions/loan-web-form/index.ts`)
+- ➕ Interface `LoanFormRequest` actualizada con campo opcional:
+  ```typescript
+  loan_concept?: string;
+  ```
+- ✅ Lógica de procesamiento actualizada:
+  - Para dinero: si `loan_concept` está presente y no vacío → usar concepto
+  - Para dinero: si `loan_concept` está vacío → usar "Préstamo en efectivo" (default)
+  - Para objeto: usa `loan_detail` como descripción (sin cambios)
+- 📝 El concepto se guarda en `item_description` de la tabla `loan_agreements`
+
+### 🔄 Flujo de Usuario
+
+1. **Pantalla 1**: Usuario selecciona contacto
+2. **Pantalla 2**: Usuario selecciona "💰 Dinero"
+3. ➡️ Aparece campo "Monto" (obligatorio)
+4. ➡️ Aparece campo "Concepto del préstamo" (opcional)
+5. Usuario ingresa monto: `$50.000`
+6. Usuario ingresa concepto: `Almuerzo con amigos` (opcional)
+7. Usuario presiona "Continuar"
+8. **Pantalla 3**: Usuario selecciona fecha de devolución
+9. **Pantalla 4**: Resumen muestra: `$50.000 - Almuerzo con amigos`
+10. Usuario confirma y préstamo se crea con el concepto
+
+### 📊 Impacto
+
+- ✅ **UX mejorada**: Usuarios pueden especificar propósito de préstamos de dinero
+- ✅ **Campo opcional**: No obliga al usuario a llenar concepto (para rapidez)
+- ✅ **Consistencia**: El concepto se muestra en vista de detalle (implementado previamente)
+- ✅ **Retrocompatibilidad**: Préstamos sin concepto usan "Préstamo en efectivo" por defecto
+- ✅ **Resumen claro**: En pantalla de confirmación se muestra monto + concepto
+
+### 🧪 Ejemplo de Uso
+
+**Escenario 1: Con concepto**
+```
+Usuario selecciona: Dinero
+Monto: $50.000
+Concepto: Almuerzo con amigos
+→ Resumen: "$50.000 - Almuerzo con amigos"
+→ Se guarda en DB: amount=50000, item_description="Almuerzo con amigos"
+```
+
+**Escenario 2: Sin concepto**
+```
+Usuario selecciona: Dinero
+Monto: $30.000
+Concepto: (vacío)
+→ Resumen: "$30.000"
+→ Se guarda en DB: amount=30000, item_description="Préstamo en efectivo"
+```
+
+**Escenario 3: Objeto (sin cambios)**
+```
+Usuario selecciona: Objeto
+Descripción: Bicicleta
+→ Resumen: "Bicicleta"
+→ Se guarda en DB: amount=null, item_description="Bicicleta"
+```
+
+### 🔗 Archivos Modificados
+
+1. `/public/loan-form/index.html` - HTML del formulario
+2. `/public/loan-form/app.js` - Lógica JavaScript
+3. `/supabase/functions/loan-web-form/index.ts` - Backend handler
+4. `/CHANGELOG.md` - Este archivo
+
+---
+
 ## [2025-10-12] - 📝 Campo de Concepto/Descripción para Préstamos de Dinero
 
 ### 🎯 Objetivo

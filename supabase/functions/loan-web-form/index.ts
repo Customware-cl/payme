@@ -20,6 +20,7 @@ interface LoanFormRequest {
   new_contact: boolean;
   loan_type: 'money' | 'object';
   loan_detail: string;
+  loan_concept?: string;
   date_option: 'tomorrow' | 'week' | 'month-end' | 'custom';
   custom_date?: string;
 }
@@ -278,7 +279,13 @@ serve(async (req: Request) => {
           }
 
           amount = parsedAmount;
-          itemDescription = 'Dinero';
+
+          // Para préstamos de dinero, usar concepto si está presente, sino usar valor por defecto
+          if (body.loan_concept && body.loan_concept.trim()) {
+            itemDescription = body.loan_concept.trim();
+          } else {
+            itemDescription = 'Préstamo en efectivo';
+          }
         } else {
           if (body.loan_detail.trim().length < 3) {
             return new Response(JSON.stringify({
