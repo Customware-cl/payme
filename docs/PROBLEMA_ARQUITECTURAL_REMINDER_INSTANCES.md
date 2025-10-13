@@ -371,16 +371,162 @@ $;
 ## 📝 Notas Adicionales
 
 ### Timezone Handling
-- Los préstamos usan timezone `America/Santiago` (Chile, UTC-3)
-- La función `generate_reminder_instances()` convierte correctamente: `scheduled_datetime := (p_due_date + reminder_record.days_offset * INTERVAL '1 day' + reminder_record.time_of_day) AT TIME ZONE p_timezone;`
+
+⚠️ **PROBLEMA CRÍTICO ADICIONAL**: Manejo incorrecto de timezones
+
+#### Estado Actual
+
+**Tenant configurado**:
+```sql
+SELECT timezone FROM tenants WHERE name = 'PrestaBot Chile';
+-- Resultado: 'America/Santiago' (Chile, UTC-3)
+```
+
+**Función `generate_reminder_instances()`**:
+```sql
+CREATE OR REPLACE FUNCTION generate_reminder_instances(
+    p_reminder_id UUID,
+    p_due_date DATE,
+    p_timezone TEXT DEFAULT 'America/Mexico_City'  -- ❌ DEFAULT INCORRECTO
+)
+```
+
+**Problema**:
+- Default timezone es `'America/Mexico_City'` (México, UTC-6)
+- Tenant chileno usa `'America/Santiago'` (Chile, UTC-3)
+- **Diferencia**: 3 horas de error
+
+#### Llamadas a `generate_reminder_instances()`
+
+**1. `setupDefaultReminders()` (línea 560)**:
+- ❌ NO llama a la función (problema principal)
+
+**2. `regenerateReminders()` (línea 622)**:
+```typescript
+await this.supabase.rpc('generate_reminder_instances', {
+  reminder_id: reminder.id,
+  due_date: newDueDate
+  // ❌ FALTA: No pasa p_timezone
+  // Usará default 'America/Mexico_City' en vez de 'America/Santiago'
+});
+```
+
+**3. `generate_recurring_reminders()` cron (línea 168)**:
+```sql
+instances_created := instances_created + generate_reminder_instances(
+    reminder_record.id,
+    agreement_record.next_due_date::text,
+    (SELECT timezone FROM tenants WHERE id = agreement_record.tenant_id)  -- ✅ CORRECTO
+);
+```
+
+#### Impacto del Error de Timezone
+
+**Ejemplo**: Recordatorio programado para 09:00 hora Chile
+
+**Con timezone correcto** (`America/Santiago`, UTC-3):
+```sql
+'2025-10-13 09:00:00' AT TIME ZONE 'America/Santiago'
+= '2025-10-13 09:00:00-03'  (09:00 Chile)
+= '2025-10-13 12:00:00+00'  (almacenado como 12:00 UTC)
+
+-- Cron ejecuta a las 12:00 UTC = 09:00 Chile ✅
+```
+
+**Con timezone incorrecto** (`America/Mexico_City`, UTC-6):
+```sql
+'2025-10-13 09:00:00' AT TIME ZONE 'America/Mexico_City'
+= '2025-10-13 09:00:00-06'  (09:00 México)
+= '2025-10-13 15:00:00+00'  (almacenado como 15:00 UTC)
+
+-- Cron ejecuta a las 15:00 UTC = 12:00 Chile ❌ (3 horas tarde)
+```
+
+#### Solución: Pasar Timezone del Tenant
+
+**Modificar `regenerateReminders()`**:
+```typescript
+private async regenerateReminders(
+  agreementId: string,
+  newDueDate: string,
+  tenantId: string  // ✅ AGREGAR parámetro
+): Promise<void> {
+  // Obtener timezone del tenant
+  const { data: tenant } = await this.supabase
+    .from('tenants')
+    .select('timezone')
+    .eq('id', tenantId)
+    .single();
+
+  const timezone = tenant?.timezone || 'America/Santiago';
+
+  // Generar instancias con timezone correcto
+  for (const reminder of reminders) {
+    await this.supabase.rpc('generate_reminder_instances', {
+      p_reminder_id: reminder.id,
+      p_due_date: newDueDate,
+      p_timezone: timezone  // ✅ PASAR TIMEZONE
+    });
+  }
+}
+```
+
+**Modificar `setupDefaultReminders()`** (cuando se implemente):
+```typescript
+private async setupDefaultReminders(
+  agreementId: string,
+  tenantId: string,
+  dueDate: string  // ✅ AGREGAR parámetro
+): Promise<void> {
+  // Obtener timezone del tenant
+  const { data: tenant } = await this.supabase
+    .from('tenants')
+    .select('timezone')
+    .eq('id', tenantId)
+    .single();
+
+  const timezone = tenant?.timezone || 'America/Santiago';
+
+  // Crear reminders y generar instancias
+  for (const reminder of reminders) {
+    // Insertar reminder y obtener ID
+    const { data: insertedReminder } = await this.supabase
+      .from('reminders')
+      .insert({ ... })
+      .select('id')
+      .single();
+
+    // Generar instance con timezone correcto
+    await this.supabase.rpc('generate_reminder_instances', {
+      p_reminder_id: insertedReminder.id,
+      p_due_date: dueDate,
+      p_timezone: timezone  // ✅ PASAR TIMEZONE
+    });
+  }
+}
+```
+
+#### Documentación Completa
+
+Ver documentación detallada de timezone en:
+**`/docs/TIMEZONE_MANEJO_RECORDATORIOS.md`**
+
+Incluye:
+- Tipos de datos (DATE vs TIMESTAMPTZ)
+- Cálculo de scheduled_datetime con timezone
+- Comparación con NOW() en cron job
+- Casos de prueba con ejemplos reales
+- Checklist de implementación
 
 ### Validación de Instancias Futuras
+
 La función solo crea instancias futuras:
 ```sql
 IF scheduled_datetime > NOW() THEN
     INSERT INTO reminder_instances ...
 END IF;
 ```
+
 **Implicación**: Si un préstamo se crea con `due_date = tomorrow` y el reminder es `before_24h` (09:00, -1 día), la instancia solo se creará si es antes de las 09:00 de hoy.
 
 ---
