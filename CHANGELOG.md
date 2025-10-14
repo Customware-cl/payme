@@ -2,6 +2,150 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-14] - 🐛 Fix: Cron Job con Configuración Incorrecta - Recordatorios No Enviados
+
+### 🔍 Análisis Post-Mortem (14/10 20:30)
+
+**Problema**: Los recordatorios del 14/10 a las 09:05 NO se enviaron.
+
+**Verificación realizada**:
+1. ✅ Estados de agreements actualizados correctamente (`active` → `overdue` a las 09:00:02)
+2. ❌ `last_reminder_sent` = null (no se enviaron)
+3. ❌ `reminder_sequence_step` = 0 (no se procesaron)
+4. ❌ 0 mensajes en `whatsapp_messages` del 14/10
+5. ❌ 0 eventos en tabla `events` del 14/10
+
+### 🐛 Causa Raíz
+
+**Configuración incorrecta del cron job**:
+
+```sql
+-- Configuración INCORRECTA (antes):
+jobid: 1
+schedule: '0 9 * * *'  -- Se ejecuta a las 09:00 UTC
+jobname: 'daily-reminder-scheduler'
+
+-- PROBLEMA: 09:00 UTC = 06:00 Chile (UTC-3)
+-- El scheduler ejecutaba a las 06:00 Chile, NO a las 09:00 Chile
+```
+
+**Flujo del fallo**:
+1. Cron ejecutó a las **09:00 UTC** (06:00 Chile)
+2. Función `isOfficialSendHour('America/Santiago', 9)` retornó `false`
+   - Hora actual en Chile: 06:00
+   - Hora oficial esperada: 09:00
+   - Resultado: NO es hora oficial
+3. Sistema detectó **modo CATCHUP** (no NORMAL)
+4. Modo CATCHUP skippeó `processRefinedAgreementStates()`:
+   ```typescript
+   console.log('⏭️  Skipping refined state processing (not official hour)');
+   ```
+5. Solo ejecutó `update_agreement_status_by_time()` (por eso los estados sí cambiaron)
+
+**Evidencia del cron**:
+```sql
+SELECT * FROM cron.job_run_details ORDER BY runid DESC LIMIT 2;
+
+-- runid 2: 2025-10-14 09:00:00.063646+00 - succeeded ✅
+-- runid 1: 2025-10-13 09:00:00.282427+00 - succeeded ✅
+-- Ambos a las 09:00 UTC = 06:00 Chile ❌
+```
+
+### 🔧 Corrección Aplicada
+
+**Query ejecutado**:
+```sql
+SELECT cron.alter_job(
+  job_id := 1,
+  schedule := '5 * * * *'  -- Cada hora al minuto 5
+);
+```
+
+**Configuración CORRECTA (después)**:
+```sql
+jobid: 1
+schedule: '5 * * * *'  -- Ejecuta cada hora al minuto 5
+jobname: 'daily-reminder-scheduler'
+
+-- Horarios de ejecución:
+-- 00:05, 01:05, 02:05, ..., 23:05 (24 veces/día)
+-- 09:05 UTC = 09:05 Chile (hora oficial) ✅
+-- Resto de horas = modo catchup
+```
+
+**Verificación**:
+```sql
+SELECT schedule FROM cron.job WHERE jobid = 1;
+-- Resultado: '5 * * * *' ✅
+```
+
+### 📅 Estado Actual de los Préstamos
+
+**5 préstamos con `due_date = '2025-10-13'`**:
+- ✅ `status = 'overdue'` (actualizado correctamente)
+- ❌ `last_reminder_sent = null` (nunca enviado)
+- ❌ `reminder_sequence_step = 0` (no procesado)
+
+**Próximo intento de envío**:
+- **Mañana 15/10 a las 09:05 Chile** (12:05 UTC)
+- Cron ejecutará con schedule correcto: '5 * * * *'
+- `isOfficialSendHour()` retornará `true`
+- Sistema detectará modo NORMAL
+- `processRefinedAgreementStates()` ejecutará
+- Recordatorios se enviarán via template `devolucion_vencida_v2`
+
+### 🎯 Validación del Fix
+
+**Condiciones para envío exitoso mañana**:
+1. ✅ Cron configurado: `'5 * * * *'`
+2. ✅ Agreements en status `overdue`
+3. ✅ `last_reminder_sent = null` (no enviados previamente)
+4. ✅ Contactos con `opt_in_status = 'opted_in'`
+5. ✅ Template `devolucion_vencida_v2` existe
+6. ✅ WhatsApp configurado
+
+**Logs esperados mañana a las 09:05**:
+```
+🚀 Scheduler dispatch started at: 2025-10-15T12:05:00.000Z
+🕐 Scheduler running in NORMAL mode (official hour: true)
+📊 Estados de acuerdos actualizados: 0
+🔄 Acuerdos refinados procesados: {
+  processed: 5,
+  sent: 5,
+  failed: 0,
+  skipped: 0
+}
+✅ Scheduler dispatch completed successfully
+```
+
+### 📚 Lecciones Aprendidas
+
+1. **Confusión UTC vs Local Time**:
+   - Cron se ejecuta en **UTC** (hora del servidor)
+   - La lógica del scheduler necesita **hora local Chile**
+   - Solución: Ejecutar cada hora y dejar que `isOfficialSendHour()` detecte
+
+2. **Validación de Configuración**:
+   - ❌ No se validó que el cron estuviera ejecutando a la hora Chile correcta
+   - ✅ Ahora ejecuta cada hora y delega detección a la función
+
+3. **Testing del Sistema**:
+   - ⚠️ Primera prueba real del sistema de recordatorios
+   - ⚠️ Descubrió bug de configuración fundamental
+
+### 🐛 Bugs Relacionados Aún Pendientes
+
+1. **Sistema Legacy Roto** (sin impacto):
+   - `reminder_instances` con esquema incompatible
+   - `generateReminderInstances()` nunca funciona
+   - Solo sistema refinado funcional
+
+2. **Sistema Refinado No Valida Opt-In** (riesgo bajo):
+   - `sendRefinedReminder()` no verifica `opt_in_status`
+   - Mitigado manualmente para estos 5 préstamos
+
+---
+
 ## [2025-10-13d] - Preparación de Recordatorios "Vencido" para Préstamos del 13/10
 
 ### 🎯 Objetivo
