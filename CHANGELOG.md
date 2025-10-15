@@ -2,6 +2,48 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-15r] - 🐛 Fix CRÍTICO: Desplegar Screen 0 de loan-form
+
+### Fixed
+- **Screen 0 de loan-form no estaba en producción**: Archivos sin commitear
+  - **Problema reportado**: loan-form iba directo a "¿A quién le prestas?" sin mostrar selector de dirección
+  - **Causa raíz**: Cambios de Screen 0 implementados localmente pero NO commiteados a git
+  - **Impacto**: Netlify servía versiones VIEJAS sin funcionalidad de dirección bidireccional
+
+### Deployed
+- ✅ **public/loan-form/index.html** - Screen 0 HTML con selector de dirección
+- ✅ **public/loan-form/app.js** - Lógica de dirección y textos dinámicos
+- ✅ **public/loan-form/styles.css** - Estilos para botones de dirección
+
+### Technical Details
+**Funcionalidad desplegada**:
+1. **Screen 0**: Pantalla inicial con dos opciones
+   - "Yo presté" → crea préstamo como prestamista
+   - "Me prestaron" → crea préstamo como prestatario
+
+2. **Textos dinámicos**: Se actualizan según selección
+   - Prestamista: "¿A quién le prestas?", "¿Qué le prestas?", etc.
+   - Prestatario: "¿Quién te prestó?", "¿Qué te prestaron?", etc.
+
+3. **Endpoints diferenciados**:
+   - Prestamista → `LOAN_FORM_ENDPOINT`
+   - Prestatario → `RECEIVED_LOAN_ENDPOINT`
+
+### Files Modified
+- **index.html (+26 líneas)**: Agrega Screen 0, modifica screen-who, IDs dinámicos
+- **app.js (+153 líneas)**: State, TEXTS, updateTexts(), event listeners, lógica dual
+- **styles.css (+49 líneas)**: .direction-buttons y variantes
+
+### Impact
+- ✅ **UX mejorada**: Usuario declara intención antes de elegir contacto
+- ✅ **Funcionalidad completa**: Préstamos bidireccionales ahora funcionan
+- ✅ **Consistencia**: loan-form y loans ahora ambos tienen Screen 0
+
+### Notes
+- Problema de deployment: archivos estaban modificados localmente pero sin push
+- Lección: Siempre verificar `git status` antes de reportar cambios desplegados
+- loans.html funciona correctamente, problema era caché del navegador
+
 ## [2025-10-15q] - 🌐 Cambio de dominio: somospayme.cl
 
 ### Changed
