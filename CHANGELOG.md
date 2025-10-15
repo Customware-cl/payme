@@ -121,6 +121,73 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
 - ✅ Verificación: Profile retorna `null` sin errores
 - ✅ Deployment: Todas las edge functions desplegadas correctamente
 
+## [2025-10-15d] - 🔧 Hotfix: Soporte LLT en loan-actions y loan-web-form
+
+### Fixed
+- **Bugfix crítico: loan-actions retornaba 401 al ver detalle de préstamo**
+  - Problema: `parseToken()` solo validaba tokens cortos (1 hora)
+  - Síntoma: "Error al cargar el préstamo: Token inválido o expirado"
+  - Solución: Actualizada función `parseToken()` con soporte LLT asíncrono
+  - Archivo: `supabase/functions/loan-actions/index.ts`
+  - Commit: `c47ffc2`
+
+- **Bugfix crítico: loan-web-form retornaba 401 al cargar contactos**
+  - Problema: `parseToken()` solo validaba tokens cortos (1 hora)
+  - Síntoma: "Error al cargar contactos" en formulario de préstamos
+  - Solución: Actualizada función `parseToken()` con soporte LLT asíncrono
+  - Archivo: `supabase/functions/loan-web-form/index.ts`
+  - Commit: `1a99ac1`
+
+- **Configuración incorrecta de verify_jwt**
+  - Problema: Funciones desplegadas con `verify_jwt: true` (default)
+  - Síntoma: 401 Unauthorized en todas las requests del frontend
+  - Solución: Redesplegar con flag `--no-verify-jwt`
+  - Funciones corregidas:
+    - `loan-actions`: Redesployada sin JWT
+    - `loan-web-form`: Redesployada sin JWT
+
+### Added
+- **Documentación de deployment crítica**
+  - Archivo: `docs/EDGE_FUNCTIONS_DEPLOYMENT.md`
+  - Lista de funciones que requieren `--no-verify-jwt`:
+    - `wa_webhook` (webhook externo)
+    - `menu-data` (frontend con tokens)
+    - `loan-actions` (frontend con tokens)
+    - `loan-web-form` (frontend con tokens)
+  - Guía de troubleshooting para errores 401
+  - Historial de issues y soluciones
+  - Commit: `385fcbf`
+
+### Technical Details
+- **parseToken() actualizado en 2 funciones**:
+  - Ahora es asíncrono (async/await)
+  - Recibe cliente Supabase como parámetro
+  - Valida tokens LLT contra `active_sessions`
+  - Actualiza `last_used_at` en cada uso
+  - Mantiene soporte para tokens cortos y loan_web
+
+- **Patrón consistente**:
+  - Mismo código de validación en 4 funciones:
+    - `menu-data`
+    - `loan-actions`
+    - `loan-web-form`
+    - `generate-menu-token`
+
+### Deployment
+- ✅ `loan-actions` v6 con soporte LLT y sin JWT
+- ✅ `loan-web-form` v20 con soporte LLT y sin JWT
+- ✅ Sistema completamente funcional con tokens de 30 días
+
+### User Experience Impact
+- **Detalle de préstamos**: Ahora funciona correctamente con tokens LLT
+- **Formulario de préstamos**: Carga contactos sin errores
+- **Experiencia sin fricciones**: Usuarios pueden usar todas las funciones durante 30 días
+
+### Lessons Learned
+- **Always deploy menu functions with --no-verify-jwt**
+- **Document deployment requirements** para evitar repetir errores
+- **Test all menu functions** después de deployar cambios de autenticación
+
 ## [2025-10-15a] - 📋 Análisis Estratégico: Arquitectura de Autenticación
 
 ### Added
