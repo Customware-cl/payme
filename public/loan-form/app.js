@@ -344,6 +344,7 @@ function setupEventListeners() {
             // Mostrar input correspondiente
             const detailInput = $('#detail-input');
             const conceptInput = $('#concept-input');
+            const imageUploadSection = $('#image-upload-section');
             const detailLabel = $('#detail-label');
             const input = $('#loan-detail');
             const conceptField = $('#loan-concept');
@@ -373,6 +374,8 @@ function setupEventListeners() {
             }
 
             detailInput.classList.remove('hidden');
+            // Mostrar sección de imagen
+            imageUploadSection.classList.remove('hidden');
             input.focus();
         });
     });
@@ -535,6 +538,7 @@ function setupEventListeners() {
         $$('.date-chip').forEach(c => c.classList.remove('selected'));
         $('#detail-input').classList.add('hidden');
         $('#concept-input').classList.add('hidden');
+        $('#image-upload-section').classList.add('hidden');
         $('#custom-date-input').classList.add('hidden');
         $('#btn-continue-what').classList.add('hidden');
         $('#btn-continue-when').classList.add('hidden');
