@@ -2,6 +2,49 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-15a] - 📋 Análisis Estratégico: Arquitectura de Autenticación
+
+### Added
+- **Documento estratégico completo** sobre arquitectura de autenticación PayME
+  - Archivo: `docs/ANALISIS_ESTRATEGICO_AUTENTICACION.md`
+  - Contexto: Análisis holístico de limitación WhatsApp-first actual
+  - Contenido: 3 alternativas estratégicas con análisis comparativo completo
+
+### Alternativas Propuestas
+
+**Alternativa A: WhatsApp-First Mejorado** (Recomendada Fase 1)
+- Tokens de larga duración (30 días)
+- Session cookies persistentes
+- Score: 7.20/10 - Mejor balance costo-beneficio
+- Esfuerzo: 40-60 horas | $8-12k dev
+
+**Alternativa B: Multi-Canal con WhatsApp Opcional** (Recomendada Fase 3)
+- OTP por Email/SMS/WhatsApp
+- Onboarding web directo
+- Score: 6.95/10 - Alta escalabilidad
+- Esfuerzo: 120-160 horas | $20-30k dev
+
+**Alternativa C: App-First con Social Auth**
+- OAuth (Google, Facebook, Apple)
+- Auth moderna profesional
+- Score: 6.90/10 - Máxima UX pero overkill
+- Esfuerzo: 160-220 horas | $30-45k dev
+
+### Recomendación Final
+- **Estrategia:** Alternativa A (Mes 1-2) → Validación (Mes 3-6) → Alternativa B si validado (Mes 7-12)
+- **Fundamento:** Chile tiene 95%+ penetración WhatsApp, prematura optimización multi-canal sin validar demanda
+- **ROI:** Alternativa A entrega 80% del valor con 30% del esfuerzo
+
+### Próximos Pasos
+1. Discusión del documento con socios
+2. Validación de supuestos de negocio
+3. Decision Gate: Aprobar Alternativa A o ajustar
+4. Planning de sprints si se aprueba
+5. Kick-off implementación Fase 1
+
+### Files Created
+- `docs/ANALISIS_ESTRATEGICO_AUTENTICACION.md` - Documento completo (50+ páginas markdown)
+
 ## [2025-10-14j] - 🐛 Fix Crítico: Error 401 en Edge Function menu-data
 
 ### Fixed
