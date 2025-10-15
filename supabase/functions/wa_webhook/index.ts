@@ -317,7 +317,7 @@ async function processInboundMessage(
             interactiveResponse = {
               type: 'cta_url',
               body: {
-                text: '¡Hola! 👋 Soy tu asistente de préstamos.\n\nRegistra préstamos, ve su estado y gestiona tu información.\n\n⏱️ Válido por 1 hora.'
+                text: '¡Hola! 👋 Soy tu asistente de préstamos.\n\nRegistra préstamos, ve su estado y gestiona tu información.\n\n⏱️ Válido por 30 días.'
               },
               action: {
                 name: 'cta_url',
