@@ -629,6 +629,42 @@ body {
     text-align: right;
 }
 
+/* Imagen del préstamo */
+.image-section {
+    background: var(--bg-card);
+    padding: 20px 24px;
+    border-bottom: 8px solid var(--bg-main);
+}
+
+.image-section.hidden {
+    display: none;
+}
+
+.image-section .section-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    padding: 0 0 16px 0;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.loan-image-container {
+    width: 100%;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg-main);
+    box-shadow: var(--shadow-sm);
+}
+
+.loan-image {
+    width: 100%;
+    height: auto;
+    max-height: 400px;
+    object-fit: contain;
+    display: block;
+}
+
 /* Action buttons para detalle */
 .action-buttons {
     display: flex;

@@ -181,6 +181,17 @@ function renderLoanDetails() {
 
     // Fecha de creación
     $('#detail-created').textContent = formatDateTime(loan.created_at);
+
+    // Mostrar imagen si existe
+    const imageSection = $('#loan-image-section');
+    const loanImage = $('#loan-image');
+
+    if (loan.metadata && loan.metadata.image_url) {
+        loanImage.src = loan.metadata.image_url;
+        imageSection.classList.remove('hidden');
+    } else {
+        imageSection.classList.add('hidden');
+    }
 }
 
 // Renderizar botones de acción

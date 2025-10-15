@@ -9,7 +9,7 @@ import { FlowDataProvider } from "../_shared/flow-data-provider.ts";
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+  'Access-Control-Allow-Methods': 'POST, GET, PATCH, OPTIONS',
 };
 
 interface LoanFormRequest {
@@ -392,6 +392,91 @@ serve(async (req: Request) => {
         return new Response(JSON.stringify({
           success: false,
           error: error.message || 'Error interno del servidor'
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // PATCH - Actualizar imagen del préstamo
+    if (req.method === 'PATCH') {
+      const body = await req.json();
+      const { token, agreement_id, image_url } = body;
+
+      console.log('[LOAN_WEB_FORM] PATCH request:', { token: !!token, agreement_id, image_url: !!image_url });
+
+      // Validar token
+      const tokenData = parseToken(token);
+
+      if (!tokenData) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Token inválido o expirado'
+        }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Validar datos requeridos
+      if (!agreement_id || !image_url) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'agreement_id y image_url requeridos'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      try {
+        // Primero obtener el agreement actual para preservar metadata existente
+        const { data: currentAgreement, error: fetchError } = await supabase
+          .from('agreements')
+          .select('metadata')
+          .eq('id', agreement_id)
+          .eq('tenant_id', tokenData.tenantId)
+          .single();
+
+        if (fetchError) {
+          console.error('[LOAN_WEB_FORM] Error fetching agreement:', fetchError);
+          throw fetchError;
+        }
+
+        // Actualizar metadata del agreement con la URL de la imagen
+        const updatedMetadata = {
+          ...(currentAgreement?.metadata || {}),
+          image_url: image_url
+        };
+
+        const { error: updateError } = await supabase
+          .from('agreements')
+          .update({
+            metadata: updatedMetadata
+          })
+          .eq('id', agreement_id)
+          .eq('tenant_id', tokenData.tenantId);
+
+        if (updateError) {
+          console.error('[LOAN_WEB_FORM] Error updating agreement:', updateError);
+          throw updateError;
+        }
+
+        console.log('[LOAN_WEB_FORM] Image URL updated successfully');
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Imagen actualizada exitosamente'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+
+      } catch (error) {
+        console.error('[LOAN_WEB_FORM] Error updating image:', error);
+        return new Response(JSON.stringify({
+          success: false,
+          error: error.message || 'Error al actualizar imagen'
         }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }

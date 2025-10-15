@@ -157,6 +157,26 @@
                     </div>
                 </div>
 
+                <!-- Sección de imagen opcional -->
+                <div class="image-upload-section">
+                    <label class="image-upload-label">
+                        <span class="label-text">📷 Agregar imagen (opcional)</span>
+                        <p class="label-hint">Puedes adjuntar una foto del préstamo</p>
+                    </label>
+
+                    <div id="image-preview-container" class="image-preview-container hidden">
+                        <img id="image-preview" class="image-preview" alt="Preview">
+                        <button type="button" class="btn-remove-image" id="btn-remove-image">✕</button>
+                    </div>
+
+                    <input type="file" id="loan-image" accept="image/jpeg,image/jpg,image/png,image/webp" class="hidden">
+                    <button type="button" class="btn-upload-image" id="btn-upload-image">
+                        <span>📸</span>
+                        <span>Seleccionar imagen</span>
+                    </button>
+                    <p class="upload-hint">Máximo 5MB • JPG, PNG o WEBP</p>
+                </div>
+
                 <button type="button" class="btn-primary" id="btn-create-loan">
                     Crear préstamo
                 </button>

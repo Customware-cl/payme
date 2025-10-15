@@ -11,7 +11,9 @@ const state = {
         loanDetail: null,
         loanConcept: null,
         dateOption: null,
-        customDate: null
+        customDate: null,
+        imageFile: null,
+        imageUrl: null
     }
 };
 
@@ -127,6 +129,87 @@ function validatePhone(phone) {
 function validateAmount(amount) {
     const cleaned = amount.replace(/[.,\s]/g, '');
     return /^\d+$/.test(cleaned) && parseInt(cleaned) > 0;
+}
+
+// Validar archivo de imagen
+function validateImageFile(file) {
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+
+    if (!file) return { valid: false, error: 'No se seleccionó ningún archivo' };
+
+    if (!allowedTypes.includes(file.type)) {
+        return { valid: false, error: 'Tipo de archivo no permitido. Usa JPG, PNG o WEBP' };
+    }
+
+    if (file.size > maxSize) {
+        return { valid: false, error: 'El archivo es muy grande. Máximo 5MB' };
+    }
+
+    return { valid: true };
+}
+
+// Mostrar preview de imagen
+function showImagePreview(file) {
+    const previewContainer = $('#image-preview-container');
+    const preview = $('#image-preview');
+    const uploadBtn = $('#btn-upload-image');
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        preview.src = e.target.result;
+        previewContainer.classList.remove('hidden');
+        uploadBtn.textContent = '📸 Cambiar imagen';
+    };
+    reader.readAsDataURL(file);
+}
+
+// Eliminar imagen seleccionada
+function removeImage() {
+    state.formData.imageFile = null;
+    state.formData.imageUrl = null;
+
+    $('#image-preview-container').classList.add('hidden');
+    $('#image-preview').src = '';
+    $('#loan-image').value = '';
+    $('#btn-upload-image').innerHTML = '<span>📸</span><span>Seleccionar imagen</span>';
+}
+
+// Subir imagen a Supabase Storage
+async function uploadImageToStorage(file, agreementId) {
+    try {
+        // Generar nombre único para el archivo
+        const timestamp = Date.now();
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${agreementId}_${timestamp}.${fileExt}`;
+        const filePath = `${agreementId}/${fileName}`;
+
+        // Crear FormData para subir
+        const formData = new FormData();
+        formData.append('file', file);
+
+        // Subir a Storage usando REST API
+        const uploadResponse = await fetch(
+            `${SUPABASE_URL}/storage/v1/object/loan-images/${filePath}`,
+            {
+                method: 'POST',
+                body: formData
+            }
+        );
+
+        if (!uploadResponse.ok) {
+            const error = await uploadResponse.json();
+            throw new Error(error.message || 'Error al subir imagen');
+        }
+
+        // Construir URL pública de la imagen
+        const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/loan-images/${filePath}`;
+
+        return { success: true, url: publicUrl, path: filePath };
+    } catch (error) {
+        console.error('Error uploading image:', error);
+        return { success: false, error: error.message };
+    }
 }
 
 // Inicialización
@@ -397,6 +480,28 @@ function setupEventListeners() {
         showScreen('screen-who');
     });
 
+    // Manejo de imagen
+    $('#btn-upload-image').addEventListener('click', () => {
+        $('#loan-image').click();
+    });
+
+    $('#loan-image').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const validation = validateImageFile(file);
+        if (!validation.valid) {
+            showToast(validation.error, 4000);
+            e.target.value = '';
+            return;
+        }
+
+        state.formData.imageFile = file;
+        showImagePreview(file);
+    });
+
+    $('#btn-remove-image').addEventListener('click', removeImage);
+
     $('#btn-create-loan').addEventListener('click', createLoan);
 
     // Pantalla 5: Éxito
@@ -419,7 +524,9 @@ function setupEventListeners() {
             loanDetail: null,
             loanConcept: null,
             dateOption: null,
-            customDate: null
+            customDate: null,
+            imageFile: null,
+            imageUrl: null
         };
 
         // Reset UI
@@ -434,6 +541,9 @@ function setupEventListeners() {
         $('#loan-detail').value = '';
         $('#loan-concept').value = '';
         $('#custom-date').value = '';
+
+        // Reset imagen
+        removeImage();
 
         showScreen('screen-who');
     });
@@ -503,8 +613,9 @@ async function createLoan() {
     showLoader(true);
 
     try {
-        const { contactId, contactName, contactPhone, newContact, loanType, loanDetail, loanConcept, dateOption, customDate } = state.formData;
+        const { contactId, contactName, contactPhone, newContact, loanType, loanDetail, loanConcept, dateOption, customDate, imageFile } = state.formData;
 
+        // Primer paso: Crear el préstamo sin imagen
         const payload = {
             token: state.token,
             contact_id: contactId,
@@ -528,11 +639,35 @@ async function createLoan() {
 
         const data = await response.json();
 
-        if (data.success) {
-            showScreen('screen-success');
-        } else {
+        if (!data.success) {
             throw new Error(data.error || 'Error al crear el préstamo');
         }
+
+        // Si hay imagen, subirla después de crear el préstamo
+        if (imageFile && data.agreement_id) {
+            const uploadResult = await uploadImageToStorage(imageFile, data.agreement_id);
+
+            if (uploadResult.success) {
+                // Actualizar el préstamo con la URL de la imagen
+                await fetch(LOAN_FORM_ENDPOINT, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        token: state.token,
+                        agreement_id: data.agreement_id,
+                        image_url: uploadResult.url
+                    })
+                });
+            } else {
+                console.error('Failed to upload image:', uploadResult.error);
+                // No fallar el flujo si la imagen no se sube
+                showToast('Préstamo creado, pero la imagen no se pudo subir', 4000);
+            }
+        }
+
+        showScreen('screen-success');
     } catch (error) {
         console.error('Error creating loan:', error);
         showToast('Error al crear el préstamo. Intenta de nuevo.', 5000);
