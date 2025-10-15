@@ -75,43 +75,94 @@ function calculateDate(option: string, customDate?: string): string {
   return `${year}-${month}-${day}`;
 }
 
-// Validar token y extraer información
-function parseToken(token: string): { tenantId: string; lenderContactId: string; timestamp: number } | null {
+// Validar token y extraer información (soporta short y LLT)
+async function parseToken(token: string, supabase: any): Promise<{ tenantId: string; lenderContactId: string; timestamp: number; token_type: string } | null> {
   try {
-    // Format: loan_web_[tenant_id]_[lender_contact_id]_[timestamp]
-    // OR: menu_[tenant_id]_[contact_id]_[timestamp]
     const parts = token.split('_');
 
     let tenantId: string;
     let lenderContactId: string;
     let timestamp: number;
+    let token_type: string;
 
-    // Soporte para tokens de menú (menu_) y de formulario (loan_web_)
-    if (parts[0] === 'menu' && parts.length >= 4) {
-      // Token de menú: menu_[tenant_id]_[contact_id]_[timestamp]
+    // Detectar tipo de token
+    if (parts[0] === 'menu' && parts[1] === 'llt') {
+      // Long-Lived Token: menu_llt_[tenant]_[contact]_[uuid]_[timestamp]
+      if (parts.length !== 6) {
+        console.error('Invalid LLT format');
+        return null;
+      }
+
+      tenantId = parts[2];
+      lenderContactId = parts[3];
+      // parts[4] es el UUID
+      timestamp = parseInt(parts[5]);
+      token_type = 'llt';
+
+      // Validar contra base de datos
+      const { data: session, error } = await supabase
+        .from('active_sessions')
+        .select('*')
+        .eq('token', token)
+        .eq('revoked', false)
+        .single();
+
+      if (error || !session) {
+        console.log('LLT not found in database or revoked');
+        return null;
+      }
+
+      // Verificar expiración
+      const expiresAt = new Date(session.expires_at);
+      if (expiresAt < new Date()) {
+        console.log('LLT expired:', { expires_at: session.expires_at });
+        return null;
+      }
+
+      // Actualizar last_used_at
+      await supabase
+        .from('active_sessions')
+        .update({ last_used_at: new Date().toISOString() })
+        .eq('id', session.id);
+
+    } else if (parts[0] === 'menu' && parts.length === 4) {
+      // Short token de menú: menu_[tenant_id]_[contact_id]_[timestamp]
       tenantId = parts[1];
       lenderContactId = parts[2];
       timestamp = parseInt(parts[3]);
+      token_type = 'short';
+
+      // Verificar expiración (1 hora)
+      const now = Date.now();
+      const oneHour = 60 * 60 * 1000;
+
+      if (now - timestamp > oneHour) {
+        console.error('Short token expired:', { timestamp, now, diff: now - timestamp });
+        return null;
+      }
+
     } else if (parts.length >= 5 && parts[0] === 'loan' && parts[1] === 'web') {
       // Token de formulario: loan_web_[tenant_id]_[lender_contact_id]_[timestamp]
       tenantId = parts[2];
       lenderContactId = parts[3];
       timestamp = parseInt(parts[4]);
+      token_type = 'short';
+
+      // Verificar expiración (1 hora)
+      const now = Date.now();
+      const oneHour = 60 * 60 * 1000;
+
+      if (now - timestamp > oneHour) {
+        console.error('Loan web token expired:', { timestamp, now, diff: now - timestamp });
+        return null;
+      }
+
     } else {
       console.error('Invalid token format:', token.substring(0, 30));
       return null;
     }
 
-    // Validar que no haya expirado (1 hora)
-    const now = Date.now();
-    const oneHour = 60 * 60 * 1000;
-
-    if (now - timestamp > oneHour) {
-      console.error('Token expired:', { timestamp, now, diff: now - timestamp });
-      return null;
-    }
-
-    return { tenantId, lenderContactId, timestamp };
+    return { tenantId, lenderContactId, timestamp, token_type };
   } catch (error) {
     console.error('Error parsing token:', error);
     return null;
@@ -161,7 +212,7 @@ serve(async (req: Request) => {
       }
 
       console.log('[LOAN_WEB_FORM] Parsing token...');
-      const tokenData = parseToken(token);
+      const tokenData = await parseToken(token, supabase);
       console.log('[LOAN_WEB_FORM] Token parsed:', tokenData ? 'success' : 'failed');
 
       if (!tokenData) {
@@ -234,7 +285,7 @@ serve(async (req: Request) => {
       console.log('[LOAN_WEB_FORM] Request received:', JSON.stringify(body, null, 2));
 
       // Validar token
-      const tokenData = parseToken(body.token);
+      const tokenData = await parseToken(body.token, supabase);
 
       if (!tokenData) {
         return new Response(JSON.stringify({
@@ -408,7 +459,7 @@ serve(async (req: Request) => {
       console.log('[LOAN_WEB_FORM] PATCH request:', { token: !!token, agreement_id, image_url: !!image_url });
 
       // Validar token
-      const tokenData = parseToken(token);
+      const tokenData = await parseToken(token, supabase);
 
       if (!tokenData) {
         return new Response(JSON.stringify({
