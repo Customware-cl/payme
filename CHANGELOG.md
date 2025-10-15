@@ -2,6 +2,19 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-14e] - 🎨 UX: Reubicación de Carga de Imagen en Formulario
+
+### Changed
+- **Formulario de préstamos**: Imagen se carga ahora en pantalla "¿Qué le prestas?" en lugar de confirmación
+  - Sección de imagen movida desde la pantalla final (confirmación) a la segunda pantalla del formulario
+  - Posicionada justo después del campo "Concepto del préstamo"
+  - Mejora el flujo del usuario al permitir cargar la imagen más temprano en el proceso
+  - Lógica JavaScript actualizada para mostrar/ocultar sección según tipo de préstamo seleccionado
+
+### Files Modified
+- `public/loan-form/index.html` - HTML de image-upload-section reubicado a screen-what
+- `public/loan-form/app.js` - Agregar show/hide de imageUploadSection en handlers
+
 ## [2025-10-14d] - 🔧 Sincronización de Migraciones
 
 ### Fixed
