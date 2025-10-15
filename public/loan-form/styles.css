@@ -181,6 +181,55 @@ body {
     color: var(--text-secondary);
 }
 
+/* Botones de dirección (Screen 0) */
+.direction-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.direction-btn {
+    background: var(--bg-card);
+    border: 2px solid var(--border-color);
+    border-radius: 16px;
+    padding: 24px 20px;
+    cursor: pointer;
+    transition: all var(--transition);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    text-align: left;
+}
+
+.direction-btn:active {
+    transform: scale(0.98);
+}
+
+.direction-btn:hover {
+    border-color: var(--primary-color);
+    background: #f9fff9;
+}
+
+.direction-btn .icon {
+    font-size: 48px;
+    flex-shrink: 0;
+}
+
+.direction-btn .label {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: block;
+    margin-bottom: 4px;
+}
+
+.direction-btn .description {
+    font-size: 14px;
+    color: var(--text-secondary);
+    display: block;
+}
+
 /* Botones de tipo (Dinero/Objeto) */
 .type-buttons {
     display: grid;

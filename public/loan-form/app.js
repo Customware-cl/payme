@@ -2,6 +2,7 @@
 const state = {
     token: null,
     contacts: [],
+    loanDirection: null, // 'lent' o 'borrowed'
     formData: {
         contactId: null,
         contactName: null,
@@ -21,6 +22,25 @@ const state = {
 const SUPABASE_URL = 'https://qgjxkszfdoolaxmsupil.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFnanhrc3pmZG9vbGF4bXN1cGlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg1ODk5NzEsImV4cCI6MjA3NDE2NTk3MX0.zwVV6qGY8rrPnhG-y2es2FtS7e4_u__rb28hTCEdWwg';
 const LOAN_FORM_ENDPOINT = `${SUPABASE_URL}/functions/v1/loan-web-form`;
+const RECEIVED_LOAN_ENDPOINT = `${SUPABASE_URL}/functions/v1/create-received-loan`;
+
+// Textos dinámicos según la dirección del préstamo
+const TEXTS = {
+    lent: {
+        whoTitle: '¿A quién le prestas?',
+        whatTitle: '¿Qué le prestas?',
+        whenTitle: '¿Cuándo te lo devuelven?',
+        confirmWhoLabel: 'Para:',
+        successWhoLabel: 'Para:'
+    },
+    borrowed: {
+        whoTitle: '¿Quién te prestó?',
+        whatTitle: '¿Qué te prestaron?',
+        whenTitle: '¿Cuándo lo devuelves?',
+        confirmWhoLabel: 'De:',
+        successWhoLabel: 'De:'
+    }
+};
 
 // Utilidades
 const $ = (selector) => document.querySelector(selector);
@@ -118,6 +138,22 @@ function getInitials(name) {
         .slice(0, 2)
         .join('')
         .toUpperCase();
+}
+
+// Actualizar textos dinámicos según la dirección del préstamo
+function updateTexts() {
+    if (!state.loanDirection) return;
+
+    const texts = TEXTS[state.loanDirection];
+
+    // Actualizar títulos de pantallas
+    $('#text-who-title').textContent = texts.whoTitle;
+    $('#text-what-title').textContent = texts.whatTitle;
+    $('#text-when-title').textContent = texts.whenTitle;
+
+    // Actualizar labels
+    $('#text-confirm-who-label').textContent = texts.confirmWhoLabel;
+    $('#text-success-who-label').textContent = texts.successWhoLabel;
 }
 
 // Validaciones
@@ -314,13 +350,31 @@ function renderContacts() {
 
 // Event Listeners
 function setupEventListeners() {
-    // Botón volver al menú
-    $('#back-to-menu').addEventListener('click', () => {
-        // Volver al menú principal
+    // Pantalla 0: Selección de dirección del préstamo
+    $$('.direction-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const direction = btn.dataset.direction;
+            state.loanDirection = direction;
+
+            // Actualizar todos los textos dinámicos
+            updateTexts();
+
+            // Avanzar a pantalla de contactos
+            showScreen('screen-who');
+        });
+    });
+
+    // Botón volver al menú desde screen-direction
+    $('#back-to-menu-from-direction').addEventListener('click', () => {
         const menuUrl = state.token
             ? `/menu?token=${state.token}`
             : '/menu';
         window.location.href = menuUrl;
+    });
+
+    // Botón volver desde screen-who (vuelve a screen-direction)
+    $('#back-to-menu').addEventListener('click', () => {
+        showScreen('screen-direction');
     });
 
     // Pantalla 1: Selección de contacto
@@ -559,6 +613,7 @@ function setupEventListeners() {
 
     $('#btn-create-another').addEventListener('click', () => {
         // Reset form
+        state.loanDirection = null;
         state.formData = {
             contactId: null,
             contactName: null,
@@ -574,6 +629,7 @@ function setupEventListeners() {
         };
 
         // Reset UI
+        $$('.direction-btn').forEach(b => b.classList.remove('selected'));
         $$('.contact-item').forEach(i => i.classList.remove('selected'));
         $$('.type-btn').forEach(b => b.classList.remove('selected'));
         $$('.date-chip').forEach(c => c.classList.remove('selected'));
@@ -590,7 +646,7 @@ function setupEventListeners() {
         // Reset imagen
         removeImage();
 
-        showScreen('screen-who');
+        showScreen('screen-direction');
     });
 }
 
@@ -663,21 +719,43 @@ async function createLoan() {
         // Calcular fecha en timezone del usuario (sin recálculo en backend)
         const calculatedDate = dateOption === 'custom' ? customDate : calculateDate(dateOption);
 
-        // Primer paso: Crear el préstamo sin imagen
-        const payload = {
-            token: state.token,
-            contact_id: contactId,
-            contact_name: contactName,
-            contact_phone: contactPhone,
-            new_contact: newContact,
-            loan_type: loanType,
-            loan_detail: loanDetail,
-            loan_concept: loanConcept,
-            date_option: dateOption,
-            custom_date: calculatedDate  // Siempre enviar fecha calculada
-        };
+        // Seleccionar endpoint y construir payload según la dirección
+        let endpoint, payload;
 
-        const response = await fetch(LOAN_FORM_ENDPOINT, {
+        if (state.loanDirection === 'lent') {
+            // Préstamo otorgado (yo presté)
+            endpoint = LOAN_FORM_ENDPOINT;
+            payload = {
+                token: state.token,
+                contact_id: contactId,
+                contact_name: contactName,
+                contact_phone: contactPhone,
+                new_contact: newContact,
+                loan_type: loanType,
+                loan_detail: loanDetail,
+                loan_concept: loanConcept,
+                date_option: dateOption,
+                custom_date: calculatedDate
+            };
+        } else {
+            // Préstamo recibido (me prestaron)
+            endpoint = RECEIVED_LOAN_ENDPOINT;
+            payload = {
+                token: state.token,
+                lender: contactId
+                    ? { contact_id: contactId }
+                    : { name: contactName, phone: contactPhone, email: null },
+                loan: {
+                    amount: loanType === 'money' ? parseInt(loanDetail) : 0,
+                    currency: 'CLP',
+                    due_date: calculatedDate,
+                    title: loanConcept || (loanType === 'object' ? loanDetail : null),
+                    description: loanType === 'object' ? loanDetail : null
+                }
+            };
+        }
+
+        const response = await fetch(endpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'

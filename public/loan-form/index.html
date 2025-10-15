@@ -27,12 +27,38 @@
         </div>
     </div>
 
+    <!-- Pantalla 0: ¿Qué tipo de préstamo? -->
+    <section id="screen-direction" class="screen active">
+        <div class="container">
+            <div class="header">
+                <button class="btn-back" id="back-to-menu-from-direction">←</button>
+                <h1>¿Qué deseas registrar?</h1>
+                <p class="subtitle">Selecciona el tipo de préstamo</p>
+            </div>
+
+            <div class="content">
+                <div class="direction-buttons">
+                    <button type="button" class="direction-btn" data-direction="lent">
+                        <span class="icon">💸</span>
+                        <span class="label">Yo presté</span>
+                        <span class="description">Registra dinero u objetos que prestaste</span>
+                    </button>
+                    <button type="button" class="direction-btn" data-direction="borrowed">
+                        <span class="icon">📥</span>
+                        <span class="label">Me prestaron</span>
+                        <span class="description">Registra dinero u objetos que te prestaron</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <!-- Pantalla 1: ¿A quién? -->
-    <section id="screen-who" class="screen active">
+    <section id="screen-who" class="screen">
         <div class="container">
             <div class="header">
                 <button class="btn-back" id="back-to-menu">←</button>
-                <h1>¿A quién le prestas?</h1>
+                <h1 id="text-who-title">¿A quién le prestas?</h1>
                 <p class="subtitle">Selecciona un contacto o agrega uno nuevo</p>
                 <div class="progress-bar">
                     <div class="progress-fill" style="width: 25%"></div>
@@ -57,7 +83,7 @@
         <div class="container">
             <div class="header">
                 <button class="btn-back" id="back-from-what">←</button>
-                <h1>¿Qué le prestas?</h1>
+                <h1 id="text-what-title">¿Qué le prestas?</h1>
                 <p class="subtitle" id="subtitle-what">Selecciona el tipo de préstamo</p>
                 <div class="progress-bar">
                     <div class="progress-fill" style="width: 50%"></div>
@@ -120,7 +146,7 @@
         <div class="container">
             <div class="header">
                 <button class="btn-back" id="back-from-when">←</button>
-                <h1>¿Cuándo te lo devuelven?</h1>
+                <h1 id="text-when-title">¿Cuándo te lo devuelven?</h1>
                 <p class="subtitle">Selecciona una fecha</p>
                 <div class="progress-bar">
                     <div class="progress-fill" style="width: 75%"></div>
@@ -174,7 +200,7 @@
             <div class="content">
                 <div class="summary-card">
                     <div class="summary-row">
-                        <span class="label">Para:</span>
+                        <span class="label" id="text-confirm-who-label">Para:</span>
                         <span class="value" id="summary-who">—</span>
                     </div>
                     <div class="summary-row">
@@ -214,7 +240,7 @@
 
             <div class="success-details">
                 <div class="detail-item">
-                    <span class="label">Para:</span>
+                    <span class="label" id="text-success-who-label">Para:</span>
                     <span class="value" id="success-who">—</span>
                 </div>
                 <div class="detail-item">
