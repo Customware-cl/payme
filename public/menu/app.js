@@ -10,15 +10,39 @@ const SUPABASE_URL = 'https://qgjxkszfdoolaxmsupil.supabase.co';
 const $ = (selector) => document.querySelector(selector);
 
 // Inicialización
-function init() {
+async function init() {
     // Obtener token de URL si existe
     const urlParams = new URLSearchParams(window.location.search);
     state.token = urlParams.get('token');
 
     console.log('Menu initialized', { hasToken: !!state.token });
 
+    // Cargar nombre de usuario si hay token
+    if (state.token) {
+        await loadUserName();
+    }
+
     // Setup event listeners
     setupEventListeners();
+}
+
+// Cargar nombre de usuario
+async function loadUserName() {
+    try {
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/menu-data?token=${state.token}&type=user`);
+        const data = await response.json();
+
+        if (data.success && data.name) {
+            // Actualizar saludo con el nombre del usuario
+            const greeting = $('#user-greeting');
+            if (greeting) {
+                greeting.textContent = `¡Hola ${data.name}! 👋`;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading user name:', error);
+        // Mantener saludo genérico si falla
+    }
 }
 
 // Event Listeners

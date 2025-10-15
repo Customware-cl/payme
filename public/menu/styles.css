@@ -40,7 +40,66 @@ body {
     background: var(--bg-card);
 }
 
-/* Header */
+/* ========== HEADER STICKY CON MARCA ========== */
+.app-header {
+    background: var(--primary-color);
+    color: white;
+    padding: 16px 24px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.brand {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: white;
+    margin: 0;
+}
+
+/* ========== SECCIÓN DE BIENVENIDA ========== */
+.welcome-section {
+    padding: 32px 24px 24px;
+    background: var(--bg-card);
+    animation: fadeInWelcome 0.4s ease;
+}
+
+@keyframes fadeInWelcome {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.greeting {
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 8px 0;
+    letter-spacing: -0.5px;
+}
+
+.subtitle {
+    font-size: 16px;
+    color: var(--text-secondary);
+    font-weight: 400;
+    margin: 0;
+    line-height: 1.4;
+}
+
+/* Header original (para vistas secundarias) */
 .header {
     background: var(--primary-color);
     color: white;
@@ -54,12 +113,6 @@ body {
     font-weight: 600;
     margin-bottom: 8px;
     letter-spacing: -0.5px;
-}
-
-.subtitle {
-    font-size: 15px;
-    opacity: 0.9;
-    font-weight: 400;
 }
 
 /* Botón volver */
@@ -198,10 +251,49 @@ body {
     color: var(--text-secondary);
 }
 
+/* Responsive para pantallas pequeñas */
+@media (max-width: 359px) {
+    .greeting {
+        font-size: 24px;
+    }
+
+    .welcome-section {
+        padding: 24px 20px 20px;
+    }
+
+    .app-header {
+        padding: 14px 20px;
+    }
+
+    .brand {
+        font-size: 22px;
+    }
+}
+
 /* Responsive para tablets */
 @media (min-width: 768px) {
     .container {
         box-shadow: var(--shadow-md);
+    }
+
+    .app-header {
+        padding: 20px 32px;
+    }
+
+    .brand {
+        font-size: 26px;
+    }
+
+    .welcome-section {
+        padding: 40px 32px 32px;
+    }
+
+    .greeting {
+        font-size: 32px;
+    }
+
+    .subtitle {
+        font-size: 17px;
     }
 
     .header {
@@ -222,6 +314,26 @@ body {
 
     .menu-item:hover {
         background: var(--bg-main);
+    }
+}
+
+/* Responsive para landscape mobile */
+@media (orientation: landscape) and (max-height: 500px) {
+    .app-header {
+        padding: 12px 24px;
+    }
+
+    .welcome-section {
+        padding: 20px 24px 16px;
+    }
+
+    .greeting {
+        font-size: 24px;
+        margin-bottom: 4px;
+    }
+
+    .subtitle {
+        font-size: 14px;
     }
 }
 

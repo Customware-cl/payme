@@ -76,6 +76,23 @@ serve(async (req: Request) => {
 
       console.log('Loading data:', { type, contact_id: tokenData.contact_id });
 
+      // Para obtener nombre de usuario
+      if (type === 'user') {
+        const { data: contact } = await supabase
+          .from('tenant_contacts')
+          .select('name')
+          .eq('id', tokenData.contact_id)
+          .single();
+
+        return new Response(JSON.stringify({
+          success: true,
+          contact_id: tokenData.contact_id,
+          name: contact?.name || 'Usuario'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
       // Para préstamos, no necesitamos el profile
       if (type === 'loans') {
         // Obtener préstamos donde el usuario es el prestador (lent) o prestatario (borrowed)
