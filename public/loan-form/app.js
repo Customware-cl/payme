@@ -19,6 +19,7 @@ const state = {
 
 // Configuración
 const SUPABASE_URL = 'https://qgjxkszfdoolaxmsupil.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFnanhrc3pmZG9vbGF4bXN1cGlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg1ODk5NzEsImV4cCI6MjA3NDE2NTk3MX0.zwVV6qGY8rrPnhG-y2es2FtS7e4_u__rb28hTCEdWwg';
 const LOAN_FORM_ENDPOINT = `${SUPABASE_URL}/functions/v1/loan-web-form`;
 
 // Utilidades
@@ -193,6 +194,10 @@ async function uploadImageToStorage(file, agreementId) {
             `${SUPABASE_URL}/storage/v1/object/loan-images/${filePath}`,
             {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                    'apikey': SUPABASE_ANON_KEY
+                },
                 body: formData
             }
         );
