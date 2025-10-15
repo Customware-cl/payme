@@ -2,6 +2,20 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-14g] - 🐛 Fix Crítico: Error 401 al Cargar Contactos
+
+### Fixed
+- **Edge Function loan-web-form**: Corregido error 401 Unauthorized al cargar lista de contactos
+  - **Problema**: "Error al cargar contactos" - Función retornaba 401
+  - **Causa**: `verify_jwt: true` por defecto requería JWT de autenticación en headers
+  - **Solución**: Agregado `deno.json` con `verify_jwt: false` para aceptar tokens sin JWT
+  - Archivo: `supabase/functions/loan-web-form/deno.json`
+
+### Technical Details
+- Edge function redeployada (versión 16 → 17)
+- Ahora acepta tokens como query parameter sin requerir autenticación JWT
+- Frontend puede cargar contactos correctamente usando token del menú
+
 ## [2025-10-14f] - 🐛 Fix: Subida de Imágenes a Storage
 
 ### Fixed
