@@ -2,6 +2,28 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-14d] - 🔧 Sincronización de Migraciones
+
+### Fixed
+- **Historial de migraciones**: Sincronizado historial entre archivos locales y base de datos remota
+  - Revertidas 5 migraciones duplicadas con timestamps que se aplicaron manualmente en consola
+  - Aplicadas migraciones locales 020-026 usando nombres estándar
+  - Resuelto conflicto "Remote migration versions not found in local migrations directory"
+
+### Applied Migrations
+- **020** - `user_profile_data`: Perfiles personales y cuentas bancarias
+- **021** - `add_contact_profile_id_to_contacts`: Conexión contacts ↔ contact_profiles
+- **022** - `complete_tenant_contacts_migration`: Sistema tenant_contacts completo
+- **023** - `add_bank_details_to_due_date_reminder`: Datos bancarios en templates
+- **024** - `add_due_date_templates_with_buttons`: Templates con botones interactivos
+- **025** - `setup_scheduler_cron_job`: Extensiones pg_cron y pg_net
+- **026** - `loan_images_bucket`: Storage bucket para imágenes de préstamos
+
+### Notes
+- Base de datos completamente sincronizada con archivos de migración locales
+- Sistema de préstamos con imágenes opcionales totalmente funcional
+- Arquitectura tenant_contacts implementada correctamente
+
 ## [2025-10-14c] - ✨ Feature: Imagen Opcional en Préstamos
 
 ### 📷 Nueva Funcionalidad
