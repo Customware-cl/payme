@@ -8,33 +8,40 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <button class="btn-back-header" id="back-to-menu">←</button>
-            <h1>Estado de Préstamos</h1>
-            <p class="subtitle">Revisa todos tus préstamos</p>
-        </header>
+    <!-- Pantalla 0: ¿Qué préstamos deseas ver? -->
+    <section id="screen-direction" class="screen active">
+        <div class="container">
+            <div class="header">
+                <button class="btn-back" id="back-to-menu-from-direction">←</button>
+                <h1>¿Qué préstamos deseas ver?</h1>
+                <p class="subtitle">Selecciona una opción</p>
+            </div>
 
-        <!-- Filter Menu -->
-        <div id="filter-menu" class="menu hidden">
-            <button class="menu-item" id="filter-money">
-                <div class="menu-icon">💰</div>
-                <div class="menu-content">
-                    <div class="menu-title">Dinero</div>
-                    <div class="menu-description" id="money-count">Ver préstamos de dinero</div>
+            <div class="content">
+                <div class="direction-buttons">
+                    <button type="button" class="direction-btn" data-loan-type="lent">
+                        <span class="icon">💸</span>
+                        <span class="label">Yo presté</span>
+                        <span class="description">Ver dinero u objetos que prestaste</span>
+                    </button>
+                    <button type="button" class="direction-btn" data-loan-type="borrowed">
+                        <span class="icon">📥</span>
+                        <span class="label">Me prestaron</span>
+                        <span class="description">Ver dinero u objetos que te prestaron</span>
+                    </button>
                 </div>
-                <div class="menu-arrow">›</div>
-            </button>
-            <button class="menu-item" id="filter-objects">
-                <div class="menu-icon">📦</div>
-                <div class="menu-content">
-                    <div class="menu-title">Objetos</div>
-                    <div class="menu-description" id="objects-count">Ver préstamos de objetos</div>
-                </div>
-                <div class="menu-arrow">›</div>
-            </button>
+            </div>
         </div>
+    </section>
+
+    <div class="container hidden" id="loans-view-container">
+
+        <!-- Header (para vista de préstamos) -->
+        <header class="header hidden" id="loans-header">
+            <button class="btn-back-header" id="back-to-direction">←</button>
+            <h1 id="loans-title">Estado de Préstamos</h1>
+            <p class="subtitle" id="loans-subtitle">Revisa tus préstamos</p>
+        </header>
 
         <!-- Loading State -->
         <div id="loading-state" class="loading-state hidden">
@@ -45,16 +52,15 @@
         <!-- Empty State -->
         <div id="empty-state" class="empty-state hidden">
             <div class="empty-icon">📊</div>
-            <h2>No tienes préstamos</h2>
-            <p>Cuando registres préstamos aparecerán aquí</p>
+            <h2 id="empty-title">No tienes préstamos</h2>
+            <p id="empty-message">Cuando registres préstamos aparecerán aquí</p>
             <button class="btn-primary" id="btn-new-loan-empty">Crear préstamo</button>
         </div>
 
-        <!-- Loans Content -->
+        <!-- Loans Content (sección única reutilizable) -->
         <main id="loans-content" class="loans-content hidden">
-            <!-- Préstamos que hiciste -->
-            <section class="loans-section" id="lent-section">
-                <h2 class="section-title">💰 Préstamos que hiciste</h2>
+            <section class="loans-section" id="loans-section">
+                <h2 class="section-title" id="section-title">Préstamos</h2>
 
                 <!-- Toggle de vista -->
                 <div class="view-toggle">
@@ -68,28 +74,7 @@
                     </button>
                 </div>
 
-                <div id="lent-list" class="loans-list">
-                    <!-- Se llena dinámicamente -->
-                </div>
-            </section>
-
-            <!-- Préstamos que te hicieron -->
-            <section class="loans-section" id="borrowed-section">
-                <h2 class="section-title">📥 Préstamos que te hicieron</h2>
-
-                <!-- Toggle de vista -->
-                <div class="view-toggle">
-                    <button class="toggle-btn active" data-view="grouped">
-                        <span class="toggle-icon">📊</span>
-                        <span>Agrupada</span>
-                    </button>
-                    <button class="toggle-btn" data-view="detailed">
-                        <span class="toggle-icon">📋</span>
-                        <span>Detallada</span>
-                    </button>
-                </div>
-
-                <div id="borrowed-list" class="loans-list">
+                <div id="loans-list" class="loans-list">
                     <!-- Se llena dinámicamente -->
                 </div>
             </section>

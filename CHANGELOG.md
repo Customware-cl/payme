@@ -2,6 +2,655 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-15p] - 🐛 Fix DEFINITIVO: Scroll infinito en Screen 0
+
+### Fixed
+- **Scroll infinito RESUELTO**: Container oculto por defecto en HTML
+  - **Problema persistente**: Container `loans-view-container` visible por defecto causaba scroll infinito
+  - **Causa raíz**: HTML no tenía clase `hidden`, JavaScript la agregaba tarde (después del render)
+  - **Solución definitiva**: Agregar clase `hidden` en HTML por defecto, JavaScript la remueve al seleccionar tipo
+
+### Changed
+- **HTML** (`loans.html:37`):
+  ```html
+  <!-- ANTES -->
+  <div class="container" id="loans-view-container">
+
+  <!-- AHORA -->
+  <div class="container hidden" id="loans-view-container">
+  ```
+  - Container oculto por defecto, evita scroll infinito desde el inicio
+
+### Technical Details
+- **Problema anterior**: Ambos containers visibles simultáneamente
+  - Screen 0: `display: block` (activo)
+  - Container loans: visible sin `hidden`, con `min-height: 100vh`
+  - Total: 200vh de altura → scroll infinito
+- **Solución**: Container oculto por defecto en HTML
+  - Al cargar: solo Screen 0 visible (100vh)
+  - Al seleccionar tipo: JavaScript remueve `hidden` del container y oculta Screen 0
+  - Total: siempre 100vh, sin scroll infinito
+
+### Visual Result
+✅ **Sin scroll infinito**:
+- Screen 0 ocupa solo 100vh
+- No aparece header verde al hacer scroll
+- Página limpia sin scroll
+
+## [2025-10-15o] - 🐛 Fix: Scroll infinito en Screen 0
+
+### Fixed
+- **Eliminado scroll infinito**: Screen 0 ahora ocupa solo una pantalla sin scroll
+  - **Problema**: Container con header verde siempre visible debajo de Screen 0, causando scroll infinito
+  - **Causa**: Solo ocultábamos el header, pero el container padre (`min-height: 100vh`) seguía ocupando espacio
+  - **Solución**: Ocultar todo el container de loans cuando Screen 0 está activo
+
+### Changed
+- **HTML** (`loans.html:37`):
+  - Agregado ID al container principal: `<div class="container" id="loans-view-container">`
+  - Permite controlar visibilidad de toda la vista de préstamos
+
+- **JavaScript** (`loans.js:213-220`):
+  - Simplificada función `showDirectionScreen()` para ocultar container completo
+  - ANTES: Ocultaba header, loading, empty state, loans content individualmente
+  - AHORA: Oculta todo el container de una vez con `loansViewContainer.classList.add('hidden')`
+
+- **JavaScript** (`loans.js:232-248`):
+  - Agregada línea para mostrar container al cargar préstamos
+  - `loansViewContainer.classList.remove('hidden')`
+
+### Technical Details
+- **Problema anterior**: Dos estructuras visibles simultáneamente
+  1. Screen 0 (activo y visible)
+  2. Container con header verde (oculto pero ocupando espacio por `min-height: 100vh`)
+- **Solución**: Usar `.hidden` en todo el container para removerlo completamente del layout
+- **Flujo correcto**: Screen 0 visible → Container oculto | Screen 0 oculto → Container visible
+
+### Visual Result
+✅ Screen 0 sin scroll:
+- Pantalla única sin scroll infinito
+- Fondo blanco limpio
+- Botón back, título y botones de selección visible
+- No aparece header verde debajo
+
+## [2025-10-15n] - 🐛 Fix CRÍTICO: Screen 0 no se mostraba
+
+### Fixed
+- **Screen 0 ahora visible al cargar página**: Se muestra correctamente el selector de tipo de préstamo
+  - **Problema raíz**: HTML tenía `class="screen"` sin `active`, CSS requiere `.active` para mostrar
+  - **JavaScript usaba `.remove('hidden')` pero necesitaba `.add('active')`
+  - **Resultado**: Usuario veía header verde en lugar de Screen 0 blanco
+
+### Changed
+- **HTML** (`loans.html:12`):
+  - ANTES: `<section id="screen-direction" class="screen">`
+  - AHORA: `<section id="screen-direction" class="screen active">`
+  - Screen 0 visible por defecto
+
+- **JavaScript** (`loans.js:221`):
+  - ANTES: `screenDirection.classList.remove('hidden')`
+  - AHORA: `screenDirection.classList.add('active')`
+  - Consistente con loan-form
+
+- **JavaScript** (`loans.js:246`):
+  - ANTES: `screenDirection.classList.add('hidden')`
+  - AHORA: `screenDirection.classList.remove('active')`
+  - Oculta Screen 0 correctamente al seleccionar tipo
+
+### Technical Details
+- El CSS `.screen { display: none }` requiere clase `.active` para mostrar: `.screen.active { display: block }`
+- JavaScript debe usar `.add('active')` / `.remove('active')` en lugar de `.remove('hidden')` / `.add('hidden')`
+- Flujo correcto: carga página → Screen 0 visible → seleccionar tipo → oculta Screen 0 → muestra lista
+- Navegación atrás: lista → Screen 0 reaparece
+
+### Visual Result
+✅ Ahora al cargar `/menu/loans.html` se ve:
+- Screen 0 con fondo blanco
+- Botón back pequeño (←) en esquina superior izquierda
+- Título "¿Qué préstamos deseas ver?"
+- Dos botones de selección: "Yo presté" / "Me prestaron"
+
+## [2025-10-15m] - 🎯 Fix: Usar estilos de loan-form directamente para Screen 0
+
+### Fixed
+- **Screen 0 ahora idéntico a loan-form**: Reemplazados overrides CSS con estilos exactos
+  - **Problema raíz**: Intentábamos sobrescribir estilos en lugar de usar los correctos directamente
+  - **Solución**: Copiar estilos exactos de loan-form/styles.css para Screen 0
+  - **Archivo**: `public/menu/styles.css` (líneas 1310-1376)
+
+### Changed
+- **Container padding corregido**:
+  - `.screen > .container` ahora tiene `padding: 20px` (antes: 0)
+  - Esto da el espaciado correcto igual que loan-form
+
+- **Botón back corregido**:
+  - ANTES: `position: absolute`, `font-size: 28px`, `color: white`
+  - AHORA: `position: static`, `font-size: 24px`, `color: var(--text-primary)`
+  - Ahora es relativo y visible en la esquina superior izquierda
+
+- **Subtitle corregido**:
+  - ANTES: `font-size: 16px`
+  - AHORA: `font-size: 14px` (igual que loan-form)
+
+- **Header corregido**:
+  - Agregado `position: static` para sobrescribir el `position: relative` de menu
+  - Agregado `letter-spacing: normal` para h1
+
+- **Content area agregado**:
+  - Estilo específico para `.screen .content` con `padding: 0`
+
+### Technical Details
+- **Enfoque anterior (incorrecto)**: Intentar sobrescribir estilos existentes con overrides parciales
+- **Enfoque nuevo (correcto)**: Copiar estilos completos de loan-form para replicar comportamiento exacto
+- **CSS Specificity**: Usamos `.screen` como selector raíz para todos los estilos de Screen 0
+- **Animaciones**: Agregadas reglas para `.screen` y `.screen.active`
+
+### Visual Result
+Screen 0 de loans ahora es IDÉNTICO a Screen 0 de loan-form:
+- ✅ Fondo blanco limpio
+- ✅ Botón back del tamaño correcto (24px) y visible
+- ✅ Espaciado correcto con padding 20px en container
+- ✅ Título 24px, subtitle 14px (tamaños exactos)
+- ✅ Alineación a la izquierda
+- ✅ Colores correctos (texto oscuro, no blanco)
+
+## [2025-10-15l] - 🎨 Fix: Remover fondo verde de Screen 0 en loans
+
+### Fixed
+- **Fondo verde en Screen 0**: Ahora coincide visualmente con loan-form (fondo blanco)
+  - **Problema**: Screen 0 de loans mostraba fondo verde mientras que loan-form tiene fondo blanco
+  - **Causa raíz**: La clase `.header` en `menu/styles.css` tiene `background: var(--primary-color)` (verde) que afectaba a todos los headers
+  - **Solución**: Override CSS usando selector más específico `.screen .header`
+  - **Archivo**: `public/menu/styles.css` (líneas 1310-1329)
+
+### Changed
+- **CSS Override agregado**:
+  ```css
+  /* Override header verde solo para Screen 0 (para consistencia con loan-form) */
+  .screen .header {
+      background: none;
+      color: var(--text-primary);
+      padding: 0;
+      margin-bottom: 24px;
+      text-align: left;
+  }
+
+  .screen .header h1 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--text-primary);
+  }
+
+  .screen .header .subtitle {
+      font-size: 16px;
+      color: var(--text-secondary);
+  }
+  ```
+
+### Technical Details
+- **CSS Specificity**: `.screen .header` (más específico) sobrescribe `.header` (menos específico)
+- **Alcance del fix**: Solo afecta a elementos `.header` dentro de `.screen` (Screen 0)
+- **No breaking changes**: Otros headers en el menú mantienen su fondo verde
+- **Consistencia visual**: Screen 0 de loans ahora idéntico a Screen 0 de loan-form
+
+### Visual Result
+- ✅ Fondo blanco en Screen 0
+- ✅ Texto en color oscuro (no blanco)
+- ✅ Alineación a la izquierda (no centrado)
+- ✅ Espaciado consistente con loan-form
+
+## [2025-10-15k] - 🐛 Fix: Espaciado y estructura de Screen 0
+
+### Fixed
+- **Estructura HTML corregida**: Ahora coincide exactamente con loan-form
+  - **Problema**: Screen 0 se veía apiñada, sin espaciado, botón back no visible
+  - **Causa 1**: Faltaba wrapper `.header` para agrupar botón back + h1 + subtitle
+  - **Causa 2**: `.container` duplicado/anidado causaba conflictos de estilos
+  - **Causa 3**: Usaba `<div>` en lugar de `<section class="screen">`
+  - **Archivo**: `public/menu/loans.html` (líneas 11-35)
+
+### Changed
+- **Estructura HTML actualizada**:
+  ```html
+  <!-- ANTES (incorrecto) -->
+  <div class="container">
+    <div id="screen-direction" class="screen-selection">
+      <div class="container">  <!-- ❌ Doble container -->
+        <button class="btn-back">←</button>  <!-- ❌ Sin wrapper .header -->
+        <h1>...</h1>
+        <p class="subtitle">...</p>
+        <div class="content">...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DESPUÉS (correcto, idéntico a loan-form) -->
+  <section id="screen-direction" class="screen">  <!-- ✅ section con .screen -->
+    <div class="container">  <!-- ✅ Un solo container -->
+      <div class="header">  <!-- ✅ Wrapper .header para espaciado -->
+        <button class="btn-back">←</button>
+        <h1>...</h1>
+        <p class="subtitle">...</p>
+      </div>
+      <div class="content">...</div>
+    </div>
+  </section>
+  ```
+
+### Technical Details
+- **`.header` wrapper**: Da el padding y margin correcto al grupo back/título/subtitle
+- **`<section class="screen">`**: Elemento raíz correcto como en loan-form
+- **Un solo `.container`**: Elimina conflictos de estilos anidados
+- **Estructura idéntica**: Ahora loan-form Screen 0 y loans Screen 0 son idénticos
+
+### Visual Result
+- ✅ Botón back ← visible en esquina superior izquierda
+- ✅ Espaciado correcto entre elementos
+- ✅ Títulos con padding apropiado
+- ✅ No se ve apiñado
+- ✅ Consistencia perfecta con loan-form
+
+### Deployment
+- **Netlify Deploy**: https://hilarious-brigadeiros-9b9834.netlify.app
+- **Deploy ID**: 68eff2250479e9a4fef4666f
+- **Archivo modificado**: loans.html
+
+## [2025-10-15j] - 🎨 Fix: Consistencia visual en Screen 0
+
+### Fixed
+- **Header verde eliminado de Screen 0**: Ahora tiene la misma estructura que loan-form
+  - **Antes**: Screen 0 tenía `<header>` verde con clase `.header` ❌
+  - **Después**: Screen 0 sin header, solo `.container` con título y botones ✅
+  - **Razón**: Mantener consistencia visual perfecta con el flujo de creación (loan-form Screen 0)
+  - **Archivo**: `public/menu/loans.html` (líneas 13-34)
+
+- **Botón back actualizado**: Cambió de `.btn-back-header` a `.btn-back`
+  - Mismo estilo y comportamiento que loan-form
+  - **Archivo**: `public/menu/loans.html` (línea 15)
+
+### Technical Details
+- Estructura HTML ahora idéntica entre:
+  - `loan-form/index.html` Screen 0 (¿Qué deseas registrar?)
+  - `menu/loans.html` Screen 0 (¿Qué préstamos deseas ver?)
+- Ambas pantallas comparten:
+  - `.container` → `.btn-back` + `h1` + `.subtitle` + `.content` → `.direction-buttons`
+  - Sin header wrapper verde
+  - Footer en el body (solo en loans.html)
+
+### Visual Consistency
+- ✅ Ambas Screen 0 lucen idénticas (excepto textos)
+- ✅ Mismo botón back circular sin header
+- ✅ Títulos y subtítulos con mismo estilo
+- ✅ Botones de dirección con mismo diseño
+
+### Deployment
+- **Netlify Deploy**: https://hilarious-brigadeiros-9b9834.netlify.app
+- **Deploy ID**: 68eff11132a4fba62a8685ce
+- **Archivo modificado**: loans.html
+
+## [2025-10-15i] - ✨ UX: Pantalla de selección en Estado de Préstamos
+
+### Added
+- **Screen 0 en Estado de Préstamos**: Pantalla inicial que pregunta "¿Qué préstamos deseas ver?"
+  - **Opción 1**: 💸 "Yo presté" - Ver solo préstamos que hiciste
+  - **Opción 2**: 📥 "Me prestaron" - Ver solo préstamos que recibiste
+  - **Patrón consistente**: Igual a la Screen 0 del flujo de creación de préstamos
+  - **Archivos**: `public/menu/loans.html`, `public/menu/loans.js`, `public/menu/styles.css`
+
+### Changed
+- **Vista simplificada**: Ahora muestra solo UNA sección de préstamos según selección
+  - Antes: Mostraba ambas secciones (lent + borrowed) simultáneamente
+  - Después: Muestra solo la sección seleccionada con título dinámico
+  - **Títulos dinámicos**:
+    - "Préstamos que hiciste" (lent)
+    - "Préstamos que te hicieron" (borrowed)
+
+- **Navegación mejorada**:
+  - Back desde screen-direction → Menú principal
+  - Back desde lista de préstamos → screen-direction (en lugar de menú)
+  - **Archivo**: `public/menu/loans.js` (setupEventListeners)
+
+- **Estado actualizado**: Nuevo campo `state.loanType` ('lent' | 'borrowed' | null)
+  - **Archivo**: `public/menu/loans.js` (línea 4)
+
+- **Empty states contextuales**: Mensajes específicos según tipo
+  - "No has prestado aún" vs "No te han prestado aún"
+  - Mensajes adaptativos según la selección del usuario
+  - **Archivo**: `public/menu/loans.js` (loadLoansForType)
+
+### Removed
+- **Submenu de filtros eliminado**: Ya no existe el filtro "Dinero/Objetos"
+  - ❌ `#filter-menu` (HTML)
+  - ❌ `showFilterMenu()`, `filterAndRenderLoans()`, `goBackToFilterMenu()` (JS)
+  - ❌ `state.currentFilter` (JS)
+  - **Justificación**: Simplificación - la vista ya está segmentada por tipo de préstamo
+
+- **Secciones duplicadas**: HTML simplificado a una sola sección reutilizable
+  - Antes: `#lent-section` y `#borrowed-section` separadas
+  - Después: Una sola `#loans-section` que cambia dinámicamente
+  - **Archivo**: `public/menu/loans.html`
+
+### Technical Details
+- **Renderizado optimizado**: Solo procesa préstamos del tipo seleccionado
+  - `renderLoansForType(loanType)` - Nueva función principal
+  - Elimina renderizado doble (lent + borrowed simultáneos)
+  - **Archivo**: `public/menu/loans.js` (líneas 306-335)
+
+- **Flujo de carga diferido**: Préstamos se cargan DESPUÉS de seleccionar tipo
+  - Antes: `init()` → `loadLoans()` automático
+  - Después: `init()` → `showDirectionScreen()` → usuario selecciona → `loadLoansForType()`
+
+- **Estilos reutilizados**: Copiados de loan-form para consistencia visual
+  - `.screen-selection`, `.direction-buttons`, `.direction-btn`
+  - Mismo diseño y animaciones que el flujo de creación
+  - **Archivo**: `public/menu/styles.css` (líneas 1257-1308)
+
+### Deployment
+- **Netlify Deploy**: https://hilarious-brigadeiros-9b9834.netlify.app
+- **Deploy ID**: 68efe65e0b164a67f17a484a
+- **Archivos modificados**: 3 archivos (loans.html, loans.js, styles.css)
+
+### Design Benefits
+1. ✅ **Más claro**: Usuario elige explícitamente qué quiere ver
+2. ✅ **Más rápido**: Solo renderiza una sección (menos DOM)
+3. ✅ **Consistente**: Mismo patrón que loan-form (Screen 0)
+4. ✅ **Simplificado**: Elimina submenu innecesario
+5. ✅ **Enfocado**: Vista centrada en lo que el usuario necesita
+
+## [2025-10-15h] - 🐛 Fix: Viralidad y visualización de concepto en préstamos recibidos
+
+### Fixed
+- **Viralidad no funcionaba**: Corrección de bugs en notificaciones/invitaciones
+  - **Bug 1**: `lender.phone` y `lender.name` no disponibles cuando se selecciona contacto existente
+    - **Problema**: Solo se pasa `lender.contact_id`, sin phone ni name
+    - **Solución**: Obtener phone y name del `contact_profile` asociado
+    - **Archivo**: `supabase/functions/create-received-loan/index.ts` (líneas 302-312)
+
+  - **Bug 2**: Nombre incorrecto en notificación in-app
+    - **Problema**: Línea 307 usaba `lender.name` como borrower_name (invertido)
+    - **Debe decir**: "Felipe registró un préstamo que recibió de ti"
+    - **Decía**: "Caty registró un préstamo que recibió de ti" (nombre equivocado)
+    - **Solución**: Obtener borrower_name del tenant_contact correcto (líneas 294-300)
+    - **Archivo**: `supabase/functions/create-received-loan/index.ts`
+
+  - **Bug 3**: Falta validación si lenderPhone no existe
+    - **Solución**: Agregar check y status `no_phone_available`
+    - **Archivo**: `supabase/functions/create-received-loan/index.ts` (líneas 341-343)
+
+- **Concepto no visible en detalle**: El campo `title` no se mostraba
+  - **Problema**: Código solo verificaba `loan.item_description` (para objetos)
+  - **Realidad**: Préstamos de dinero guardan concepto en `loan.title`
+  - **Solución**: Detectar tipo de préstamo y mostrar campo correcto
+    - Dinero → usar `loan.title`
+    - Objetos → usar `loan.item_description`
+  - **Archivos corregidos**:
+    - `public/menu/loan-detail.js` (líneas 148-160): Vista de detalle individual
+    - `public/menu/loans.js` (líneas 518-531): Drawer de préstamos agrupados
+
+### Technical Details
+- **Pattern**: Para préstamos de dinero, `title` es el concepto; `item_description` es para objetos
+- **Viralidad flow**:
+  1. Detectar si lender es usuario (checkIfContactIsAppUser)
+  2. Si es usuario → crear evento in-app notification
+  3. Si NO es usuario → enviar plantilla WhatsApp loan_invitation
+- **Edge function re-deployed**: create-received-loan con correcciones de viralidad
+
+### Testing
+- ✅ Préstamo de Caty a Felipe por $4990 (concepto: "estacionamiento")
+- ✅ Concepto ahora visible en detalle
+- ⏳ Viralidad: Requiere nueva prueba para confirmar que Caty recibe WhatsApp
+
+## [2025-10-15g] - 🐛 Fix: Simplificar create-received-loan siguiendo patrón loan-web-form
+
+### Fixed
+- **Arquitectura innecesariamente compleja**: Eliminada lógica de `get_or_create_self_contact()`
+  - **Problema real**: El `tenant_contact` del usuario autenticado YA EXISTE (viene en el token)
+  - **Error**: Intentaba crear un "self_contact" especial cuando no era necesario
+  - **Solución**: Usar directamente `contact_id` del token como borrower (igual que loan-web-form usa lenderContactId)
+  - **Patrón**: Invertir roles del flujo "yo presté"
+    - Yo presté: lender=token, borrower=seleccionado
+    - Me prestaron: borrower=token, lender=seleccionado
+  - **Archivo**: `supabase/functions/create-received-loan/index.ts` (líneas 167-170)
+  - **Deploy**: Edge function redesplegada
+
+### Removed
+- Llamada a `get_or_create_self_contact()` (innecesaria)
+- Lógica de creación de contact_profile para usuario (ya existe)
+- Complejidad de "self contact" como concepto especial
+
+### Technical Details
+- El `contact_id` en el token es el `tenant_contact` del usuario autenticado
+- Este `tenant_contact` sirve perfectamente como borrower en agreements
+- No se necesita flag `metadata.is_self` ni funciones especiales
+- La migración 027 queda como unused code (puede eliminarse después)
+
+## [2025-10-15f] - ✨ UX: Unificación de flujos de préstamo con Screen 0
+
+### Changed
+- **Flujo unificado de préstamos**: Implementación de Opción B (Screen 0 selector)
+  - **Screen 0 agregada**: Pantalla intermedia que pregunta "¿Qué deseas registrar?"
+  - **Dos opciones**: "💸 Yo presté" o "📥 Me prestaron"
+  - **Reutilización inteligente**: Mismo flujo de 4 pantallas (who/what/when/confirm) con textos dinámicos
+  - **Archivo**: `public/loan-form/index.html` (nueva sección `screen-direction`)
+
+- **Textos dinámicos según dirección del préstamo**:
+  - **Estado loanDirection**: Nuevo campo en state ('lent' | 'borrowed')
+  - **Objeto TEXTS**: Mapeo de todos los textos que cambian según dirección
+  - **Función updateTexts()**: Actualiza títulos y labels automáticamente
+  - **Ejemplos**:
+    - "¿A quién le prestas?" ↔ "¿Quién te prestó?"
+    - "¿Qué le prestas?" ↔ "¿Qué te prestaron?"
+    - "¿Cuándo te lo devuelven?" ↔ "¿Cuándo lo devuelves?"
+    - "Para:" ↔ "De:"
+  - **Archivo**: `public/loan-form/app.js`
+
+- **Lógica de routing dual**: createLoan() enruta a endpoint correcto
+  - **lent** → `/functions/v1/loan-web-form`
+  - **borrowed** → `/functions/v1/create-received-loan`
+  - **Payload adaptado**: Diferentes estructuras según endpoint
+  - **Archivo**: `public/loan-form/app.js` (función createLoan)
+
+- **Navegación mejorada**:
+  - Back desde screen-who ahora va a screen-direction (no al menú)
+  - "Crear otro préstamo" resetea y vuelve a screen-direction
+  - **Archivo**: `public/loan-form/app.js` (setupEventListeners)
+
+### Added
+- **Estilos CSS para Screen 0**:
+  - `.direction-buttons`: Contenedor flex vertical
+  - `.direction-btn`: Botones grandes con icon, label y description
+  - Efectos hover y active
+  - **Archivo**: `public/loan-form/styles.css`
+
+### Removed
+- **Formulario separado eliminado**: Mejor UX con flujo unificado
+  - ❌ `public/menu/received-loan-form.html`
+  - ❌ `public/menu/received-loan-form.js`
+
+- **Botón duplicado del menú**: Simplificación de UI
+  - ❌ Botón "Registrar préstamo recibido" de `menu/index.html`
+  - ❌ Handler `handleReceivedLoanClick()` de `menu/app.js`
+
+### Deployment
+- **Netlify Deploy**: https://hilarious-brigadeiros-9b9834.netlify.app
+- **Deploy ID**: 68efdc1f32a4fb6f1b8685c7
+- **Archivos actualizados**: 5 archivos (loan-form HTML/JS/CSS + menu HTML/JS)
+
+### Design Decision
+- **Opción B elegida**: Screen 0 intermedia vs Toggle permanente
+  - ✅ Más clara: Usuario elige explícitamente antes de ver contactos
+  - ✅ Menos confusa: No hay toggle que se pueda presionar por error
+  - ✅ Mejor flujo: Decisión consciente al inicio
+  - ✅ Escalable: Fácil agregar más tipos de préstamo en el futuro
+
+## [2025-10-15e] - 🎯 Feature: Registro de Préstamos Recibidos + Viralidad Automática
+
+### Added
+- **Arquitectura Self-Contact**: Usuario puede registrar préstamos donde él es el borrower
+  - **Función `get_or_create_self_contact()`**: Crea tenant_contact que representa al usuario mismo
+  - **Metadata flag `is_self: true`**: Identifica self contacts en tenant_contacts
+  - **Patrón consistente**: Todo es tenant_contact, no hay casos especiales (NULL checks)
+  - **Índice optimizado**: Búsqueda rápida de self_contact por tenant
+  - Archivo: `supabase/migrations/027_add_self_contact_support.sql`
+
+- **Edge Function create-received-loan**: Endpoint para registrar préstamos recibidos
+  - **Payload unificado**: Mismo formulario para contactos existentes y nuevos (UX simplificada)
+  - **Lógica automática**: Detecta escenarios A/B/C sin input del usuario
+  - **Validación LLT**: Soporte completo para tokens de 30 días
+  - **Viralidad integrada**: Detección y acción automática según tipo de lender
+  - Archivo: `supabase/functions/create-received-loan/index.ts`
+  - Deployment: `--no-verify-jwt` (accesible desde frontend)
+
+- **Helper user-detection.ts**: Detecta si contact_profile es usuario de la app
+  - **Función `checkIfContactIsAppUser()`**: Busca usuario por phone O email
+  - **Retorna**: `{ isUser, tenant_id, user_id, user_name }`
+  - **Helpers adicionales**: `findContactProfileByPhone()`, `findContactProfileByEmail()`
+  - Archivo: `supabase/functions/_shared/user-detection.ts`
+
+- **Template WhatsApp loan_invitation**: Invitación viral para lenders no-usuarios
+  - **Método `sendLoanInvitationTemplate()`** en WhatsAppTemplates
+  - **Variables**: lender_name, borrower_name, amount formateado
+  - **Botón URL dinámica**: Link de invitación con pre-registro
+  - **Contenido**: "{{borrower}} registró préstamo que recibió de ti por {{amount}}. Únete a PayME"
+  - Archivo: `supabase/functions/_shared/whatsapp-templates.ts`
+  - Status: Template pendiente de creación en Meta Business Manager
+
+### Modified
+- **Comentarios en tabla agreements**: Aclaración de roles borrower/lender
+  - `tenant_contact_id`: "Borrower (prestatario): Quién recibe el préstamo"
+  - `lender_tenant_contact_id`: "Lender (prestamista): Quién presta"
+  - `created_by`: "Usuario que creó el registro en el sistema"
+
+### System Architecture
+- **Menu-data ya soporta préstamos recibidos**: No requirió cambios
+  - Query `type=loans` retorna: `{ lent: [...], borrowed: [...] }`
+  - `lent`: WHERE lender_tenant_contact_id = mi contact
+  - `borrowed`: WHERE tenant_contact_id = mi contact
+  - Con self_contact, el query borrowed funciona automáticamente
+
+- **RLS Policies sin cambios requeridos**: Arquitectura por tenant_id soporta ambos roles
+  - Policy: `tenant_id = get_current_tenant_id()`
+  - No importa si usuario es borrower o lender, el acceso es por tenant
+
+### Viral Growth Strategy
+
+**Escenario A: Lender es usuario Y es mi contacto**
+- Sistema detecta que lender tiene tenant
+- Crea evento de notificación in-app en tenant del lender
+- Payload: "{{borrower_name}} registró préstamo que recibió de ti"
+- Viralidad: ⭐⭐⭐ Alta - Engagement de usuario existente
+
+**Escenario B: Lender es usuario pero NO es mi contacto**
+- Sistema crea tenant_contact en mi tenant
+- Detecta que lender es usuario (cross-tenant)
+- Notificación in-app + posible WhatsApp
+- Lender puede aceptar conexión bidireccional
+- Viralidad: ⭐⭐⭐⭐ Muy Alta - Conexión cross-tenant
+
+**Escenario C: Lender NO es usuario de la app**
+- Sistema crea contact_profile + tenant_contact
+- Detecta que NO es usuario
+- Envía WhatsApp template loan_invitation
+- Link incluye: pre-registro, auto-conexión, ver préstamo inmediatamente
+- Viralidad: ⭐⭐⭐⭐⭐ Máxima - Invitación con valor inmediato
+
+### Documentation
+- **SELF_CONTACT_ARCHITECTURE.md**: Explicación completa del patrón self-reference
+  - Problema y solución
+  - Diagrama de arquitectura
+  - Uso en agreements (ambos roles)
+  - Ventajas vs alternativas (NULL pattern, campo separado)
+  - Queries comunes
+  - Consideraciones y edge cases
+
+- **VIRAL_INVITATIONS.md**: Estrategia de viralidad y métricas
+  - Flujo completo por escenario
+  - Detección automática de usuarios
+  - WhatsApp template specification
+  - Métricas: Invitation Rate, Conversion Rate, K-factor, Time to Registration
+  - Mejoras futuras: Gamificación, Referral Program
+
+- **EDGE_FUNCTIONS_DEPLOYMENT.md actualizado**:
+  - Agregada `create-received-loan` a lista de funciones sin JWT
+  - Razón: Frontend usa tokens en query params
+
+### Files Created
+- `supabase/migrations/027_add_self_contact_support.sql`
+- `supabase/functions/create-received-loan/index.ts`
+- `supabase/functions/_shared/user-detection.ts`
+- `docs/SELF_CONTACT_ARCHITECTURE.md`
+- `docs/VIRAL_INVITATIONS.md`
+
+### Files Modified
+- `supabase/functions/_shared/whatsapp-templates.ts` - Agregado sendLoanInvitationTemplate()
+- `docs/EDGE_FUNCTIONS_DEPLOYMENT.md` - Agregada create-received-loan
+
+### Frontend Implementation
+- **Menú principal actualizado**: Nuevo botón "Registrar préstamo recibido" con icono 📥
+  - Archivo: `public/menu/index.html` - Agregado menú item
+  - Archivo: `public/menu/app.js` - Agregado handler `handleReceivedLoanClick()`
+
+- **Formulario de préstamo recibido**: Nueva interfaz completa
+  - Archivo: `public/menu/received-loan-form.html`
+  - Características:
+    - Dropdown para seleccionar contacto existente
+    - Opción "Agregar nuevo contacto" con campos dinámicos
+    - Campos de monto, fecha de devolución, concepto, descripción
+    - Validación de formulario en cliente
+    - Loading states y validación de sesión
+    - Modal de éxito con mensaje personalizado según viralidad
+
+- **Lógica del formulario**: JavaScript completo
+  - Archivo: `public/menu/received-loan-form.js`
+  - Funcionalidades:
+    - Carga contactos desde préstamos existentes (lent.borrower)
+    - Toggle dinámico: contacto existente vs nuevo
+    - Integración con edge function create-received-loan
+    - Manejo de respuesta con información de viralidad
+    - Mensaje de éxito diferenciado:
+      - "Se notificó al prestamista" (si es usuario)
+      - "Se envió invitación por WhatsApp" (si no es usuario)
+
+### Deployment
+- ✅ Migración 027 aplicada a base de datos
+- ✅ Edge function create-received-loan desplegada con --no-verify-jwt
+- ✅ Funciones helper deployadas con edge function
+- ✅ Frontend desplegado a Netlify (Deploy ID: 68efd7e84e27617393bd8d8f)
+- ✅ URL: https://hilarious-brigadeiros-9b9834.netlify.app
+- ⏳ WhatsApp template loan_invitation pendiente en Meta Business Manager
+
+### Technical Highlights
+- **Backward Compatible**: Código legacy con lender_tenant_contact_id NULL sigue funcionando
+- **Lazy Creation**: Self contacts se crean solo cuando se necesitan (no proactivamente)
+- **Unique Constraint**: Un solo self_contact por tenant (via metadata.is_self = true)
+- **Performance**: Índice en metadata->>'is_self' para búsquedas O(1)
+
+### User Experience Impact
+- **UX simplificada**: Un solo formulario "Agregar contacto" para todos los escenarios
+- **Viralidad invisible**: Sistema decide automáticamente notificación vs invitación
+- **Sin fricción**: Usuario no necesita saber si lender es usuario o no
+- **Valor inmediato**: Invitados ven préstamo registrado al completar registro
+
+### Next Steps
+- [x] Agregar sección "Préstamos Recibidos" en menú web
+- [x] Formulario "¿Quién te prestó?" con búsqueda de contactos
+- [x] Opción "Agregar nuevo contacto" con campos nombre/teléfono/email
+- [x] Integración con edge function create-received-loan
+- [x] Mostrar préstamos borrowed (ya implementado en loans.html)
+- [x] Frontend desplegado y listo para probar
+- [ ] Crear WhatsApp template loan_invitation en Meta Business Manager
+- [ ] Testing en producción: Escenarios A, B y C
+
+### Testing Required
+- [ ] Escenario A: Registrar préstamo con lender existente en contactos
+- [ ] Escenario B: Registrar préstamo con nuevo contacto (sí usuario)
+- [ ] Escenario C: Registrar préstamo con nuevo contacto (no usuario)
+- [ ] Verificar envío de notificaciones in-app (Escenario A/B)
+- [ ] Verificar envío de invitación WhatsApp (Escenario C)
+- [ ] Validar que menu-data.type=loans retorna borrowed correctamente
+- [ ] Confirmar self_contact se crea solo una vez por tenant
+
 ## [2025-10-15b] - ✨ Feature: Long-Lived Tokens (LLT) y Validación de Sesión
 
 ### Added

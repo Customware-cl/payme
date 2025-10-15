@@ -1253,3 +1253,124 @@ body {
         font-size: 17px;
     }
 }
+
+/* Estilos para pantalla de selección de tipo de préstamo */
+.screen-selection {
+    animation: fadeIn 0.3s ease-in;
+}
+
+.direction-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.direction-btn {
+    background: var(--bg-card);
+    border: 2px solid var(--border-color);
+    border-radius: 16px;
+    padding: 24px 20px;
+    cursor: pointer;
+    transition: all var(--transition);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    text-align: left;
+}
+
+.direction-btn:active {
+    transform: scale(0.98);
+}
+
+.direction-btn:hover {
+    border-color: var(--primary-color);
+    background: #f9fff9;
+}
+
+.direction-btn .icon {
+    font-size: 48px;
+    flex-shrink: 0;
+}
+
+.direction-btn .label {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: block;
+    margin-bottom: 4px;
+}
+
+.direction-btn .description {
+    font-size: 14px;
+    color: var(--text-secondary);
+    display: block;
+}
+
+/* ========== SCREEN 0 STYLES (copiados de loan-form) ========== */
+
+/* Screen container con padding */
+.screen > .container {
+    padding: 20px;
+}
+
+/* Screens */
+.screen {
+    display: none;
+    animation: fadeIn 0.3s ease;
+}
+
+.screen.active {
+    display: block;
+}
+
+/* Header de Screen 0 */
+.screen .header {
+    background: none;
+    color: var(--text-primary);
+    padding: 0;
+    margin-bottom: 24px;
+    text-align: left;
+    position: static;
+}
+
+.screen .header h1 {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: var(--text-primary);
+    letter-spacing: normal;
+}
+
+.screen .subtitle {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+}
+
+/* Botón back para Screen 0 */
+.screen .btn-back {
+    position: static;
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: var(--text-primary);
+    cursor: pointer;
+    padding: 8px;
+    margin: -8px 0 8px -8px;
+    transition: transform var(--transition);
+}
+
+.screen .btn-back:active {
+    transform: scale(0.95);
+    opacity: 1;
+}
+
+/* Content area */
+.screen .content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 0;
+}

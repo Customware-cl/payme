@@ -1,11 +1,11 @@
 // Estado de la aplicación
 const state = {
     token: null,
+    loanType: null, // 'lent' | 'borrowed' | null
     loans: {
         lent: [],
         borrowed: []
     },
-    currentFilter: null, // 'money' | 'objects' | null
     viewMode: 'grouped', // 'grouped' | 'detailed'
     drawerOpen: false,
     currentGroup: null
@@ -129,20 +129,30 @@ async function init() {
     }
 
     setupEventListeners();
-    await loadLoans();
+
+    // Mostrar pantalla de selección (NO cargar préstamos aún)
+    showDirectionScreen();
 }
 
 // Setup event listeners
 function setupEventListeners() {
-    // Volver (contextual según estado)
-    $('#back-to-menu').addEventListener('click', () => {
-        // Si estamos viendo una lista filtrada, volver al submenú de filtros
-        if (state.currentFilter) {
-            goBackToFilterMenu();
-        } else {
-            // Si estamos en el submenú, volver al menú principal
-            window.location.href = `/menu?token=${state.token}`;
-        }
+    // Botones de selección de tipo de préstamo
+    document.querySelectorAll('.direction-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const loanType = btn.dataset.loanType;
+            state.loanType = loanType;
+            loadLoansForType(loanType);
+        });
+    });
+
+    // Back desde screen-direction → menú
+    $('#back-to-menu-from-direction').addEventListener('click', () => {
+        window.location.href = `/menu?token=${state.token}`;
+    });
+
+    // Back desde loans-content → screen-direction
+    $('#back-to-direction').addEventListener('click', () => {
+        goBackToDirectionScreen();
     });
 
     // Botón crear préstamo desde empty state
@@ -152,17 +162,6 @@ function setupEventListeners() {
             window.location.href = `/loan-form?token=${state.token}`;
         });
     }
-
-    // Filtros del submenú
-    $('#filter-money').addEventListener('click', () => {
-        state.currentFilter = 'money';
-        filterAndRenderLoans();
-    });
-
-    $('#filter-objects').addEventListener('click', () => {
-        state.currentFilter = 'objects';
-        filterAndRenderLoans();
-    });
 
     // Toggle de vista (agrupada/detallada)
     document.querySelectorAll('.toggle-btn').forEach(btn => {
@@ -177,13 +176,8 @@ function setupEventListeners() {
             document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
 
-            // Re-renderizar
-            if (state.currentFilter) {
-                filterAndRenderLoans();
-            } else {
-                // Si no hay filtro activo, solo re-renderizar con datos actuales
-                renderLoans(state.loans);
-            }
+            // Re-renderizar con el tipo seleccionado
+            renderLoansForType(state.loanType);
         });
     });
 
@@ -215,15 +209,48 @@ function setupEventListeners() {
     }
 }
 
-// Cargar préstamos
-async function loadLoans() {
+// Mostrar pantalla de selección de tipo
+function showDirectionScreen() {
+    const screenDirection = $('#screen-direction');
+    const loansViewContainer = $('#loans-view-container');
+
+    // Mostrar solo screen-direction, ocultar todo lo demás
+    screenDirection.classList.add('active');
+    loansViewContainer.classList.add('hidden');
+}
+
+// Volver a la pantalla de selección
+function goBackToDirectionScreen() {
+    // Resetear estado
+    state.loanType = null;
+
+    // Mostrar screen-direction
+    showDirectionScreen();
+}
+
+// Cargar préstamos para el tipo seleccionado
+async function loadLoansForType(loanType) {
+    const screenDirection = $('#screen-direction');
+    const loansViewContainer = $('#loans-view-container');
+    const loansHeader = $('#loans-header');
     const loadingState = $('#loading-state');
     const emptyState = $('#empty-state');
     const loansContent = $('#loans-content');
 
+    // Ocultar screen-direction y mostrar loans view container
+    screenDirection.classList.remove('active');
+    loansViewContainer.classList.remove('hidden');
+
+    // Mostrar loading dentro del container
+    loansHeader.classList.remove('hidden');
     loadingState.classList.remove('hidden');
     emptyState.classList.add('hidden');
     loansContent.classList.add('hidden');
+
+    // Actualizar título del header según el tipo
+    const title = loanType === 'lent' ? 'Préstamos que hiciste' : 'Préstamos que te hicieron';
+    $('#loans-title').textContent = title;
+    $('#loans-subtitle').textContent = 'Revisa tus préstamos';
 
     try {
         const response = await fetch(
@@ -240,15 +267,32 @@ async function loadLoans() {
 
         console.log('Loans loaded:', state.loans);
 
-        // Si no hay préstamos, mostrar empty state
-        if (state.loans.lent.length === 0 && state.loans.borrowed.length === 0) {
+        // Verificar si hay préstamos del tipo seleccionado
+        const loansForType = state.loans[loanType];
+
+        if (loansForType.length === 0) {
+            // No hay préstamos de este tipo
             loadingState.classList.add('hidden');
             emptyState.classList.remove('hidden');
+
+            // Actualizar mensaje del empty state
+            const emptyTitle = loanType === 'lent' ? 'No has prestado aún' : 'No te han prestado aún';
+            const emptyMessage = loanType === 'lent'
+                ? 'Cuando prestes dinero u objetos aparecerán aquí'
+                : 'Cuando te presten dinero u objetos aparecerán aquí';
+
+            $('#empty-title').textContent = emptyTitle;
+            $('#empty-message').textContent = emptyMessage;
+
             return;
         }
 
-        // Mostrar submenú de filtros
-        showFilterMenu();
+        // Mostrar préstamos
+        loadingState.classList.add('hidden');
+        loansContent.classList.remove('hidden');
+
+        // Renderizar préstamos del tipo seleccionado
+        renderLoansForType(loanType);
 
     } catch (error) {
         console.error('Error loading loans:', error);
@@ -257,147 +301,32 @@ async function loadLoans() {
     }
 }
 
-// Volver al submenú de filtros desde la lista filtrada
-function goBackToFilterMenu() {
-    const filterMenu = $('#filter-menu');
-    const loansContent = $('#loans-content');
+// Renderizar préstamos para el tipo seleccionado
+function renderLoansForType(loanType) {
+    if (!loanType) return;
 
-    // Limpiar filtro actual
-    state.currentFilter = null;
+    // Obtener préstamos del tipo seleccionado
+    const loansData = state.loans[loanType];
 
-    // Ocultar lista de préstamos y mostrar submenú
-    loansContent.classList.add('hidden');
-    filterMenu.classList.remove('hidden');
-}
+    // Ordenar por fecha ascendente
+    loansData.sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
 
-// Mostrar submenú de filtros
-function showFilterMenu() {
-    const filterMenu = $('#filter-menu');
-    const loadingState = $('#loading-state');
-    const emptyState = $('#empty-state');
-    const loansContent = $('#loans-content');
+    // Actualizar título de la sección
+    const sectionTitle = loanType === 'lent' ? '💰 Préstamos que hiciste' : '📥 Préstamos que te hicieron';
+    $('#section-title').textContent = sectionTitle;
 
-    // Contar préstamos por tipo
-    const allLoans = [...state.loans.lent, ...state.loans.borrowed];
-    const moneyCount = allLoans.filter(l => l.amount !== null).length;
-    const objectsCount = allLoans.filter(l => l.amount === null).length;
+    // Renderizar según modo de vista
+    const loansList = $('#loans-list');
 
-    // Actualizar contadores
-    $('#money-count').textContent = moneyCount === 1 ? '1 préstamo' : `${moneyCount} préstamos`;
-    $('#objects-count').textContent = objectsCount === 1 ? '1 préstamo' : `${objectsCount} préstamos`;
-
-    // Mostrar solo el menú de filtros
-    filterMenu.classList.remove('hidden');
-    loadingState.classList.add('hidden');
-    emptyState.classList.add('hidden');
-    loansContent.classList.add('hidden');
-}
-
-// Filtrar y renderizar préstamos
-function filterAndRenderLoans() {
-    const filterMenu = $('#filter-menu');
-    const loadingState = $('#loading-state');
-    const loansContent = $('#loans-content');
-
-    // Asegurar que el loader esté oculto (filtrado es instantáneo)
-    loadingState.classList.add('hidden');
-
-    // Filtrar según el tipo seleccionado
-    const filtered = {
-        lent: state.loans.lent.filter(loan => {
-            if (state.currentFilter === 'money') {
-                return loan.amount !== null;
-            } else if (state.currentFilter === 'objects') {
-                return loan.amount === null;
-            }
-            return true;
-        }),
-        borrowed: state.loans.borrowed.filter(loan => {
-            if (state.currentFilter === 'money') {
-                return loan.amount !== null;
-            } else if (state.currentFilter === 'objects') {
-                return loan.amount === null;
-            }
-            return true;
-        })
-    };
-
-    // Ordenar por fecha ascendente (próximos a vencer primero)
-    filtered.lent.sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
-    filtered.borrowed.sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
-
-    // Renderizar con datos filtrados (instantáneo, sin loader)
-    renderLoans(filtered);
-
-    // Ocultar menú y loader, mostrar préstamos
-    filterMenu.classList.add('hidden');
-    loansContent.classList.remove('hidden');
-}
-
-// Renderizar préstamos (router según viewMode)
-function renderLoans(loansData = state.loans) {
     if (state.viewMode === 'grouped') {
-        renderGroupedView(loansData);
-    } else {
-        renderDetailedView(loansData);
-    }
-}
-
-// Renderizar vista agrupada
-function renderGroupedView(loansData) {
-    // Préstamos que hiciste
-    const lentList = $('#lent-list');
-    const lentSection = $('#lent-section');
-
-    if (loansData.lent.length === 0) {
-        lentSection.classList.add('hidden');
-    } else {
-        lentSection.classList.remove('hidden');
-        const groupedLent = groupLoansByContactAndDate(loansData.lent, 'lent');
-        lentList.innerHTML = groupedLent.map(item =>
-            item.isGroup ? renderGroupedLoanCard(item, 'lent') : renderLoanCard(item, 'lent')
+        // Vista agrupada
+        const grouped = groupLoansByContactAndDate(loansData, loanType);
+        loansList.innerHTML = grouped.map(item =>
+            item.isGroup ? renderGroupedLoanCard(item, loanType) : renderLoanCard(item, loanType)
         ).join('');
-    }
-
-    // Préstamos que te hicieron
-    const borrowedList = $('#borrowed-list');
-    const borrowedSection = $('#borrowed-section');
-
-    if (loansData.borrowed.length === 0) {
-        borrowedSection.classList.add('hidden');
     } else {
-        borrowedSection.classList.remove('hidden');
-        const groupedBorrowed = groupLoansByContactAndDate(loansData.borrowed, 'borrowed');
-        borrowedList.innerHTML = groupedBorrowed.map(item =>
-            item.isGroup ? renderGroupedLoanCard(item, 'borrowed') : renderLoanCard(item, 'borrowed')
-        ).join('');
-    }
-
-    attachLoanCardListeners();
-}
-
-// Renderizar vista detallada (comportamiento original)
-function renderDetailedView(loansData) {
-    // Préstamos que hiciste
-    const lentList = $('#lent-list');
-    const lentSection = $('#lent-section');
-
-    if (loansData.lent.length === 0) {
-        lentSection.classList.add('hidden');
-    } else {
-        lentSection.classList.remove('hidden');
-        lentList.innerHTML = loansData.lent.map(loan => renderLoanCard(loan, 'lent')).join('');
-    }
-
-    // Préstamos que te hicieron
-    const borrowedList = $('#borrowed-list');
-    const borrowedSection = $('#borrowed-section');
-
-    if (loansData.borrowed.length === 0) {
-        borrowedSection.classList.add('hidden');
-    } else {
-        borrowedSection.classList.remove('hidden');
-        borrowedList.innerHTML = loansData.borrowed.map(loan => renderLoanCard(loan, 'borrowed')).join('');
+        // Vista detallada
+        loansList.innerHTML = loansData.map(loan => renderLoanCard(loan, loanType)).join('');
     }
 
     attachLoanCardListeners();
@@ -517,14 +446,18 @@ function openDrawer(groupKey) {
 
     // Renderizar lista de préstamos
     const drawerList = $('#drawer-loans-list');
-    drawerList.innerHTML = group.loans.map(loan => `
-        <div class="drawer-loan-item" data-loan-id="${loan.id}">
-            <div class="drawer-loan-amount">${formatMoney(loan.amount)}</div>
-            <div class="drawer-loan-concept">${loan.item_description || 'Sin concepto'}</div>
-            <div class="drawer-loan-created">Creado: ${formatDateTime(loan.created_at)}</div>
-            <div class="drawer-loan-arrow">›</div>
-        </div>
-    `).join('');
+    drawerList.innerHTML = group.loans.map(loan => {
+        // Para préstamos de dinero usar title, para objetos usar item_description
+        const concept = loan.title || loan.item_description || 'Sin concepto';
+        return `
+            <div class="drawer-loan-item" data-loan-id="${loan.id}">
+                <div class="drawer-loan-amount">${formatMoney(loan.amount)}</div>
+                <div class="drawer-loan-concept">${concept}</div>
+                <div class="drawer-loan-created">Creado: ${formatDateTime(loan.created_at)}</div>
+                <div class="drawer-loan-arrow">›</div>
+            </div>
+        `;
+    }).join('');
 
     // Mostrar drawer con animación
     const drawer = $('#drawer-grouped-loans');
