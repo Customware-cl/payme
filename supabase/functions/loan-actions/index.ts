@@ -11,31 +11,74 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
 };
 
-// Validar y decodificar token
-function parseToken(token: string): { tenant_id: string; contact_id: string; timestamp: number } | null {
+// Validar y decodificar token (soporta short y LLT)
+async function parseToken(token: string, supabase: any): Promise<{ tenant_id: string; contact_id: string; timestamp: number; token_type: string } | null> {
   try {
-    // Token format: menu_[tenant_id]_[contact_id]_[timestamp]
     const parts = token.split('_');
 
-    if (parts[0] !== 'menu' || parts.length !== 4) {
+    // Detectar tipo de token
+    if (parts[0] === 'menu' && parts[1] === 'llt') {
+      // Long-Lived Token: menu_llt_[tenant]_[contact]_[uuid]_[timestamp]
+      if (parts.length !== 6) {
+        console.error('Invalid LLT format');
+        return null;
+      }
+
+      const tenant_id = parts[2];
+      const contact_id = parts[3];
+      // parts[4] es el UUID
+      const timestamp = parseInt(parts[5]);
+
+      // Validar contra base de datos
+      const { data: session, error } = await supabase
+        .from('active_sessions')
+        .select('*')
+        .eq('token', token)
+        .eq('revoked', false)
+        .single();
+
+      if (error || !session) {
+        console.log('LLT not found in database or revoked');
+        return null;
+      }
+
+      // Verificar expiración
+      const expiresAt = new Date(session.expires_at);
+      if (expiresAt < new Date()) {
+        console.log('LLT expired:', { expires_at: session.expires_at });
+        return null;
+      }
+
+      // Actualizar last_used_at
+      await supabase
+        .from('active_sessions')
+        .update({ last_used_at: new Date().toISOString() })
+        .eq('id', session.id);
+
+      return { tenant_id, contact_id, timestamp, token_type: 'llt' };
+
+    } else if (parts[0] === 'menu' && parts.length === 4) {
+      // Short token (backward compatible): menu_[tenant_id]_[contact_id]_[timestamp]
+      const tenant_id = parts[1];
+      const contact_id = parts[2];
+      const timestamp = parseInt(parts[3]);
+
+      // Verificar expiración (1 hora)
+      const now = Date.now();
+      const tokenAge = now - timestamp;
+      const oneHour = 60 * 60 * 1000;
+
+      if (tokenAge > oneHour) {
+        console.log('Short token expired:', { tokenAge, oneHour });
+        return null;
+      }
+
+      return { tenant_id, contact_id, timestamp, token_type: 'short' };
+
+    } else {
+      console.error('Invalid token format');
       return null;
     }
-
-    const tenant_id = parts[1];
-    const contact_id = parts[2];
-    const timestamp = parseInt(parts[3]);
-
-    // Verificar expiración (1 hora)
-    const now = Date.now();
-    const tokenAge = now - timestamp;
-    const oneHour = 60 * 60 * 1000;
-
-    if (tokenAge > oneHour) {
-      console.log('Token expired:', { tokenAge, oneHour });
-      return null;
-    }
-
-    return { tenant_id, contact_id, timestamp };
   } catch (error) {
     console.error('Error parsing token:', error);
     return null;
@@ -81,7 +124,7 @@ serve(async (req: Request) => {
         });
       }
 
-      const tokenData = parseToken(token);
+      const tokenData = await parseToken(token, supabase);
       if (!tokenData) {
         return new Response(JSON.stringify({ success: false, error: 'Token inválido o expirado' }), {
           status: 401,
@@ -160,7 +203,7 @@ serve(async (req: Request) => {
         });
       }
 
-      const tokenData = parseToken(token);
+      const tokenData = await parseToken(token, supabase);
       if (!tokenData) {
         return new Response(JSON.stringify({ success: false, error: 'Token inválido o expirado' }), {
           status: 401,
