@@ -96,7 +96,7 @@ serve(async (req: Request) => {
     console.log('[GENERATE_LINK] Token generated:', webToken);
 
     // Construir URL del formulario (Netlify)
-    const netlifyUrl = Deno.env.get('NETLIFY_LOAN_FORM_URL') || 'https://hilarious-brigadeiros-9b9834.netlify.app/loan-form';
+    const netlifyUrl = Deno.env.get('NETLIFY_LOAN_FORM_URL') || 'https://somospayme.cl/loan-form';
     const formUrl = `${netlifyUrl}?token=${webToken}`;
 
     console.log('[GENERATE_LINK] Form URL:', formUrl);

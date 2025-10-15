@@ -2,6 +2,46 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-15q] - 🌐 Cambio de dominio: somospayme.cl
+
+### Changed
+- **URLs de producción actualizadas a dominio personalizado**:
+  - **Menú web**: `https://somospayme.cl/menu` (antes: `hilarious-brigadeiros-9b9834.netlify.app/menu`)
+  - **Formulario de préstamos**: `https://somospayme.cl/loan-form` (antes: `hilarious-brigadeiros-9b9834.netlify.app/loan-form`)
+
+### Modified Files
+- **`supabase/functions/generate-menu-token/index.ts:129`**:
+  ```typescript
+  // ANTES
+  const menuBaseUrl = Deno.env.get('NETLIFY_MENU_URL') || 'https://hilarious-brigadeiros-9b9834.netlify.app/menu';
+
+  // AHORA
+  const menuBaseUrl = Deno.env.get('NETLIFY_MENU_URL') || 'https://somospayme.cl/menu';
+  ```
+
+- **`supabase/functions/generate-loan-web-link/index.ts:99`**:
+  ```typescript
+  // ANTES
+  const netlifyUrl = Deno.env.get('NETLIFY_LOAN_FORM_URL') || 'https://hilarious-brigadeiros-9b9834.netlify.app/loan-form';
+
+  // AHORA
+  const netlifyUrl = Deno.env.get('NETLIFY_LOAN_FORM_URL') || 'https://somospayme.cl/loan-form';
+  ```
+
+### Deployed
+- ✅ **Edge Function**: `generate-menu-token` (v5)
+- ✅ **Edge Function**: `generate-loan-web-link` (v8)
+
+### Impact
+- ✅ **Notificaciones de WhatsApp** ahora envían URLs con dominio `somospayme.cl`
+- ✅ **Flujos de WhatsApp** utilizan dominio personalizado para enlaces al menú y formularios
+- ✅ Mejor branding y profesionalismo en comunicaciones con usuarios
+
+### Notes
+- URLs antiguas (`hilarious-brigadeiros-9b9834.netlify.app`) aún funcionan gracias a Netlify
+- Ambas URLs (antigua y nueva) apuntan al mismo deployment
+- Variables de entorno permiten override si es necesario en futuro
+
 ## [2025-10-15p] - 🐛 Fix DEFINITIVO: Scroll infinito en Screen 0
 
 ### Fixed

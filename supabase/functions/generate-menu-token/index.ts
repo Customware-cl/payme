@@ -126,7 +126,7 @@ serve(async (req: Request) => {
     }
 
     // URL del menú (puede configurarse con env var)
-    const menuBaseUrl = Deno.env.get('NETLIFY_MENU_URL') || 'https://hilarious-brigadeiros-9b9834.netlify.app/menu';
+    const menuBaseUrl = Deno.env.get('NETLIFY_MENU_URL') || 'https://somospayme.cl/menu';
     const menuUrl = `${menuBaseUrl}?token=${token}`;
 
     // Registrar evento
