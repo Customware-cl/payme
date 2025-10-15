@@ -18,41 +18,38 @@ CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
 -- SELECT vault.create_secret('YOUR_GENERATED_TOKEN', 'scheduler_auth_token');
 
 -- 3. Crear cron job para ejecutar scheduler diariamente
--- NOTA: Reemplazar 'YOUR_PROJECT_URL' con la URL real de tu proyecto
--- Ejemplo: https://qgjxkszfdoolaxmsupil.supabase.co
-DO $$
-DECLARE
-  project_url text := 'YOUR_PROJECT_URL';
-BEGIN
-  -- Solo crear el cron job si no existe
-  IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'daily-reminder-scheduler') THEN
-    PERFORM cron.schedule(
-      'daily-reminder-scheduler',
-      '0 9 * * *', -- Todos los días a las 09:00 AM
-      format($$
-        SELECT net.http_post(
-          url := '%s/functions/v1/scheduler_dispatch',
-          headers := jsonb_build_object(
-            'Content-Type', 'application/json',
-            'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'scheduler_auth_token')
-          ),
-          body := jsonb_build_object('dry_run', false),
-          timeout_milliseconds := 300000
-        ) as request_id;
-      $$, project_url)
-    );
+-- NOTA: Esta sección requiere configuración MANUAL porque necesita:
+-- - Token de autenticación guardado en Vault
+-- - URL del proyecto configurada
+--
+-- INSTRUCCIONES:
+-- 1. Primero genera y guarda el token en Vault (ver paso 2 arriba)
+-- 2. Luego ejecuta el siguiente comando reemplazando YOUR_PROJECT_URL:
+--
+-- SELECT cron.schedule(
+--   'daily-reminder-scheduler',
+--   '0 9 * * *',
+--   $$
+--   SELECT net.http_post(
+--     url := 'YOUR_PROJECT_URL/functions/v1/scheduler_dispatch',
+--     headers := jsonb_build_object(
+--       'Content-Type', 'application/json',
+--       'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'scheduler_auth_token')
+--     ),
+--     body := jsonb_build_object('dry_run', false),
+--     timeout_milliseconds := 300000
+--   ) as request_id;
+--   $$
+-- );
 
-    RAISE NOTICE 'Cron job "daily-reminder-scheduler" creado exitosamente';
-  ELSE
-    RAISE NOTICE 'Cron job "daily-reminder-scheduler" ya existe, saltando...';
-  END IF;
-END $$;
+-- La migración continúa sin crear el cron job automáticamente
+-- para evitar errores de configuración
 
 -- 4. Comentarios de documentación
 COMMENT ON EXTENSION pg_cron IS 'Scheduler de tareas programadas para ejecutar el scheduler de recordatorios diariamente';
 COMMENT ON EXTENSION pg_net IS 'Cliente HTTP asincrónico para invocar Edge Functions desde Postgres';
 
--- 5. Verificar que el cron job fue creado
+-- 5. Verificar si el cron job existe (opcional, no falla si no existe)
 DO $$
 DECLARE
   job_count integer;
@@ -62,9 +59,9 @@ BEGIN
   WHERE jobname = 'daily-reminder-scheduler';
 
   IF job_count > 0 THEN
-    RAISE NOTICE '✅ Cron job verificado: daily-reminder-scheduler';
+    RAISE NOTICE '✅ Cron job encontrado: daily-reminder-scheduler';
   ELSE
-    RAISE WARNING '⚠️ Cron job NO encontrado. Verificar configuración manual.';
+    RAISE NOTICE '⚠️ Cron job NO encontrado. Recuerda configurarlo manualmente siguiendo las instrucciones arriba.';
   END IF;
 END $$;
 

@@ -2,6 +2,20 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-14b] - 🐛 Fix: Error de Sintaxis en Migración 025
+
+### Fixed
+- **Migración 025**: Corregida sintaxis SQL del cron job para evitar errores de parsing
+  - **Problema**: Error "syntax error at or near SELECT" al ejecutar migración
+  - **Causa**: Sintaxis incorrecta en `format()` dentro de `cron.schedule()`
+  - **Solución**: Convertida creación automática del cron job a configuración manual
+  - Agregadas instrucciones claras paso a paso para configuración del scheduler
+  - Archivo modificado: `supabase/migrations/025_setup_scheduler_cron_job.sql`
+
+### Changed
+- La migración 025 ahora solo crea las extensiones (pg_cron y pg_net)
+- El cron job debe configurarse manualmente siguiendo las instrucciones en la migración
+
 ## [2025-10-14] - 🐛 Fix: Cron Job con Configuración Incorrecta - Recordatorios No Enviados
 
 ### 🔍 Análisis Post-Mortem (14/10 20:30)
