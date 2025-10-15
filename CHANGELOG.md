@@ -2,6 +2,20 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-14f] - 🐛 Fix: Subida de Imágenes a Storage
+
+### Fixed
+- **Upload de imágenes**: Corregido error que impedía subir imágenes al bucket de Storage
+  - **Problema**: Mensaje "Préstamo creado, pero la imagen no se pudo subir"
+  - **Causa**: Falta de headers de autenticación (Authorization y apikey) en fetch a Storage API
+  - **Solución**: Agregados headers con SUPABASE_ANON_KEY en uploadImageToStorage
+  - Archivo: `public/loan-form/app.js`
+
+### Technical Details
+- Agregada constante `SUPABASE_ANON_KEY` para autenticación de Storage
+- Headers añadidos: `Authorization: Bearer {token}` y `apikey: {token}`
+- Ahora las imágenes se suben correctamente al bucket `loan-images`
+
 ## [2025-10-14e] - 🎨 UX: Reubicación de Carga de Imagen en Formulario
 
 ### Changed
