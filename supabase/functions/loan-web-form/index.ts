@@ -300,8 +300,9 @@ serve(async (req: Request) => {
           itemDescription = body.loan_detail.trim();
         }
 
-        // Calcular fecha de devolución
-        const dueDate = calculateDate(body.date_option, body.custom_date);
+        // Usar fecha calculada del frontend (timezone del usuario)
+        // El frontend siempre envía la fecha calculada en custom_date
+        const dueDate = body.custom_date || calculateDate(body.date_option, body.custom_date);
 
         // Preparar contexto para FlowHandler
         const context: any = {

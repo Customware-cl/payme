@@ -624,6 +624,9 @@ async function createLoan() {
     try {
         const { contactId, contactName, contactPhone, newContact, loanType, loanDetail, loanConcept, dateOption, customDate, imageFile } = state.formData;
 
+        // Calcular fecha en timezone del usuario (sin recálculo en backend)
+        const calculatedDate = dateOption === 'custom' ? customDate : calculateDate(dateOption);
+
         // Primer paso: Crear el préstamo sin imagen
         const payload = {
             token: state.token,
@@ -635,7 +638,7 @@ async function createLoan() {
             loan_detail: loanDetail,
             loan_concept: loanConcept,
             date_option: dateOption,
-            custom_date: customDate
+            custom_date: calculatedDate  // Siempre enviar fecha calculada
         };
 
         const response = await fetch(LOAN_FORM_ENDPOINT, {

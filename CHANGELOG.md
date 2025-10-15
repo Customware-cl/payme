@@ -2,6 +2,38 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-14h] - 🐛 Fix Crítico: Fecha Incorrecta en "Mañana"
+
+### Fixed
+- **Cálculo de fechas en préstamos**: Corregido error de timezone que causaba +1 día en fecha de devolución
+  - **Problema**: Seleccionar "Mañana" registraba fecha incorrecta (+1 día) después de las 21:00 hora Chile
+  - **Ejemplo**: Usuario en Chile 14/10 23:06 selecciona "Mañana" → Se guardaba 16/10 en vez de 15/10
+  - **Causa**: Backend recalculaba fecha usando UTC mientras frontend calculaba en timezone local
+  - **Solución**: Frontend ahora envía fecha ya calculada, backend solo la almacena sin recalcular
+  - Archivos: `public/loan-form/app.js`, `supabase/functions/loan-web-form/index.ts`
+
+### Technical Details
+- **Root Cause**: Discrepancia de timezone entre frontend (Chile UTC-3) y backend (Deno UTC)
+  - Usuario a las 23:06 Chile (14/10) = 02:06 UTC (15/10)
+  - Frontend: `new Date()` usa timezone local → "mañana" = 15/10 ✓
+  - Backend: `new Date()` usa UTC → "mañana" = 16/10 ✗
+- **Regla Maestra**: "Si el usuario dice mañana, es esa fecha la que se debe almacenar, sin cálculos ni recálculos"
+
+### Implementation
+- **Frontend (`app.js`)**:
+  - Calcula fecha en timezone del usuario antes de enviar payload
+  - Siempre envía fecha calculada en campo `custom_date` (para todas las opciones, no solo "custom")
+  - Función `calculateDate()` mantiene lógica original usando `new Date()` local
+
+- **Backend (`index.ts`)**:
+  - Prioriza fecha recibida de frontend: `body.custom_date || calculateDate(...)`
+  - Mantiene `calculateDate()` como fallback para backward compatibility
+  - Comentario agregado: "Usar fecha calculada del frontend (timezone del usuario)"
+
+### Files Modified
+- `public/loan-form/app.js` - Líneas ~627-642: Calcular y enviar fecha en todas las opciones
+- `supabase/functions/loan-web-form/index.ts` - Líneas 303-305: Usar fecha del frontend sin recalcular
+
 ## [2025-10-14g] - 🐛 Fix Crítico: Error 401 al Cargar Contactos
 
 ### Fixed
