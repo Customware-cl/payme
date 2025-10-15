@@ -17,6 +17,14 @@ async function init() {
 
     console.log('Menu initialized', { hasToken: !!state.token });
 
+    // Validar sesión antes de mostrar el menú
+    const isValid = await validateSession();
+
+    if (!isValid) {
+        showExpiredScreen();
+        return;
+    }
+
     // Cargar nombre de usuario si hay token
     if (state.token) {
         await loadUserName();
@@ -24,6 +32,53 @@ async function init() {
 
     // Setup event listeners
     setupEventListeners();
+}
+
+// Validar sesión
+async function validateSession() {
+    // Si no hay token, sesión inválida
+    if (!state.token) {
+        console.log('No token found');
+        return false;
+    }
+
+    try {
+        // Intentar obtener datos de usuario para validar el token
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/menu-data?token=${state.token}&type=user`);
+
+        // Si el servidor retorna 401, el token es inválido o expirado
+        if (response.status === 401) {
+            console.log('Token invalid or expired (401)');
+            return false;
+        }
+
+        const data = await response.json();
+
+        // Si la respuesta indica error, sesión inválida
+        if (!data.success) {
+            console.log('Session validation failed:', data.error);
+            return false;
+        }
+
+        console.log('Session validated successfully');
+        return true;
+    } catch (error) {
+        console.error('Error validating session:', error);
+        return false;
+    }
+}
+
+// Mostrar pantalla de expiración
+function showExpiredScreen() {
+    const expiredScreen = $('#expired-screen');
+    const welcomeSection = $('#welcome-section');
+    const mainMenu = $('#main-menu');
+    const footer = $('.footer');
+
+    if (expiredScreen) expiredScreen.style.display = 'block';
+    if (welcomeSection) welcomeSection.style.display = 'none';
+    if (mainMenu) mainMenu.style.display = 'none';
+    if (footer) footer.style.display = 'none';
 }
 
 // Cargar nombre de usuario

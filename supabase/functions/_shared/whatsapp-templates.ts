@@ -144,7 +144,8 @@ export class WhatsAppTemplates {
           },
           body: JSON.stringify({
             tenant_id: tenantId,
-            contact_id: contactId
+            contact_id: contactId,
+            token_type: 'llt'
           })
         }
       );

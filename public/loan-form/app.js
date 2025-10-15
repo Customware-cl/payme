@@ -217,37 +217,73 @@ async function uploadImageToStorage(file, agreementId) {
     }
 }
 
+// Validar sesión
+async function validateSession() {
+    // Si no hay token, sesión inválida
+    if (!state.token) {
+        console.log('No token found');
+        return false;
+    }
+
+    try {
+        // Intentar obtener lista de contactos para validar el token
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/loan-web-form?token=${state.token}`);
+
+        // Si el servidor retorna 401, el token es inválido o expirado
+        if (response.status === 401) {
+            console.log('Token invalid or expired (401)');
+            return false;
+        }
+
+        const data = await response.json();
+
+        // Si la respuesta indica error, sesión inválida
+        if (!data.success) {
+            console.log('Session validation failed:', data.error);
+            return false;
+        }
+
+        // Guardar contactos cargados
+        state.contacts = data.contacts || [];
+
+        console.log('Session validated successfully');
+        return true;
+    } catch (error) {
+        console.error('Error validating session:', error);
+        return false;
+    }
+}
+
+// Mostrar pantalla de expiración
+function showExpiredScreen() {
+    const expiredScreen = $('#expired-screen');
+    const screens = $$('.screen');
+
+    if (expiredScreen) expiredScreen.style.display = 'flex';
+    screens.forEach(screen => screen.classList.remove('active'));
+}
+
 // Inicialización
 async function init() {
     const urlParams = new URLSearchParams(window.location.search);
     state.token = urlParams.get('token');
 
-    if (!state.token) {
-        showToast('Token inválido o expirado', 5000);
-        setTimeout(() => window.close(), 3000);
-        return;
-    }
+    console.log('Loan form initialized', { hasToken: !!state.token });
 
     showLoader(true);
 
-    try {
-        // Obtener lista de contactos
-        const response = await fetch(`${SUPABASE_URL}/functions/v1/loan-web-form?token=${state.token}`);
-        const data = await response.json();
+    // Validar sesión antes de mostrar el formulario
+    const isValid = await validateSession();
 
-        if (data.success) {
-            state.contacts = data.contacts || [];
-            renderContacts();
-        } else {
-            throw new Error(data.error || 'Error al cargar contactos');
-        }
-    } catch (error) {
-        console.error('Error loading contacts:', error);
-        showToast('Error al cargar contactos', 5000);
-    } finally {
-        showLoader(false);
+    showLoader(false);
+
+    if (!isValid) {
+        showExpiredScreen();
+        return;
     }
 
+    // Si la sesión es válida, renderizar contactos y configurar listeners
+    renderContacts();
     setupEventListeners();
 }
 

@@ -301,7 +301,8 @@ async function processInboundMessage(
               },
               body: JSON.stringify({
                 tenant_id: tenant.id,
-                contact_id: contact.id
+                contact_id: contact.id,
+                token_type: 'llt'
               })
             }
           );

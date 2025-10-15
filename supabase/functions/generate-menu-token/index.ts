@@ -17,12 +17,23 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { tenant_id, contact_id } = await req.json();
+    const { tenant_id, contact_id, token_type = 'short' } = await req.json();
 
     if (!tenant_id || !contact_id) {
       return new Response(JSON.stringify({
         success: false,
         error: 'tenant_id y contact_id son requeridos'
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Validar token_type
+    if (!['short', 'llt'].includes(token_type)) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'token_type debe ser "short" o "llt"'
       }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -69,9 +80,50 @@ serve(async (req: Request) => {
       });
     }
 
-    // Generar token único: menu_[tenant_id]_[contact_id]_[timestamp]
+    // Generar token según tipo
     const timestamp = Date.now();
-    const token = `menu_${tenant_id}_${contact_id}_${timestamp}`;
+    let token: string;
+    let expiresIn: number;
+    let expiresAt: Date;
+
+    if (token_type === 'llt') {
+      // Long-Lived Token: 30 días
+      const uuid = crypto.randomUUID();
+      expiresIn = 30 * 24 * 60 * 60; // 30 días en segundos
+      expiresAt = new Date(timestamp + (expiresIn * 1000));
+      token = `menu_llt_${tenant_id}_${contact_id}_${uuid}_${timestamp}`;
+
+      // Guardar en active_sessions
+      await supabase
+        .from('active_sessions')
+        .insert({
+          tenant_id: tenant_id,
+          contact_id: contact_id,
+          token: token,
+          token_type: 'llt',
+          expires_at: expiresAt.toISOString()
+        });
+
+    } else {
+      // Short token (backward compatible): 1 hora
+      expiresIn = 3600; // 1 hora
+      expiresAt = new Date(timestamp + (expiresIn * 1000));
+      token = `menu_${tenant_id}_${contact_id}_${timestamp}`;
+
+      // Opcional: también guardar short tokens en active_sessions para consistencia
+      // (comentado por ahora para mantener comportamiento actual)
+      /*
+      await supabase
+        .from('active_sessions')
+        .insert({
+          tenant_id: tenant_id,
+          contact_id: contact_id,
+          token: token,
+          token_type: 'short',
+          expires_at: expiresAt.toISOString()
+        });
+      */
+    }
 
     // URL del menú (puede configurarse con env var)
     const menuBaseUrl = Deno.env.get('NETLIFY_MENU_URL') || 'https://hilarious-brigadeiros-9b9834.netlify.app/menu';
@@ -87,18 +139,22 @@ serve(async (req: Request) => {
         payload: {
           token: token,
           url: menuUrl,
-          expires_in_seconds: 3600
+          token_type: token_type,
+          expires_in_seconds: expiresIn,
+          expires_at: expiresAt.toISOString()
         }
       });
 
-    console.log('Menu token generated:', { contact_id, token, url: menuUrl });
+    console.log('Menu token generated:', { contact_id, token_type, token, url: menuUrl, expires_in: expiresIn });
 
     return new Response(JSON.stringify({
       success: true,
       data: {
         token: token,
         url: menuUrl,
-        expires_in: 3600 // 1 hora
+        token_type: token_type,
+        expires_in: expiresIn,
+        expires_at: expiresAt.toISOString()
       }
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }

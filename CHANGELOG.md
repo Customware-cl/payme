@@ -2,6 +2,125 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-15b] - ✨ Feature: Long-Lived Tokens (LLT) y Validación de Sesión
+
+### Added
+- **Sistema de Long-Lived Tokens (LLT)**: Tokens de 30 días con validación en base de datos
+  - **Tabla `active_sessions`**: Almacena sesiones con control de expiración y revocación
+  - **Tipos de token**: Soporta tanto tokens cortos (1 hora) como LLT (30 días) - Backward compatible
+  - **Tracking**: Campo `last_used_at` actualizado automáticamente en cada uso
+  - **Cleanup automático**: Función `clean_expired_sessions()` para limpieza periódica
+  - Archivo: `supabase/migrations/027_active_sessions.sql`
+
+- **Validación de sesión en frontend**: Pantalla de expiración con copywriting simple
+  - **Menú principal**: Valida sesión antes de mostrar contenido
+  - **Loan form**: Valida sesión antes de cargar contactos
+  - **UX**: Mensaje claro "Este enlace ha expirado" sin términos técnicos
+  - **Acción**: Instrucción simple de solicitar nuevo enlace por WhatsApp
+  - Archivos: `public/menu/index.html`, `public/menu/app.js`, `public/loan-form/index.html`, `public/loan-form/app.js`
+
+### Modified
+- **Edge Function generate-menu-token**: Soporta generación de ambos tipos de token
+  - Parámetro `token_type`: Acepta 'short' (default) o 'llt'
+  - **Short tokens**: `menu_[tenant]_[contact]_[timestamp]` - 1 hora, validación stateless
+  - **LLT**: `menu_llt_[tenant]_[contact]_[uuid]_[timestamp]` - 30 días, validación en DB
+  - **Registro en DB**: Solo LLT se guardan en `active_sessions`
+  - Archivo: `supabase/functions/generate-menu-token/index.ts`
+
+- **Edge Function menu-data**: Validación asíncrona de tokens con soporte dual
+  - Función `parseToken()` ahora es async y recibe cliente Supabase
+  - **LLT**: Valida contra `active_sessions`, verifica expiración, actualiza `last_used_at`
+  - **Short**: Mantiene validación stateless original (backward compatible)
+  - **Respuesta 401**: Retorna error específico cuando token es inválido o expirado
+  - Archivo: `supabase/functions/menu-data/index.ts`
+
+### Frontend Changes
+- **Validación de sesión**: Nueva función `validateSession()` en menu y loan-form
+  - Hace request a backend para validar token antes de mostrar contenido
+  - Detecta 401 y muestra pantalla de expiración
+  - Maneja errores de red con fallback a pantalla de expiración
+
+- **Pantalla de expiración**: Diseño consistente con el resto de la app
+  - Icono emoji ⏰ para representar expiración
+  - Título: "Este enlace ha expirado"
+  - Mensaje: "Para acceder al [menú/formulario], solicita un nuevo enlace..."
+  - Info box: "¿Necesitas ayuda? Contáctanos por WhatsApp"
+  - Estilos responsive con animación de entrada
+
+### Technical Details
+- **Backward Compatibility**: 100% compatible con tokens cortos existentes
+  - Default token_type es 'short' para mantener comportamiento actual
+  - Frontend detecta automáticamente el tipo de token y lo valida correctamente
+  - No rompe código existente ni sesiones activas
+
+- **Security**:
+  - LLT almacenados con UUID único para evitar colisiones
+  - Campo `revoked` permite invalidar tokens manualmente
+  - Validación de expiración en cada request
+  - RLS policies protegen acceso a `active_sessions`
+
+- **Performance**:
+  - Short tokens no requieren DB lookup (más rápido)
+  - LLT tienen índice en columna token para lookup eficiente
+  - Last_used_at actualizado de forma no bloqueante
+
+### Files Modified
+- `supabase/migrations/027_active_sessions.sql` - Creado
+- `supabase/functions/generate-menu-token/index.ts` - Modificado
+- `supabase/functions/menu-data/index.ts` - Modificado
+- `public/menu/index.html` - Agregada pantalla de expiración
+- `public/menu/app.js` - Agregada validación de sesión
+- `public/menu/styles.css` - Agregados estilos de pantalla de expiración
+- `public/loan-form/index.html` - Agregada pantalla de expiración
+- `public/loan-form/app.js` - Agregada validación de sesión
+- `public/loan-form/styles.css` - Agregados estilos de pantalla de expiración
+
+### Deployment
+- Edge functions desplegadas a Supabase
+- Frontend buildeado y desplegado a Netlify
+- Deploy ID: 68efc2180b164a00917a49cc
+
+## [2025-10-15c] - 🚀 Activación: Tokens LLT de 30 días en Bot WhatsApp
+
+### Changed
+- **Bot WhatsApp genera tokens LLT por defecto**: Cambio de tokens de 1 hora a 30 días
+  - Parámetro `token_type: 'llt'` agregado en llamadas a `generate-menu-token`
+  - Todos los nuevos enlaces del menú ahora duran 30 días
+  - Backward compatible: Sistema sigue aceptando tokens cortos existentes
+  - Archivos modificados:
+    - `supabase/functions/wa_webhook/index.ts:305` - Agregado token_type al request
+    - `supabase/functions/_shared/whatsapp-templates.ts:148` - Agregado token_type al helper
+
+### Fixed
+- **Bugfix: Error 401 al cargar perfil sin datos**: Null pointer cuando usuario no tiene perfil creado
+  - Problema: Código intentaba acceder `profile.first_name` cuando profile era `null`
+  - Síntoma: Request GET a `/menu-data?type=profile` retornaba 401 Unauthorized
+  - Solución: Agregado null check explícito antes de mapear campos del perfil
+  - Cambio en `supabase/functions/menu-data/index.ts:208`:
+    ```typescript
+    profile: profile ? {
+      first_name: profile.first_name,
+      last_name: profile.last_name,
+      email: profile.email
+    } : null
+    ```
+  - Ahora retorna `profile: null` correctamente cuando usuario no tiene datos
+
+### Deployment
+- `wa_webhook` desplegado a Supabase (versión con LLT activado)
+- `menu-data` v13 desplegado con bugfix de null profile
+- Sistema operacional y listo para producción
+
+### User Experience Impact
+- **Usuarios nuevos**: Enlaces duran 30 días en lugar de 1 hora
+- **Usuarios sin perfil**: Ya no ven error 401, pueden acceder al menú correctamente
+- **Usuarios existentes**: Enlaces cortos (1h) siguen funcionando hasta expirar naturalmente
+
+### Testing
+- ✅ Validación manual: Acceso al menú con usuario sin perfil
+- ✅ Verificación: Profile retorna `null` sin errores
+- ✅ Deployment: Todas las edge functions desplegadas correctamente
+
 ## [2025-10-15a] - 📋 Análisis Estratégico: Arquitectura de Autenticación
 
 ### Added

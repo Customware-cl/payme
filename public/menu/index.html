@@ -16,14 +16,28 @@
             </div>
         </header>
 
+        <!-- Pantalla de Enlace Expirado (oculta por defecto) -->
+        <div class="expired-screen" id="expired-screen" style="display: none;">
+            <div class="expired-content">
+                <div class="expired-icon">⏰</div>
+                <h2 class="expired-title">Este enlace ha expirado</h2>
+                <p class="expired-message">
+                    Para acceder al menú, solicita un nuevo enlace escribiendo al WhatsApp de PayME.
+                </p>
+                <div class="expired-help">
+                    <p class="help-text">¿Necesitas ayuda? Contáctanos por WhatsApp</p>
+                </div>
+            </div>
+        </div>
+
         <!-- Sección de Bienvenida -->
-        <div class="welcome-section">
+        <div class="welcome-section" id="welcome-section">
             <h2 class="greeting" id="user-greeting">¡Hola! 👋</h2>
             <p class="subtitle">Gestiona tus préstamos de forma simple</p>
         </div>
 
         <!-- Menu Options -->
-        <main class="menu">
+        <main class="menu" id="main-menu">
             <button class="menu-item" id="btn-profile">
                 <div class="menu-icon">👤</div>
                 <div class="menu-content">
