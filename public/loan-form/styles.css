@@ -681,6 +681,110 @@ body {
     color: var(--text-secondary);
 }
 
+/* Sección de subida de imagen */
+.image-upload-section {
+    background: var(--bg-card);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 24px;
+    border: 2px dashed var(--border-color);
+}
+
+.image-upload-label {
+    display: block;
+    margin-bottom: 16px;
+}
+
+.image-upload-label .label-text {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: block;
+    margin-bottom: 4px;
+}
+
+.image-upload-label .label-hint {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.btn-upload-image {
+    width: 100%;
+    padding: 16px;
+    font-size: 16px;
+    font-weight: 600;
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all var(--transition);
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--bg-main);
+    color: var(--text-primary);
+}
+
+.btn-upload-image:active {
+    transform: scale(0.98);
+    background: var(--bg-card);
+}
+
+.upload-hint {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+    text-align: center;
+}
+
+.image-preview-container {
+    position: relative;
+    margin-bottom: 16px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg-main);
+}
+
+.image-preview-container.hidden {
+    display: none;
+}
+
+.image-preview {
+    width: 100%;
+    height: auto;
+    max-height: 300px;
+    object-fit: contain;
+    display: block;
+}
+
+.btn-remove-image {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition);
+}
+
+.btn-remove-image:hover {
+    background: rgba(0, 0, 0, 0.9);
+}
+
+.btn-remove-image:active {
+    transform: scale(0.95);
+}
+
 /* Responsive para tablets */
 @media (min-width: 768px) {
     .container {

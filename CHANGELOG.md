@@ -2,6 +2,54 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-14c] - ✨ Feature: Imagen Opcional en Préstamos
+
+### 📷 Nueva Funcionalidad
+
+Se agregó la capacidad de adjuntar una imagen opcional al crear un préstamo y visualizarla en el detalle.
+
+### 🎯 Cambios Implementados
+
+**1. Storage de Supabase**
+- Nuevo bucket `loan-images` para almacenar imágenes de préstamos
+- Tamaño máximo: 5MB por imagen
+- Formatos permitidos: JPG, PNG, WEBP
+- Políticas RLS configuradas para lectura pública y carga controlada
+
+**2. Formulario de Creación**
+- Sección opcional de subida de imagen en pantalla de confirmación
+- Preview en tiempo real de la imagen seleccionada
+- Validación de tamaño y tipo de archivo en cliente
+- Botón para eliminar imagen antes de enviar
+
+**3. Backend**
+- Edge function `loan-web-form` actualizado con método PATCH
+- Imagen se sube a Storage después de crear el préstamo
+- URL de imagen se guarda en `agreements.metadata.image_url`
+
+**4. Vista de Detalle**
+- Sección de imagen se muestra solo si el préstamo tiene imagen
+- Diseño responsivo con max-height de 400px
+- Imagen se carga desde Storage público
+
+### 📁 Archivos Modificados
+
+- `supabase/migrations/026_loan_images_bucket.sql` - Bucket y políticas
+- `public/loan-form/index.html` - Sección de imagen
+- `public/loan-form/styles.css` - Estilos para upload y preview
+- `public/loan-form/app.js` - Lógica de upload a Storage
+- `supabase/functions/loan-web-form/index.ts` - Endpoint PATCH
+- `public/menu/loan-detail.html` - Sección de visualización
+- `public/menu/loan-detail.js` - Renderizado condicional
+- `public/menu/styles.css` - Estilos para imagen en detalle
+
+### 🔒 Seguridad
+
+- Validación de tipo MIME en cliente y servidor
+- Límite de 5MB por archivo
+- Storage con políticas RLS configuradas
+- Solo formatos de imagen permitidos
+
 ## [2025-10-14b] - 🐛 Fix: Error de Sintaxis en Migración 025
 
 ### Fixed
