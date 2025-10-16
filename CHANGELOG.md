@@ -2,6 +2,54 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-15u] - 📄 Feature: Páginas legales y footer
+
+### Added
+- **Páginas legales**:
+  - `/terms` - Términos y Condiciones completos
+    - Información de la empresa (Somos PayME SpA)
+    - Descripción del servicio (préstamos P2P con recordatorios)
+    - Modelo Freemium (préstamos gratis, servicios con suscripción)
+    - Responsabilidades del usuario y limitación de responsabilidad
+    - Uso de WhatsApp Business API
+    - Jurisdicción: Chile, Santiago
+  - `/privacy` - Política de Privacidad
+    - Datos recopilados: Nombre y Teléfono
+    - Propósito: Gestión de préstamos y recordatorios WhatsApp
+    - Terceros: WhatsApp (Meta) y Supabase
+    - Derechos del usuario según Ley 19.628 (Chile)
+    - Seguridad: Cifrado, RLS, autenticación
+    - Retención de datos y derecho al olvido
+
+- **Footer en landing**:
+  - Sección Legal con links a Términos y Privacidad
+  - Información de contacto (email, ubicación, WhatsApp)
+  - Copyright dinámico con año actual
+  - Diseño responsive oscuro (#1a202c)
+
+### Changed
+- **src/App.jsx**: Agregar rutas `/terms` y `/privacy`
+- **src/pages/Home.jsx**: Agregar footer profesional con 3 secciones
+
+### Design
+- Header con gradiente púrpura (#667eea → #764ba2)
+- Botón "Volver al inicio" con ícono
+- Contenido estructurado con secciones numeradas
+- Tablas informativas en Política de Privacidad
+- Responsive para móvil
+
+### Files
+- `src/pages/TermsOfService.jsx` (nuevo)
+- `src/pages/PrivacyPolicy.jsx` (nuevo)
+- `src/pages/Home.jsx` (footer agregado)
+- `src/App.jsx` (rutas agregadas)
+
+### Impact
+- ✅ Cumplimiento legal básico para operar en Chile
+- ✅ Transparencia sobre datos personales (Ley 19.628)
+- ✅ Profesionalismo en landing page
+- ⚠️ Requiere revisión por abogado antes de producción
+
 ## [2025-10-15t] - 🐛 Fix: Mejoras en visualización y templates
 
 ### Fixed
