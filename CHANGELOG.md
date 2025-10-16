@@ -2,6 +2,128 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-16e] - 🐛 Fix: Nombre Incorrecto en Header y CORS 503 en create-received-loan
+
+### Fixed
+
+**1. Header muestra "Yo (Mi cuenta)" en lugar del nombre real**
+- **Problema**: El saludo en el menú web mostraba "¡Hola Yo (Mi cuenta)! 👋" en lugar del nombre real del usuario
+- **Causa raíz**: La función `menu-data` retornaba `tenant_contacts.name` que es "Yo (Mi cuenta)" para self-contacts, en lugar del nombre real del `contact_profile`
+- **Impacto**: Usuarios veían un saludo genérico en lugar de su nombre personal
+- **Fix**: Modificada función `menu-data` para obtener `first_name + last_name` del `contact_profile`
+
+**2. Error CORS 503 al registrar préstamo recibido**
+- **Problema**: Al intentar registrar "Caty me prestó $X", aparecía error CORS 503
+- **Causa raíz**: Edge function `create-received-loan` no estaba compilando correctamente las dependencias de `_shared`
+- **Impacto**: Usuarios no podían registrar préstamos recibidos desde el formulario web
+- **Fix**: Forzado rebuild del edge function para incluir correctamente archivos `_shared`
+
+### Changes
+
+**Edge Function: menu-data** (MODIFICADA)
+- **Archivo**: `/supabase/functions/menu-data/index.ts` (líneas 122-178)
+- **Cambio en GET type=user**:
+
+**Antes (INCORRECTO)**:
+```typescript
+const { data: contact } = await supabase
+  .from('tenant_contacts')
+  .select('name, contact_profile_id')
+  .eq('id', tokenData.contact_id)
+  .single();
+
+return {
+  name: contact?.name || 'Usuario', // ❌ Retorna "Yo (Mi cuenta)"
+  ...
+};
+```
+
+**Después (CORRECTO)**:
+```typescript
+const { data: contact } = await supabase
+  .from('tenant_contacts')
+  .select('name, contact_profile_id')
+  .eq('id', tokenData.contact_id)
+  .single();
+
+let userName = contact?.name || 'Usuario';
+
+if (contact?.contact_profile_id) {
+  const { data: profile } = await supabase
+    .from('contact_profiles')
+    .select('first_name, last_name, email')
+    .eq('id', contact.contact_profile_id)
+    .single();
+
+  if (profile?.first_name) {
+    userName = profile.first_name;
+    // ✅ Retorna solo "Felipe" o "Catherine" (sin apellido)
+  }
+}
+
+return {
+  name: userName,
+  ...
+};
+```
+
+**Edge Function: create-received-loan** (REBUILT)
+- **Archivo**: `/supabase/functions/create-received-loan/index.ts`
+- **Acción**: Forzado rebuild para incluir dependencias `_shared`
+- **Resultado**: Script size cambió de "No change found" a "80.47kB" (incluyó correctamente `user-detection.ts` y `whatsapp-templates.ts`)
+
+### Technical Details
+
+**Problema de self-contact names**:
+```sql
+-- Self-contacts tienen nombres genéricos
+SELECT name FROM tenant_contacts WHERE metadata->>'is_self' = 'true';
+-- Resultado: "Yo (Mi cuenta)"
+
+-- Pero contact_profiles tienen nombres reales
+SELECT first_name, last_name FROM contact_profiles;
+-- Resultado: "Felipe", "Abarca"
+```
+
+**Flujo de corrección**:
+1. Frontend llama `GET /menu-data?type=user`
+2. Backend obtiene `tenant_contact` (name="Yo (Mi cuenta)")
+3. Backend obtiene `contact_profile` asociado
+4. Si existe `first_name`, construye nombre completo
+5. Retorna nombre real en lugar de "Yo (Mi cuenta)"
+
+**Deployment de create-received-loan**:
+```bash
+# Primer intento (no recompiló)
+npx supabase functions deploy create-received-loan --no-verify-jwt
+# Output: "No change found in Function: create-received-loan"
+
+# Segundo intento (con comment modificado para forzar rebuild)
+npx supabase functions deploy create-received-loan --no-verify-jwt
+# Output: "Deploying Function: create-received-loan (script size: 80.47kB)"
+# ✅ Ahora incluye dependencias _shared correctamente
+```
+
+### Deployment
+
+```bash
+# Edge functions desplegados
+npx supabase functions deploy menu-data --no-verify-jwt
+npx supabase functions deploy create-received-loan --no-verify-jwt
+```
+
+### Testing
+
+**Test 1: Nombre en header**
+- ✅ Acción: Abrir menú web con token de Felipe
+- ✅ Resultado esperado: Ver "¡Hola Felipe! 👋" (no "Yo (Mi cuenta)")
+
+**Test 2: Registrar préstamo recibido**
+- ✅ Acción: Felipe registra "Caty me prestó $5,000"
+- ✅ Resultado esperado: No error CORS 503, agreement creado correctamente
+
+---
+
 ## [2025-10-16d] - 🐛 Fix: Préstamos Recibidos y Formulario de Préstamos Recibidos
 
 ### Fixed

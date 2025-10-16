@@ -130,6 +130,7 @@ serve(async (req: Request) => {
         // Detectar si el usuario requiere onboarding (no tiene tenant propio)
         let requiresOnboarding = false;
         let hasProfileData = false;
+        let userName = contact?.name || 'Usuario';
 
         if (contact?.contact_profile_id) {
           // Verificar si tiene tenant propio
@@ -141,20 +142,26 @@ serve(async (req: Request) => {
 
           requiresOnboarding = !userTenant;
 
-          // Verificar si tiene datos de perfil (nombre, apellido, email)
-          if (contact.contact_profile_id) {
-            const { data: profile } = await supabase
-              .from('contact_profiles')
-              .select('first_name, last_name, email')
-              .eq('id', contact.contact_profile_id)
-              .single();
+          // Obtener datos del contact_profile
+          const { data: profile } = await supabase
+            .from('contact_profiles')
+            .select('first_name, last_name, email')
+            .eq('id', contact.contact_profile_id)
+            .single();
 
-            hasProfileData = !!(profile?.first_name && profile?.last_name && profile?.email);
+          if (profile) {
+            hasProfileData = !!(profile.first_name && profile.last_name && profile.email);
+
+            // Usar solo el primer nombre del contact_profile si existe
+            if (profile.first_name) {
+              userName = profile.first_name;
+            }
           }
         }
 
         console.log('[MENU_DATA] User check:', {
           contact_id: tokenData.contact_id,
+          user_name: userName,
           requires_onboarding: requiresOnboarding,
           has_profile_data: hasProfileData
         });
@@ -162,7 +169,7 @@ serve(async (req: Request) => {
         return new Response(JSON.stringify({
           success: true,
           contact_id: tokenData.contact_id,
-          name: contact?.name || 'Usuario',
+          name: userName,
           requires_onboarding: requiresOnboarding,
           has_profile_data: hasProfileData
         }), {
