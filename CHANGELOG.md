@@ -2,6 +2,150 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-15y] - 🐛 Fix: Error al crear préstamos de objetos (amount=0)
+
+### Fixed
+- **Error 400 al crear préstamos de objetos en "Me prestaron"**
+  - **Problema**: Al registrar un préstamo de objeto (no dinero), la validación rechazaba con error "Datos del préstamo incompletos (amount, due_date requeridos)"
+  - **Causa raíz**: La validación `!loan.amount` fallaba cuando `amount: 0` (objetos sin valor monetario)
+  - **Logs analizados**: Request mostraba `{loan: {amount: 0, title: "papel", description: "papel"}}`
+
+### Changes
+- **supabase/functions/create-received-loan/index.ts**:
+  - **Líneas 145-168**: Actualizar validación de datos del préstamo
+    - Separar validación de `due_date` (siempre requerido)
+    - Agregar lógica para validar `monto O descripción`:
+      - `hasAmount = loan.amount && loan.amount > 0`
+      - `hasItemDescription = loan.title || loan.description || loan.item_description`
+    - Permitir préstamos con `amount: 0` si tienen descripción de objeto
+
+### Technical Details
+**Validación anterior**:
+```typescript
+// ❌ ANTES (rechazaba objetos):
+if (!loan || !loan.amount || !loan.due_date) {
+  return error('Datos del préstamo incompletos (amount, due_date requeridos)');
+}
+// Problema: !0 es true → falla para objetos
+```
+
+**Validación nueva**:
+```typescript
+// ✅ DESPUÉS (acepta dinero o objetos):
+if (!loan || !loan.due_date) {
+  return error('Datos del préstamo incompletos (due_date requerido)');
+}
+
+const hasAmount = loan.amount && loan.amount > 0;
+const hasItemDescription = loan.title || loan.description || loan.item_description;
+
+if (!hasAmount && !hasItemDescription) {
+  return error('El préstamo debe tener un monto o una descripción del objeto');
+}
+```
+
+**Casos cubiertos**:
+- ✅ Dinero: `{amount: 50000, currency: "CLP"}` → válido
+- ✅ Objeto: `{amount: 0, title: "papel", description: "papel"}` → válido
+- ❌ Vacío: `{amount: 0}` → inválido (no tiene ni monto ni descripción)
+
+### Testing
+**Request de prueba que ahora funciona**:
+```json
+{
+  "lender": {"contact_id": "..."},
+  "loan": {
+    "amount": 0,
+    "currency": "CLP",
+    "due_date": "2025-10-16",
+    "title": "papel",
+    "description": "papel"
+  },
+  "token": "menu_llt_..."
+}
+```
+
+### Deployment
+```bash
+npx supabase functions deploy create-received-loan --no-verify-jwt
+```
+
+## [2025-10-15x] - 🐛 Fix: Error 400 al crear préstamo "Me prestaron"
+
+### Fixed
+- **Error 400 en notificaciones de préstamos recibidos**
+  - **Problema**: Al registrar "Me prestaron", si el lender era usuario de la app, la función fallaba con error 400
+  - **Causa raíz**: Se intentaba crear un evento con `contact_id` del lender en el tenant del borrower, pero el evento debe ir al tenant del lender
+  - **Logs**: `POST /rest/v1/events | 400` al crear notificación in-app
+
+### Changes
+- **supabase/functions/create-received-loan/index.ts**:
+  - **Línea 316-373**: Corregir lógica de notificaciones cuando lender es usuario
+    1. Buscar `tenant_contact` del lender en su propio tenant
+    2. Si no existe, crear `self_contact` automáticamente
+    3. Usar el `contact_id` correcto al crear evento
+    4. Manejar errores apropiadamente
+
+### Technical Details
+**Análisis del problema**:
+```typescript
+// ❌ ANTES (incorrecto):
+await supabase.from('events').insert({
+  tenant_id: userDetection.tenant_id,      // ✓ Tenant del lender
+  contact_id: lender_tenant_contact_id,    // ✗ ID en tenant del BORROWER
+  agreement_id: agreement.id,
+  event_type: 'button_clicked',
+  payload: {...}
+});
+
+// ✅ DESPUÉS (correcto):
+// 1. Buscar tenant_contact del lender en SU PROPIO tenant
+const { data: lenderOwnContact } = await supabase
+  .from('tenant_contacts')
+  .select('id')
+  .eq('tenant_id', userDetection.tenant_id)
+  .eq('contact_profile_id', lender_contact_profile_id)
+  .single();
+
+// 2. Si no existe, crear self_contact
+if (!lenderContactIdInOwnTenant) {
+  await supabase.from('tenant_contacts').insert({
+    tenant_id: userDetection.tenant_id,
+    contact_profile_id: lender_contact_profile_id,
+    name: userDetection.user_name || lenderName,
+    metadata: { is_self: true, created_from: 'received_loan_notification' }
+  });
+}
+
+// 3. Crear evento con contact_id correcto
+await supabase.from('events').insert({
+  tenant_id: userDetection.tenant_id,
+  contact_id: lenderContactIdInOwnTenant,  // ✓ ID en tenant del LENDER
+  agreement_id: agreement.id,
+  event_type: 'button_clicked',
+  payload: {...}
+});
+```
+
+**Contexto**:
+- Borrower registra préstamo que recibió de Lender
+- Sistema detecta si Lender es usuario de la app (tiene tenant propio)
+- Si es usuario, debe notificarse en SU tenant, no en el del borrower
+- `lender_tenant_contact_id` es válido solo en tenant del borrower
+- Necesitamos el `tenant_contact_id` del lender en su propio tenant
+
+### Impact
+- ✅ Préstamos "Me prestaron" se registran correctamente
+- ✅ Notificaciones in-app funcionan cuando lender es usuario
+- ✅ Se crean `self_contacts` automáticamente si no existen
+- ✅ Manejo robusto de errores con status codes informativos
+- ✅ Viralidad funcional: usuarios pueden notificarse entre sí
+
+### Deployment
+```bash
+npx supabase functions deploy create-received-loan --no-verify-jwt
+```
+
 ## [2025-10-15w] - 🎨 Fix: Alinear diseño visual de loans Screen 0 con loan-form
 
 ### Fixed

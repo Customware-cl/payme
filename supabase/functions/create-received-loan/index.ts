@@ -143,10 +143,24 @@ serve(async (req) => {
     const { tenant_id, contact_id, user_id } = tokenData;
 
     // Validar datos del préstamo
-    if (!loan || !loan.amount || !loan.due_date) {
+    if (!loan || !loan.due_date) {
       return new Response(JSON.stringify({
         success: false,
-        error: 'Datos del préstamo incompletos (amount, due_date requeridos)'
+        error: 'Datos del préstamo incompletos (due_date requerido)'
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Validar que tenga monto O descripción de objeto
+    const hasAmount = loan.amount && loan.amount > 0;
+    const hasItemDescription = loan.title || loan.description || loan.item_description;
+
+    if (!hasAmount && !hasItemDescription) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'El préstamo debe tener un monto o una descripción del objeto'
       }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -317,22 +331,59 @@ serve(async (req) => {
       // ESCENARIO A o B: Lender es usuario de la app
       console.log('[CREATE_RECEIVED_LOAN] Lender is app user, sending in-app notification');
 
-      // Registrar evento de notificación
-      await supabase.from('events').insert({
-        tenant_id: userDetection.tenant_id,
-        contact_id: lender_tenant_contact_id,
-        agreement_id: agreement.id,
-        event_type: 'button_clicked', // Usar tipo existente o crear uno nuevo
-        payload: {
-          type: 'loan_registered_by_borrower',
-          borrower_name: borrowerName,
-          amount: loan.amount,
-          currency: loan.currency || 'CLP',
-          message: `${borrowerName} registró un préstamo que recibió de ti`
-        }
-      });
+      // Buscar el tenant_contact del lender en su propio tenant
+      const { data: lenderOwnContact } = await supabase
+        .from('tenant_contacts')
+        .select('id')
+        .eq('tenant_id', userDetection.tenant_id)
+        .eq('contact_profile_id', lender_contact_profile_id)
+        .single();
 
-      invitationStatus = { sent: true, type: 'in_app_notification' };
+      let lenderContactIdInOwnTenant = lenderOwnContact?.id;
+
+      // Si no existe, crear un self_contact para el lender en su propio tenant
+      if (!lenderContactIdInOwnTenant) {
+        console.log('[CREATE_RECEIVED_LOAN] Creating self_contact for lender in their own tenant');
+        const { data: newSelfContact } = await supabase
+          .from('tenant_contacts')
+          .insert({
+            tenant_id: userDetection.tenant_id,
+            contact_profile_id: lender_contact_profile_id,
+            name: userDetection.user_name || lenderName,
+            metadata: { is_self: true, created_from: 'received_loan_notification' }
+          })
+          .select('id')
+          .single();
+
+        lenderContactIdInOwnTenant = newSelfContact?.id;
+      }
+
+      if (lenderContactIdInOwnTenant) {
+        // Registrar evento de notificación
+        const { error: eventError } = await supabase.from('events').insert({
+          tenant_id: userDetection.tenant_id,
+          contact_id: lenderContactIdInOwnTenant,
+          agreement_id: agreement.id,
+          event_type: 'button_clicked',
+          payload: {
+            type: 'loan_registered_by_borrower',
+            borrower_name: borrowerName,
+            amount: loan.amount,
+            currency: loan.currency || 'CLP',
+            message: `${borrowerName} registró un préstamo que recibió de ti`
+          }
+        });
+
+        if (eventError) {
+          console.error('[CREATE_RECEIVED_LOAN] Error creating event:', eventError);
+          invitationStatus = { sent: false, type: 'in_app_notification', error: eventError.message };
+        } else {
+          invitationStatus = { sent: true, type: 'in_app_notification' };
+        }
+      } else {
+        console.error('[CREATE_RECEIVED_LOAN] Could not find or create lender contact in their own tenant');
+        invitationStatus = { sent: false, type: 'in_app_notification', error: 'Could not create contact' };
+      }
 
     } else {
       // ESCENARIO C: Lender NO es usuario, enviar invitación por WhatsApp
