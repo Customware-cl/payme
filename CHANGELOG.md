@@ -220,13 +220,66 @@ mcp__supabase__apply_migration improve_ensure_user_tenant_with_whatsapp_and_reci
 ### Breaking Changes
 - Ninguno. Mejora transparente del flujo existente.
 
-### Frontend Requirements
-El frontend del menú web debe:
-1. Consultar GET /menu-data?type=user al cargar
-2. Si `requires_onboarding === true` → Mostrar pantalla de perfil
-3. Bloquear acceso a otras pantallas hasta completar perfil
-4. Al completar → POST /complete-onboarding
-5. Recargar menú con tenant ya creado
+### Next Steps (Testing Pendiente)
+
+**Prueba End-to-End del Flujo de Onboarding**:
+
+1. **Setup inicial**:
+   - Crear nuevo contact_profile (simular usuario nuevo)
+   - Usuario debe tener SOLO phone_e164, sin nombre/apellido/email
+
+2. **Paso 1 - Creación de préstamo**:
+   - Felipe crea préstamo a nuevo usuario (+56999999999)
+   - Verificar: contact_profile creado
+   - Verificar: tenant_contact creado en tenant de Felipe
+   - Verificar: Nuevo usuario NO tiene tenant propio
+
+3. **Paso 2 - Apertura del menú**:
+   - Generar token del menú para nuevo usuario
+   - Abrir /menu?token=...
+   - **Verificar**: Pantalla de onboarding se muestra automáticamente
+   - **Verificar**: Menú principal y footer ocultos
+
+4. **Paso 3 - Completar onboarding**:
+   - Ingresar nombre: "Juan"
+   - Ingresar apellido: "Pérez"
+   - Ingresar email: "juan@example.com"
+   - Submit formulario
+   - **Verificar**: Loading state se muestra
+   - **Verificar**: No hay errores en consola
+
+5. **Paso 4 - Verificación backend**:
+   - Verificar tenant creado: "Juan Pérez"
+   - Verificar whatsapp_phone_number_id asignado
+   - Verificar owner_contact_profile_id correcto
+   - Verificar contact_profile actualizado con nombre/apellido/email
+
+6. **Paso 5 - Relaciones recíprocas**:
+   - Verificar tenant_contact de Felipe en tenant de Juan
+   - Verificar tenant_contact de Juan en tenant de Felipe
+   - Ambos deben verse mutuamente en contactos
+
+7. **Paso 6 - Menú completo**:
+   - Página recarga automáticamente
+   - **Verificar**: Menú principal se muestra
+   - **Verificar**: Saludo personalizado "¡Hola Juan! 👋"
+   - **Verificar**: Todas las opciones disponibles
+
+8. **Paso 7 - Funcionalidad completa**:
+   - Juan puede ver estado de préstamos
+   - Juan puede crear nuevos préstamos
+   - WhatsApp notifications funcionan
+
+**Pruebas de Validación**:
+- Intentar submit con email inválido → Ver error
+- Intentar submit con nombre con números → Ver error
+- Intentar submit con campos vacíos → Ver error
+- Verificar que errores se muestren correctamente en UI
+
+**Pruebas de Edge Cases**:
+- Usuario con onboarding ya completado → No ver pantalla
+- Token expirado → Pantalla de "enlace expirado"
+- Usuario sin contact_profile_id → Error manejado
 
 ---
 
