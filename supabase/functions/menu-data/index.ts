@@ -119,18 +119,52 @@ serve(async (req: Request) => {
 
       console.log('Loading data:', { type, contact_id: tokenData.contact_id });
 
-      // Para obtener nombre de usuario
+      // Para obtener nombre de usuario y detectar si requiere onboarding
       if (type === 'user') {
         const { data: contact } = await supabase
           .from('tenant_contacts')
-          .select('name')
+          .select('name, contact_profile_id')
           .eq('id', tokenData.contact_id)
           .single();
+
+        // Detectar si el usuario requiere onboarding (no tiene tenant propio)
+        let requiresOnboarding = false;
+        let hasProfileData = false;
+
+        if (contact?.contact_profile_id) {
+          // Verificar si tiene tenant propio
+          const { data: userTenant } = await supabase
+            .from('tenants')
+            .select('id')
+            .eq('owner_contact_profile_id', contact.contact_profile_id)
+            .maybeSingle();
+
+          requiresOnboarding = !userTenant;
+
+          // Verificar si tiene datos de perfil (nombre, apellido, email)
+          if (contact.contact_profile_id) {
+            const { data: profile } = await supabase
+              .from('contact_profiles')
+              .select('first_name, last_name, email')
+              .eq('id', contact.contact_profile_id)
+              .single();
+
+            hasProfileData = !!(profile?.first_name && profile?.last_name && profile?.email);
+          }
+        }
+
+        console.log('[MENU_DATA] User check:', {
+          contact_id: tokenData.contact_id,
+          requires_onboarding: requiresOnboarding,
+          has_profile_data: hasProfileData
+        });
 
         return new Response(JSON.stringify({
           success: true,
           contact_id: tokenData.contact_id,
-          name: contact?.name || 'Usuario'
+          name: contact?.name || 'Usuario',
+          requires_onboarding: requiresOnboarding,
+          has_profile_data: hasProfileData
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });

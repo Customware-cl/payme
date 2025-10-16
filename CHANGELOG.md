@@ -2,6 +2,172 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-16c] - ✨ Feature: Flujo de Onboarding Automático para Nuevos Usuarios
+
+### Added
+- **Sistema de onboarding automático al abrir menú web por primera vez**
+  - Nuevo usuario recibe préstamo → Abre menú → Completa perfil → Tenant creado automáticamente
+  - Detección automática si requiere onboarding
+  - WhatsApp configurado desde el inicio
+  - Relaciones recíprocas automáticas con quien lo invitó
+
+### Changes
+
+**1. Edge Function: `complete-onboarding` (NUEVA)**
+- **Path**: `/supabase/functions/complete-onboarding/index.ts`
+- **Método**: POST
+- **Request**:
+  ```json
+  {
+    "token": "menu_llt_...",
+    "first_name": "Juan",
+    "last_name": "Pérez",
+    "email": "juan@example.com"
+  }
+  ```
+- **Funcionalidad**:
+  - Valida token del menú
+  - Actualiza `contact_profile` con nombre, apellido, email
+  - Ejecuta `ensure_user_tenant()` para crear tenant
+  - Retorna `tenant_id` y datos del usuario
+- **Validaciones**:
+  - Email: formato RFC 5322
+  - Nombres: 2-50 caracteres, solo letras
+
+**2. Edge Function: `menu-data` (MODIFICADA)**
+- **Archivo**: `/supabase/functions/menu-data/index.ts`
+- **Cambio en GET type=user** (líneas 122-171):
+  - Detecta si usuario tiene tenant propio
+  - Si NO tiene tenant → `requires_onboarding: true`
+  - Si NO tiene datos de perfil → `has_profile_data: false`
+  - Frontend puede redirigir automáticamente a onboarding
+
+**Response mejorado**:
+```json
+{
+  "success": true,
+  "contact_id": "uuid",
+  "name": "Juan",
+  "requires_onboarding": true,     // ← NUEVO
+  "has_profile_data": false        // ← NUEVO
+}
+```
+
+**3. SQL Function: `ensure_user_tenant()` (MEJORADA)**
+- **Migration**: `improve_ensure_user_tenant_with_whatsapp_and_reciprocal`
+- **Mejoras**:
+  1. **WhatsApp Automático**: Asigna `whatsapp_phone_number_id` y `whatsapp_business_account_id` compartidos
+  2. **Relaciones Recíprocas**: Crea automáticamente tenant_contacts bidireccionales con lenders
+  3. **Detección de Lenders**: Busca agreements donde el usuario es borrower y crea relaciones con los lenders
+
+**Lógica de relaciones recíprocas**:
+```sql
+-- Si Felipe le prestó a Juan, al crear el tenant de Juan:
+-- 1. Crear tenant_contact de Felipe en tenant de Juan
+-- 2. Crear tenant_contact de Juan en tenant de Felipe (si no existe)
+-- Resultado: Ambos se ven mutuamente
+```
+
+### Flujo Completo
+
+```
+Paso 1: Felipe crea préstamo a Juan (+56912345678)
+├─ contact_profile creado (solo phone)
+├─ tenant_contact en tenant de Felipe
+└─ Juan NO tiene tenant todavía
+
+Paso 2: Juan recibe link del menú y lo abre
+├─ GET /menu-data?type=user&token=...
+├─ Response: requires_onboarding=true, has_profile_data=false
+└─ Frontend muestra pantalla "Completa tu perfil"
+
+Paso 3: Juan ingresa nombre, apellido, email
+├─ POST /complete-onboarding
+├─ Actualiza contact_profile
+├─ Ejecuta ensure_user_tenant()
+│   ├─ Crea tenant "Juan Pérez"
+│   ├─ Asigna WhatsApp config
+│   ├─ Crea user en tabla users
+│   ├─ Crea self-contact
+│   ├─ Detecta que Felipe es lender
+│   ├─ Crea tenant_contact de Felipe en tenant de Juan
+│   └─ Crea tenant_contact de Juan en tenant de Felipe
+└─ Retorna tenant_id
+
+Paso 4: Juan accede al menú completo
+✅ Tiene tenant propio
+✅ WhatsApp configurado
+✅ Ve a Felipe en contactos
+✅ Felipe ve a Juan en contactos
+✅ Puede crear préstamos
+```
+
+### Technical Details
+
+**Detección de Onboarding**:
+```typescript
+// menu-data/index.ts
+const { data: userTenant } = await supabase
+  .from('tenants')
+  .select('id')
+  .eq('owner_contact_profile_id', contact.contact_profile_id)
+  .maybeSingle();
+
+const requiresOnboarding = !userTenant;
+```
+
+**Creación de Relaciones Recíprocas**:
+```sql
+-- En ensure_user_tenant()
+FOR v_lender_profile_id, v_lender_tenant_id IN
+  SELECT DISTINCT tc_lender.contact_profile_id, a.tenant_id
+  FROM agreements a
+  WHERE tc_borrower.contact_profile_id = p_contact_profile_id
+LOOP
+  -- Crear tenant_contact del lender en tenant del nuevo usuario
+  -- Crear tenant_contact del nuevo usuario en tenant del lender
+END LOOP;
+```
+
+**WhatsApp Compartido**:
+```sql
+v_waba_phone_number_id := '778143428720890';
+v_waba_business_id := '773972555504544';
+
+INSERT INTO tenants (whatsapp_phone_number_id, whatsapp_business_account_id, ...)
+VALUES (v_waba_phone_number_id, v_waba_business_id, ...);
+```
+
+### Deployment
+```bash
+# Edge functions
+npx supabase functions deploy complete-onboarding --no-verify-jwt
+npx supabase functions deploy menu-data --no-verify-jwt
+
+# Database migration (aplicada vía MCP)
+mcp__supabase__apply_migration improve_ensure_user_tenant_with_whatsapp_and_reciprocal
+```
+
+### Validation
+- ✅ Nuevo usuario detectado como `requires_onboarding: true`
+- ✅ Onboarding crea tenant automáticamente
+- ✅ WhatsApp configurado desde el inicio
+- ✅ Relaciones recíprocas creadas correctamente
+- ✅ Usuario puede usar app completa después de onboarding
+
+### Breaking Changes
+- Ninguno. Mejora transparente del flujo existente.
+
+### Frontend Requirements
+El frontend del menú web debe:
+1. Consultar GET /menu-data?type=user al cargar
+2. Si `requires_onboarding === true` → Mostrar pantalla de perfil
+3. Bloquear acceso a otras pantallas hasta completar perfil
+4. Al completar → POST /complete-onboarding
+5. Recargar menú con tenant ya creado
+
+---
+
 ## [2025-10-16b] - 🐛 Fix: Notificaciones WhatsApp no se enviaban desde tenants de usuarios
 
 ### Fixed
