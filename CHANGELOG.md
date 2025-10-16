@@ -2,6 +2,41 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-15w] - 🎨 Fix: Alinear diseño visual de loans Screen 0 con loan-form
+
+### Fixed
+- **Fondo gris en Screen 0 de loans**
+  - **Problema**: loans Screen 0 tenía fondo gris mientras loan-form tenía fondo blanco
+  - **Causa raíz**: `.screen > .container` en styles.css no tenía `background: #ffffff;`
+  - **Impacto**: Menor contraste, diseño inconsistente entre páginas
+
+### Changes
+- **public/menu/styles.css**:
+  - **Línea 1320**: Agregar `background: #ffffff;` a `.screen > .container`
+    ```css
+    .screen > .container {
+        padding: 20px;
+        background: #ffffff;  /* Nuevo: fondo blanco como loan-form */
+    }
+    ```
+
+### Technical Details
+**Análisis del problema**:
+- loan-form Screen 0: fondo blanco (implícito de container base)
+- loans Screen 0: fondo gris (#f0f2f5 de body)
+- Diferencia causaba inconsistencia visual
+
+**Solución aplicada**:
+- Agregar fondo blanco explícito a `.screen > .container`
+- Asegura consistencia visual entre loan-form y loans
+- Mantiene el diseño limpio y moderno de WhatsApp
+
+### Impact
+- ✅ Diseño visual consistente entre loan-form y loans
+- ✅ Fondo blanco igual en ambas páginas
+- ✅ Mejor contraste en botones y textos
+- ✅ Experiencia de usuario más coherente
+
 ## [2025-10-15v] - 🐛 Fix: Scroll infinito en loans Screen 0
 
 ### Fixed

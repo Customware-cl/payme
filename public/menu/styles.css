@@ -1317,6 +1317,7 @@ body {
 /* Screen container con padding */
 .screen > .container {
     padding: 20px;
+    background: #ffffff;
 }
 
 /* Screens */
