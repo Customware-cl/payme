@@ -2,6 +2,95 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-15t] - 🐛 Fix: Mejoras en visualización y templates
+
+### Fixed
+- **loan-detail.js**: Mostrar concepto correcto según tipo de préstamo
+  - Préstamos de dinero: Mostrar `title` (concepto/razón del préstamo)
+  - Préstamos de objetos: Mostrar `item_description` (descripción del objeto)
+  - **Antes**: Solo mostraba `item_description` (incorrecto para dinero)
+
+### Added
+- **whatsapp-templates.ts**: Método `sendLoanInvitationTemplate()`
+  - Template para invitaciones virales cuando lender no es usuario
+  - Variables: `lender_name`, `borrower_name`, `amount`
+  - Botón dinámico con `invitation_url` para pre-registro
+  - Usado por `create-received-loan` para invitar prestamistas
+
+### Changed
+- **.claude/CLAUDE.md**: Agregar instrucción de leer `EDGE_FUNCTIONS_DEPLOYMENT.md` antes de desplegar
+- **docs/EDGE_FUNCTIONS_DEPLOYMENT.md**: Actualizaciones menores
+
+### Impact
+- ✅ UX mejorada en detalles de préstamo
+- ✅ Invitaciones virales funcionando con plantilla aprobada
+- ✅ Documentación mejorada para deployment
+
+## [2025-10-15s] - 🚀 Feature: Funcionalidad "Me prestaron" completa
+
+### Added
+- **Arquitectura Self-Contact**: Patrón para préstamos bidireccionales
+  - Cada tenant tiene `tenant_contact` especial que representa al usuario
+  - `metadata.is_self = true` identifica este contacto
+  - Permite registrar préstamos donde usuario es borrower
+
+### Database (Migración 027)
+- **Función**: `get_or_create_self_contact(tenant_id, user_id)`
+  - Crea tenant_contact con `metadata.is_self = true`
+  - Nombre fijo: "Yo (Mi cuenta)"
+  - Creación lazy (solo cuando se necesita)
+- **Índice**: `idx_tenant_contacts_is_self` para performance
+- **Soporte**: active_sessions con tokens LLT
+
+### Edge Function: create-received-loan
+- **Endpoint**: `POST /functions/v1/create-received-loan`
+- **Funcionalidad**: Crear préstamos donde YO soy borrower
+  - `tenant_contact_id = self_contact` (yo como borrower)
+  - `lender_tenant_contact_id = contacto_prestamista`
+- **Detección viral**: Si lender es usuario → notificación, si no → invitación
+- **Validación**: Soporta tokens menu (short y LLT)
+
+### Helper: user-detection.ts
+- **Función**: `isUserByPhone(phone)` - Detecta si phone pertenece a usuario
+- **Uso**: Decidir entre notificación in-app o invitación viral
+
+### Documentation
+- **SELF_CONTACT_ARCHITECTURE.md** (323 líneas):
+  - Arquitectura completa del patrón
+  - Ejemplos de queries
+  - Consideraciones y best practices
+- **VIRAL_INVITATIONS.md**:
+  - Sistema de invitaciones virales
+  - Flujos de invitación
+
+### Queries Soportadas
+```sql
+-- Préstamos que otorgué
+WHERE lender_tenant_contact_id = get_self_contact_id(tenant_id)
+
+-- Préstamos que recibí
+WHERE tenant_contact_id = get_self_contact_id(tenant_id)
+```
+
+### Integration
+- ✅ **loan-form**: Screen 0 "Me prestaron" usa `create-received-loan`
+- ✅ **menu/loans**: Muestra ambos tipos de préstamos
+- ✅ **RLS policies**: Funcionan sin cambios
+- ✅ **Consistencia**: Arquitectura uniforme para ambas direcciones
+
+### Files Added
+- `supabase/functions/create-received-loan/index.ts` (392 líneas)
+- `supabase/migrations/027_add_self_contact_support.sql` (138 líneas)
+- `supabase/functions/_shared/user-detection.ts` (56 líneas)
+- `docs/SELF_CONTACT_ARCHITECTURE.md` (323 líneas)
+- `docs/VIRAL_INVITATIONS.md` (documentación completa)
+
+### Impact
+- 🎯 **Feature completo**: Usuarios pueden registrar préstamos recibidos
+- 🎯 **Viralidad**: Invitaciones automáticas a prestamistas no usuarios
+- 🎯 **Escalabilidad**: Arquitectura soporta casos futuros sin cambios
+- 🎯 **Consistencia**: Todo es `tenant_contact`, sin lógica especial
+
 ## [2025-10-15r] - 🐛 Fix CRÍTICO: Desplegar Screen 0 de loan-form
 
 ### Fixed
