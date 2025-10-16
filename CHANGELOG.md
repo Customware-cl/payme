@@ -2,6 +2,68 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-16b] - 🐛 Fix: Notificaciones WhatsApp no se enviaban desde tenants de usuarios
+
+### Fixed
+- **Error al enviar notificaciones de préstamos desde tenants de usuarios**
+  - **Problema**: Después de la migración multi-tenant, las notificaciones fallaban con "Tenant has no WhatsApp phone number ID configured"
+  - **Causa raíz**: Los nuevos tenants de Felipe y Caty se crearon sin copiar `whatsapp_phone_number_id` del tenant legacy
+  - **Impacto**: Los préstamos se creaban correctamente pero los borrowers no recibían notificaciones
+  - **Evidencia**: Logs mostraban préstamo creado exitosamente pero error en notificación
+
+### Changes
+- **Migration: assign_whatsapp_config_to_user_tenants**
+  - Copiada configuración de WhatsApp del tenant legacy a tenants de usuarios
+  - Asignados `whatsapp_phone_number_id` y `whatsapp_business_account_id` a:
+    - Tenant "Felipe Abarca"
+    - Tenant "Catherine Pereira"
+  - Todos los tenants ahora comparten el mismo WhatsApp Business Account
+
+### Technical Details
+
+**Problema identificado en logs**:
+```json
+{
+  "event_message": "Loan confirmation message sent to contact",
+  "level": "info"
+}
+{
+  "event_message": "[NOTIFICATION] Tenant has no WhatsApp phone number ID configured",
+  "level": "error"  // ← Error crítico
+}
+{
+  "event_message": "[LOAN_WEB_FORM] Loan created successfully: 2388a53e-...",
+  "level": "info"
+}
+```
+
+**Configuración aplicada**:
+```sql
+UPDATE tenants
+SET
+  whatsapp_phone_number_id = '778143428720890',
+  whatsapp_business_account_id = '773972555504544'
+WHERE name IN ('Felipe Abarca', 'Catherine Pereira');
+```
+
+**Resultado**:
+- ✅ Préstamos se crean correctamente
+- ✅ Notificaciones se envían a borrowers
+- ✅ Todos los tenants usan el mismo WhatsApp Business Account (compartido)
+
+### Deployment
+```bash
+# Database migration (aplicada vía MCP Supabase)
+mcp__supabase__apply_migration assign_whatsapp_config_to_user_tenants
+```
+
+### Validation
+- ✅ Tenant "Felipe Abarca": whatsapp_phone_number_id configurado
+- ✅ Tenant "Catherine Pereira": whatsapp_phone_number_id configurado
+- ✅ Notificaciones funcionan en ambos tenants
+
+---
+
 ## [2025-10-16] - ✨ Feature: Migración a arquitectura multi-tenant completa
 
 ### Added
