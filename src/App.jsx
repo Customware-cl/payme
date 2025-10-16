@@ -5,6 +5,8 @@ import Header from './components/Header'
 import Home from './pages/Home'
 import Payment from './pages/Payment'
 import Dashboard from './pages/Dashboard'
+import TermsOfService from './pages/TermsOfService'
+import PrivacyPolicy from './pages/PrivacyPolicy'
 
 const AppContainer = styled.div`
   min-height: 100vh;
@@ -26,6 +28,8 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/payment" element={<Payment />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/terms" element={<TermsOfService />} />
+            <Route path="/privacy" element={<PrivacyPolicy />} />
           </Routes>
         </MainContent>
       </AppContainer>

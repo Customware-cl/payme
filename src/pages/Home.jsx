@@ -1,4 +1,5 @@
 import React from 'react'
+import { Link } from 'react-router-dom'
 import styled from 'styled-components'
 import { MessageCircle, Bell, CheckCircle, Clock, Shield, Users, ArrowRight, Smartphone } from 'lucide-react'
 
@@ -316,6 +317,88 @@ const StatLabel = styled.div`
   font-weight: 500;
 `
 
+const Footer = styled.footer`
+  background: #1a202c;
+  color: white;
+  padding: 3rem 2rem 2rem;
+`
+
+const FooterContent = styled.div`
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 2rem;
+  margin-bottom: 2rem;
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+`
+
+const FooterSection = styled.div``
+
+const FooterTitle = styled.h4`
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  color: white;
+`
+
+const FooterText = styled.p`
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: #a0aec0;
+  margin-bottom: 0.5rem;
+`
+
+const FooterLinks = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+`
+
+const FooterLink = styled(Link)`
+  color: #a0aec0;
+  text-decoration: none;
+  font-size: 0.95rem;
+  transition: color 0.3s ease;
+
+  &:hover {
+    color: white;
+  }
+`
+
+const FooterBottom = styled.div`
+  max-width: 1200px;
+  margin: 0 auto;
+  padding-top: 2rem;
+  border-top: 1px solid #2d3748;
+  text-align: center;
+  color: #a0aec0;
+  font-size: 0.9rem;
+`
+
+const SocialLinks = styled.div`
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+
+  @media (max-width: 768px) {
+    justify-content: center;
+  }
+`
+
+const SocialLink = styled.a`
+  color: #a0aec0;
+  transition: color 0.3s ease;
+
+  &:hover {
+    color: white;
+  }
+`
+
 function Home() {
   const features = [
     {
@@ -463,6 +546,43 @@ function Home() {
           </CTAButton>
         </SectionContent>
       </Section>
+
+      <Footer>
+        <FooterContent>
+          <FooterSection>
+            <FooterTitle>SomosPayme</FooterTitle>
+            <FooterText>
+              Gestiona tus préstamos personales con recordatorios automáticos por WhatsApp.
+            </FooterText>
+            <FooterText>
+              Simple, seguro y efectivo.
+            </FooterText>
+          </FooterSection>
+
+          <FooterSection>
+            <FooterTitle>Legal</FooterTitle>
+            <FooterLinks>
+              <FooterLink to="/terms">Términos y Condiciones</FooterLink>
+              <FooterLink to="/privacy">Política de Privacidad</FooterLink>
+            </FooterLinks>
+          </FooterSection>
+
+          <FooterSection>
+            <FooterTitle>Contacto</FooterTitle>
+            <FooterText>contacto@somospayme.cl</FooterText>
+            <FooterText>Huechuraba, Santiago, Chile</FooterText>
+            <SocialLinks>
+              <SocialLink href="https://wa.me/56940870738" target="_blank" rel="noopener noreferrer">
+                <MessageCircle size={20} />
+              </SocialLink>
+            </SocialLinks>
+          </FooterSection>
+        </FooterContent>
+
+        <FooterBottom>
+          © {new Date().getFullYear()} Somos PayME SpA. Todos los derechos reservados.
+        </FooterBottom>
+      </Footer>
     </HomeContainer>
   )
 }
