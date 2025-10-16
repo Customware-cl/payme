@@ -17,6 +17,7 @@ npx supabase functions deploy wa_webhook --no-verify-jwt
 npx supabase functions deploy menu-data --no-verify-jwt
 npx supabase functions deploy loan-actions --no-verify-jwt
 npx supabase functions deploy loan-web-form --no-verify-jwt
+npx supabase functions deploy create-received-loan --no-verify-jwt
 ```
 
 ## ⚠️ IMPORTANTE

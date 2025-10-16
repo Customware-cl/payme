@@ -192,4 +192,138 @@ export class WhatsAppTemplates {
       };
     }
   }
+
+  /**
+   * Enviar plantilla de invitación de préstamo
+   *
+   * Template: loan_invitation
+   * Usado cuando un usuario registra un préstamo recibido y el lender NO es usuario de la app
+   *
+   * Variables del template:
+   * - {{1}}: lender_name - Nombre del prestamista
+   * - {{2}}: borrower_name - Nombre del prestatario (quien registra)
+   * - {{3}}: amount - Monto con formato (ej: "$1,000 CLP")
+   * - Button URL dinámica: invitation_url
+   *
+   * Ejemplo de contenido:
+   * "¡Hola {{1}}! 👋
+   *
+   *  {{2}} registró en PayME un préstamo que recibió de ti por {{3}}.
+   *
+   *  Únete para ver todos tus préstamos y gestionar cobros fácilmente.
+   *
+   *  ¿Te interesa?"
+   *
+   * @param to - Número de teléfono en formato E.164
+   * @param lenderName - Nombre del prestamista (destinatario)
+   * @param borrowerName - Nombre del prestatario (quien registra)
+   * @param amount - Monto del préstamo
+   * @param currency - Moneda (default: CLP)
+   * @param invitationUrl - URL de invitación con pre-registro
+   * @returns Response de la API de WhatsApp
+   */
+  async sendLoanInvitationTemplate(
+    to: string,
+    lenderName: string,
+    borrowerName: string,
+    amount: number,
+    currency: string = 'CLP',
+    invitationUrl: string
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    try {
+      console.log('[TEMPLATE] Sending loan_invitation:', {
+        to,
+        lenderName,
+        borrowerName,
+        amount,
+        currency,
+        invitationUrl
+      });
+
+      // Formatear monto con separadores de miles
+      const formattedAmount = `$${amount.toLocaleString('es-CL')} ${currency}`;
+
+      const components: any[] = [
+        // Body con 3 variables
+        {
+          type: 'body',
+          parameters: [
+            {
+              type: 'text',
+              text: lenderName
+            },
+            {
+              type: 'text',
+              text: borrowerName
+            },
+            {
+              type: 'text',
+              text: formattedAmount
+            }
+          ]
+        },
+        // Botón con URL dinámica
+        {
+          type: 'button',
+          sub_type: 'url',
+          index: '0',
+          parameters: [
+            {
+              type: 'text',
+              text: invitationUrl
+            }
+          ]
+        }
+      ];
+
+      const payload = {
+        messaging_product: 'whatsapp',
+        to: to.replace('+', ''),
+        type: 'template',
+        template: {
+          name: 'loan_invitation',
+          language: { code: 'es' },
+          components: components
+        }
+      };
+
+      console.log('[TEMPLATE] Payload:', JSON.stringify(payload, null, 2));
+
+      const response = await fetch(
+        `https://graph.facebook.com/v18.0/${this.phoneNumberId}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        console.error('[TEMPLATE] Error response:', result);
+        return {
+          success: false,
+          error: result.error?.message || 'Error sending template'
+        };
+      }
+
+      console.log('[TEMPLATE] Success:', result);
+
+      return {
+        success: true,
+        messageId: result.messages?.[0]?.id
+      };
+
+    } catch (error) {
+      console.error('[TEMPLATE] Exception:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
 }

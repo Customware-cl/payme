@@ -148,8 +148,12 @@ function renderLoanDetails() {
     // Concepto/Descripción del préstamo
     const descriptionRow = $('#detail-description-row');
     const descriptionValue = $('#detail-description');
-    if (loan.item_description && loan.item_description.trim() !== '') {
-        descriptionValue.textContent = loan.item_description;
+
+    // Para préstamos de dinero, usar title; para objetos, usar item_description
+    const concept = loan.amount !== null ? loan.title : loan.item_description;
+
+    if (concept && concept.trim() !== '') {
+        descriptionValue.textContent = concept;
         descriptionRow.style.display = 'flex';
     } else {
         descriptionRow.style.display = 'none';
