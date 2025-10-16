@@ -172,7 +172,17 @@ serve(async (req: Request) => {
 
       // Para préstamos, no necesitamos el profile
       if (type === 'loans') {
-        // Obtener préstamos donde el usuario es el prestador (lent) o prestatario (borrowed)
+        // Obtener contact_profile_id del usuario para búsquedas cross-tenant
+        const { data: userContact } = await supabase
+          .from('tenant_contacts')
+          .select('contact_profile_id')
+          .eq('id', tokenData.contact_id)
+          .single();
+
+        const userProfileId = userContact?.contact_profile_id;
+
+        // Obtener préstamos donde el usuario es el prestador (lent)
+        // Estos están en MI tenant, así que buscar por lender_tenant_contact_id directo
         const { data: lentAgreements } = await supabase
           .from('agreements')
           .select(`
@@ -188,27 +198,51 @@ serve(async (req: Request) => {
           .in('status', ['active', 'pending_confirmation'])
           .order('created_at', { ascending: false });
 
-        const { data: borrowedAgreements } = await supabase
-          .from('agreements')
-          .select(`
-            id,
-            amount,
-            item_description,
-            due_date,
-            status,
-            created_at,
-            lender:tenant_contacts!lender_tenant_contact_id(id, name)
-          `)
-          .eq('tenant_contact_id', tokenData.contact_id)
-          .in('status', ['active', 'pending_confirmation'])
-          .order('created_at', { ascending: false });
+        // Obtener préstamos donde el usuario es el prestatario (borrowed)
+        // Estos pueden estar en OTROS tenants, necesitamos buscar por contact_profile_id
+        let borrowedAgreements = [];
+
+        if (userProfileId) {
+          // Paso 1: Obtener todos los tenant_contacts que representan a este usuario (en todos los tenants)
+          const { data: allUserContacts } = await supabase
+            .from('tenant_contacts')
+            .select('id')
+            .eq('contact_profile_id', userProfileId);
+
+          const contactIds = (allUserContacts || []).map(c => c.id);
+
+          // Paso 2: Buscar agreements donde el borrower es alguno de esos tenant_contacts
+          if (contactIds.length > 0) {
+            const { data: agreements } = await supabase
+              .from('agreements')
+              .select(`
+                id,
+                amount,
+                item_description,
+                due_date,
+                status,
+                created_at,
+                lender:tenant_contacts!lender_tenant_contact_id(id, name)
+              `)
+              .in('tenant_contact_id', contactIds)
+              .in('status', ['active', 'pending_confirmation'])
+              .order('created_at', { ascending: false });
+
+            borrowedAgreements = agreements || [];
+          }
+        }
+
+        console.log('[MENU_DATA] Loans loaded:', {
+          lent: lentAgreements?.length || 0,
+          borrowed: borrowedAgreements.length
+        });
 
         return new Response(JSON.stringify({
           success: true,
           contact_id: tokenData.contact_id,
           loans: {
             lent: lentAgreements || [],
-            borrowed: borrowedAgreements || []
+            borrowed: borrowedAgreements
           }
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }

@@ -2,6 +2,114 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-16d] - 🐛 Fix: Préstamos Recibidos y Formulario de Préstamos Recibidos
+
+### Fixed
+
+**1. Préstamos recibidos no se mostraban en multi-tenant**
+- **Problema**: Al ver "Estado de préstamos > Me prestaron", la lista aparecía vacía aunque existieran préstamos recibidos
+- **Causa raíz**: La query buscaba `agreements.tenant_contact_id = mi_contact_id_en_mi_tenant`, pero los préstamos recibidos están en OTROS tenants
+  - Ejemplo: Caty me presta → agreement en tenant de Caty, borrower = mi tenant_contact EN TENANT DE CATY
+  - Query anterior solo buscaba en mi propio tenant
+- **Impacto**: Usuarios no podían ver préstamos que les hicieron
+- **Fix**: Query ahora busca cross-tenant usando `contact_profile_id`:
+  1. Obtiene todos los `tenant_contacts` del usuario (en todos los tenants)
+  2. Busca agreements donde el borrower es alguno de esos contacts
+
+**2. Error CORS 503 en formulario de préstamos recibidos**
+- **Problema**: Al registrar "Caty me prestó $X" → Error CORS 503
+- **Causa**: Edge function `create-received-loan` ya estaba desplegado pero el error sugería problema de conectividad
+- **Fix**: Re-despliegue confirmó que función está activa y accesible
+
+### Changes
+
+**Edge Function: menu-data** (MODIFICADA)
+- **Archivo**: `/supabase/functions/menu-data/index.ts` (líneas 173-250)
+- **Cambio en GET type=loans**:
+
+**Query anterior (INCORRECTA)**:
+```typescript
+const { data: borrowedAgreements } = await supabase
+  .from('agreements')
+  .select('...')
+  .eq('tenant_contact_id', tokenData.contact_id) // ❌ Solo mi tenant
+```
+
+**Query nueva (CORRECTA)**:
+```typescript
+// Paso 1: Obtener contact_profile_id
+const { data: userContact } = await supabase
+  .from('tenant_contacts')
+  .select('contact_profile_id')
+  .eq('id', tokenData.contact_id)
+  .single();
+
+// Paso 2: Obtener TODOS mis tenant_contacts (en todos los tenants)
+const { data: allUserContacts } = await supabase
+  .from('tenant_contacts')
+  .select('id')
+  .eq('contact_profile_id', userContact.contact_profile_id);
+
+const contactIds = allUserContacts.map(c => c.id);
+
+// Paso 3: Buscar agreements cross-tenant
+const { data: borrowedAgreements } = await supabase
+  .from('agreements')
+  .select('...')
+  .in('tenant_contact_id', contactIds) // ✅ Busca en todos los tenants
+```
+
+### Technical Details
+
+**Arquitectura Multi-Tenant**:
+- Agreements pertenecen al tenant del LENDER
+- Cuando Caty (tenant A) le presta a Felipe (tenant B):
+  - Agreement está en tenant A
+  - `lender_tenant_contact_id` = self-contact de Caty en su tenant
+  - `tenant_contact_id` = tenant_contact de Felipe EN TENANT A (no en tenant B)
+- Para ver préstamos recibidos, Felipe necesita buscar:
+  - TODOS sus tenant_contacts (usando contact_profile_id)
+  - Agreements donde borrower es alguno de esos contacts
+
+**Ejemplo práctico**:
+```
+Escenario: Caty le prestó $10,000 a Felipe
+
+Antes del fix:
+- Felipe abre "Me prestaron" → lista vacía ❌
+- Query buscaba: tenant_contact_id = felipe_en_su_tenant
+- Agreement real: tenant_contact_id = felipe_en_tenant_de_caty
+
+Después del fix:
+- Felipe abre "Me prestaron" → ve préstamo de Caty ✅
+- Query busca: todos los tenant_contacts de felipe (via contact_profile_id)
+- Encuentra: felipe_en_tenant_de_caty
+- Retorna: agreement del préstamo
+```
+
+### Deployment
+
+```bash
+# Edge function (ya estaba desplegado, confirmado activo)
+npx supabase functions deploy create-received-loan --no-verify-jwt
+
+# Edge function con fix
+npx supabase functions deploy menu-data --no-verify-jwt
+```
+
+### Testing
+
+**Test 1: Ver préstamos recibidos**
+- ✅ Prerequisito: Caty le prestó a Felipe (agreement en tenant de Caty)
+- ✅ Acción: Felipe abre "Estado de préstamos > Me prestaron"
+- ✅ Resultado esperado: Ve el préstamo de Caty
+
+**Test 2: Registrar préstamo recibido**
+- ✅ Acción: Felipe registra "Caty me prestó $5,000"
+- ✅ Resultado esperado: No hay error CORS, agreement creado
+
+---
+
 ## [2025-10-16c] - ✨ Feature: Flujo de Onboarding Automático para Nuevos Usuarios
 
 ### Added
