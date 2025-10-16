@@ -12,6 +12,11 @@
     --transition: 0.2s ease;
 }
 
+/* Utilidad: Ocultar elementos */
+.hidden {
+    display: none !important;
+}
+
 /* Reset y base */
 * {
     margin: 0;
@@ -1322,6 +1327,7 @@ body {
 
 .screen.active {
     display: block;
+    min-height: 100vh;
 }
 
 /* Header de Screen 0 */
