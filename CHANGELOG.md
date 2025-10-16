@@ -2,6 +2,52 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-15v] - 🐛 Fix: Scroll infinito en loans Screen 0
+
+### Fixed
+- **Scroll infinito eliminado en Screen 0 de loans**
+  - **Problema**: Usuario podía hacer scroll en Screen 0 y ver préstamos debajo
+  - **Causa raíz**: Clase `.hidden` NO existía en CSS, container siempre visible
+  - **Evidencia**: `grep "^\.hidden" styles.css` retornaba "No matches found"
+
+### Changes
+- **public/menu/styles.css**:
+  1. **Línea 16-18**: Agregar clase `.hidden` genérica
+     ```css
+     .hidden {
+         display: none !important;
+     }
+     ```
+  2. **Línea 1328-1331**: Modificar `.screen.active` para ocupar pantalla completa
+     ```css
+     .screen.active {
+         display: block;
+         min-height: 100vh;  /* Nuevo: ocupa toda la pantalla */
+     }
+     ```
+
+### Technical Details
+**Problema detectado**:
+- HTML usaba `<div class="container hidden">` pero CSS no tenía regla `.hidden`
+- JavaScript llamaba a `classList.add('hidden')` pero no hacía nada
+- Container siempre visible → usuario podía hacer scroll → veía préstamos debajo
+
+**Solución aplicada**:
+- Clase `.hidden` con `display: none !important` oculta elementos completamente
+- `.screen.active` con `min-height: 100vh` asegura pantalla completa
+- Combinación previene scroll y oculta contenido correctamente
+
+### Impact
+- ✅ Screen 0 ocupa exactamente 100vh (pantalla completa)
+- ✅ Container de préstamos completamente oculto
+- ✅ No se puede hacer scroll para ver préstamos
+- ✅ Experiencia limpia sin elementos ocultos visibles
+
+### Related Issues
+- Mismo patrón aplicado anteriormente en loan-form funcionaba porque tenía `.hidden`
+- loans.html no tenía esta clase, causando inconsistencia
+- Fix asegura consistencia entre loan-form y loans
+
 ## [2025-10-15u] - 📄 Feature: Páginas legales y footer
 
 ### Added
