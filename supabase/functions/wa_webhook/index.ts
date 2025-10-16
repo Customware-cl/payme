@@ -152,20 +152,56 @@ async function processInboundMessage(
     console.log('Message Type:', message.type);
     console.log('Full Message Object:', JSON.stringify(message, null, 2));
 
-    // 1. Obtener tenant por phone_number_id
-    const { data: tenant } = await supabase
-      .from('tenants')
-      .select('*')
-      .eq('whatsapp_phone_number_id', phoneNumberId)
-      .single();
+    // 1. ENRUTAMIENTO INTELIGENTE MULTI-TENANT
+    // Primero formatear el teléfono del remitente
+    const formattedPhone = parsePhoneNumber(message.from);
+
+    // 1.1. Intentar encontrar tenant del remitente (si es un owner con su propio tenant)
+    let tenant = null;
+    console.log('[ROUTING] Buscando tenant para:', formattedPhone);
+
+    // Buscar contact_profile del remitente
+    const { data: senderProfile } = await supabase
+      .from('contact_profiles')
+      .select('id')
+      .eq('phone_e164', formattedPhone)
+      .maybeSingle();
+
+    if (senderProfile) {
+      // Verificar si este contact_profile tiene su propio tenant (es un owner)
+      const { data: userTenant } = await supabase
+        .from('tenants')
+        .select('*')
+        .eq('owner_contact_profile_id', senderProfile.id)
+        .maybeSingle();
+
+      if (userTenant) {
+        tenant = userTenant;
+        console.log('[ROUTING] ✓ Mensaje enrutado al tenant del usuario:', tenant.name);
+      }
+    }
+
+    // 1.2. Fallback: buscar tenant por phone_number_id (legacy/compartido)
+    if (!tenant) {
+      const { data: legacyTenant } = await supabase
+        .from('tenants')
+        .select('*')
+        .eq('whatsapp_phone_number_id', phoneNumberId)
+        .maybeSingle();
+
+      if (legacyTenant) {
+        tenant = legacyTenant;
+        console.log('[ROUTING] → Usando tenant legacy/compartido:', tenant.name);
+      }
+    }
 
     if (!tenant) {
-      console.error('Tenant not found for phone number ID:', phoneNumberId);
+      console.error('[ROUTING] ✗ No se encontró tenant para phone_number_id:', phoneNumberId);
       return { success: false, error: 'Tenant not found' };
     }
 
     // 2. Obtener o crear tenant_contact (patrón tenant_contacts)
-    const formattedPhone = parsePhoneNumber(message.from);
+    // formattedPhone ya fue declarado en el enrutamiento multi-tenant (línea 157)
     const contactName = contacts[0]?.profile?.name || 'Usuario';
 
     // 2.1. Primero buscar el contact_profile por teléfono

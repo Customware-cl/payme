@@ -2,6 +2,149 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-16] - ✨ Feature: Migración a arquitectura multi-tenant completa
+
+### Added
+- **Arquitectura multi-tenant con ownership de usuarios**
+  - Cada usuario tiene su propio tenant automáticamente creado
+  - Relaciones recíprocas automáticas entre usuarios que se agregan mutuamente
+  - Enrutamiento inteligente de mensajes WhatsApp basado en el remitente
+  - Self-contacts: cada usuario se ve a sí mismo como "Yo (Mi cuenta)"
+
+### Changes
+
+**1. Database Schema**
+- **Migration: add_owner_contact_profile_to_tenants**
+  - Agregada columna `owner_contact_profile_id` a tabla `tenants`
+  - Índice para búsquedas eficientes por owner
+  - Permite identificar qué contact_profile "posee" cada tenant
+
+- **Migration: create_tenant_routing_functions**
+  - Función `get_tenant_by_phone(p_phone_e164)`: Busca tenant de un usuario por teléfono
+  - Función `ensure_user_tenant(p_contact_profile_id)`: Crea tenant automáticamente para usuarios
+    - Crea tenant con nombre del perfil
+    - Crea usuario en tabla `users`
+    - Crea self-contact con nombre "Yo (Mi cuenta)"
+    - Función idempotente (safe para llamar múltiples veces)
+
+**2. Data Migration**
+- **Migration: migrate_felipe_and_caty_to_own_tenants**
+  - Creados tenants separados para Felipe y Caty
+  - Creadas relaciones recíprocas automáticas:
+    - Felipe ve a Caty en su tenant
+    - Caty ve a Felipe en su tenant
+  - Cada uno tiene su self-contact
+
+- **Migration: move_contacts_to_felipe_tenant**
+  - Movidos Rodrigo y Erick al tenant de Felipe (quien los agregó)
+
+- **Migration: reassign_agreements_to_correct_tenants**
+  - Agreements reasignados basado en regla: **"El agreement pertenece al tenant del lender"**
+  - Agreements donde Caty es lender → Tenant de Caty
+  - Agreements donde Felipe es lender → Tenant de Felipe
+  - Referencias de `lender_tenant_contact_id` y `tenant_contact_id` actualizadas
+
+**3. WhatsApp Webhook - Enrutamiento Multi-Tenant**
+- **supabase/functions/wa_webhook/index.ts (líneas 155-201)**
+  - **Paso 1**: Intentar encontrar tenant del remitente (si es owner con tenant propio)
+    - Buscar `contact_profile` por phone_e164
+    - Buscar `tenant` por `owner_contact_profile_id`
+  - **Paso 2**: Fallback a tenant legacy por `phone_number_id` (backward compatible)
+  - **Beneficio**: Mensajes se enrutan al contexto correcto automáticamente
+  - **Logs**: `[ROUTING]` para debugging de enrutamiento
+
+### Technical Details
+
+**Estructura Multi-Tenant**:
+```
+contact_profiles (global)
+  ├─ Felipe: +56964943476
+  └─ Caty: +56962081122
+
+tenants
+  ├─ "Felipe Abarca" (owner: contact_profile Felipe)
+  │   └─ tenant_contacts
+  │       ├─ "Yo (Mi cuenta)" → contact_profile Felipe (self)
+  │       ├─ "Caty" → contact_profile Caty
+  │       ├─ "Rodrigo Insunza TBK"
+  │       └─ "Erick Vasquez"
+  │
+  └─ "Catherine Pereira" (owner: contact_profile Caty)
+      └─ tenant_contacts
+          ├─ "Yo (Mi cuenta)" → contact_profile Caty (self)
+          └─ "Felipe" → contact_profile Felipe
+```
+
+**Enrutamiento de Mensajes**:
+```typescript
+// 1. Intentar encontrar tenant del remitente
+const formattedPhone = parsePhoneNumber(message.from);
+const { data: senderProfile } = await supabase
+  .from('contact_profiles')
+  .eq('phone_e164', formattedPhone)
+  .maybeSingle();
+
+if (senderProfile) {
+  const { data: userTenant } = await supabase
+    .from('tenants')
+    .eq('owner_contact_profile_id', senderProfile.id)
+    .maybeSingle();
+  if (userTenant) tenant = userTenant; // ← Enrutado a su tenant
+}
+
+// 2. Fallback a tenant legacy
+if (!tenant) {
+  tenant = await findByPhoneNumberId(phoneNumberId);
+}
+```
+
+**Ownership de Agreements**:
+- Regla: Agreement pertenece al tenant del **lender** (quien presta)
+- Razón: El lender es quien inicia el agreement y necesita verlo/gestionarlo
+- Borrower: Se referencia mediante `tenant_contact_id` en el tenant del lender
+
+### Migration Summary
+
+**Estado Inicial**:
+- 1 tenant "PrestaBot Chile" (mono-tenant)
+- Felipe, Caty, Rodrigo, Erick como tenant_contacts
+- Todos los agreements en un solo tenant
+
+**Estado Final**:
+- 3 tenants:
+  - "PrestaBot Chile" (legacy, sin owner)
+  - "Felipe Abarca" (owner: Felipe)
+    - Contactos: Yo, Caty, Rodrigo, Erick
+    - 30 agreements
+  - "Catherine Pereira" (owner: Caty)
+    - Contactos: Yo, Felipe
+    - 6 agreements
+
+### Deployment
+```bash
+# Database migrations (aplicadas vía MCP Supabase)
+mcp__supabase__apply_migration add_owner_contact_profile_to_tenants
+mcp__supabase__apply_migration create_tenant_routing_functions
+mcp__supabase__apply_migration migrate_felipe_and_caty_to_own_tenants
+mcp__supabase__apply_migration move_contacts_to_felipe_tenant
+mcp__supabase__apply_migration reassign_agreements_to_correct_tenants
+
+# Edge function
+npx supabase functions deploy wa_webhook --no-verify-jwt
+```
+
+### Validation
+- ✅ Felipe ve 4 contactos: Yo, Caty, Rodrigo, Erick
+- ✅ Caty ve 2 contactos: Yo, Felipe
+- ✅ Agreements correctamente asignados por lender
+- ✅ Enrutamiento de mensajes WhatsApp funcional
+- ✅ Backward compatibility con tenant legacy mantenida
+
+### Breaking Changes
+- Ninguno. La migración es completamente transparente para usuarios existentes.
+
+---
+
 ## [2025-10-15y] - 🐛 Fix: Préstamos de objetos guardados como dinero con amount=0
 
 ### Fixed
