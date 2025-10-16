@@ -2,40 +2,33 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
-## [2025-10-15y] - 🐛 Fix: Error al crear préstamos de objetos (amount=0)
+## [2025-10-15y] - 🐛 Fix: Préstamos de objetos guardados como dinero con amount=0
 
 ### Fixed
-- **Error 400 al crear préstamos de objetos en "Me prestaron"**
-  - **Problema**: Al registrar un préstamo de objeto (no dinero), la validación rechazaba con error "Datos del préstamo incompletos (amount, due_date requeridos)"
-  - **Causa raíz**: La validación `!loan.amount` fallaba cuando `amount: 0` (objetos sin valor monetario)
-  - **Logs analizados**: Request mostraba `{loan: {amount: 0, title: "papel", description: "papel"}}`
+- **Préstamos de objetos se registraban incorrectamente como dinero con monto $0**
+  - **Problema inicial**: Validación rechazaba objetos con error 400 (resuelto en commit anterior)
+  - **Problema adicional**: Objetos se guardaban como préstamos de dinero con `amount: 0`
+  - **Causa raíz**: No se diferenciaba entre dinero y objetos al crear el agreement
+  - **Impacto**: Los préstamos de objetos aparecían como préstamos de dinero de $0 en la app
 
 ### Changes
 - **supabase/functions/create-received-loan/index.ts**:
-  - **Líneas 145-168**: Actualizar validación de datos del préstamo
+  - **Líneas 145-168**: Mejorar validación de datos del préstamo (commit fcc2936)
     - Separar validación de `due_date` (siempre requerido)
-    - Agregar lógica para validar `monto O descripción`:
-      - `hasAmount = loan.amount && loan.amount > 0`
-      - `hasItemDescription = loan.title || loan.description || loan.item_description`
-    - Permitir préstamos con `amount: 0` si tienen descripción de objeto
+    - Validar `monto > 0 O descripción de objeto`
+    - Permitir `amount: 0` si hay `title/description/item_description`
+
+  - **Líneas 265-309**: Diferenciar dinero vs objetos al crear agreement (este commit)
+    - Detectar tipo: `isMoneyLoan = hasAmount`
+    - **Para DINERO**: Guardar `amount`, `currency`, concepto en `item_description`
+    - **Para OBJETOS**: Guardar `amount: null`, descripción en `item_description`
+    - Agregar metadata `is_money_loan` para identificación
 
 ### Technical Details
-**Validación anterior**:
-```typescript
-// ❌ ANTES (rechazaba objetos):
-if (!loan || !loan.amount || !loan.due_date) {
-  return error('Datos del préstamo incompletos (amount, due_date requeridos)');
-}
-// Problema: !0 es true → falla para objetos
-```
 
-**Validación nueva**:
+**1. Validación mejorada** (commit fcc2936):
 ```typescript
-// ✅ DESPUÉS (acepta dinero o objetos):
-if (!loan || !loan.due_date) {
-  return error('Datos del préstamo incompletos (due_date requerido)');
-}
-
+// Validar que tenga monto O descripción de objeto
 const hasAmount = loan.amount && loan.amount > 0;
 const hasItemDescription = loan.title || loan.description || loan.item_description;
 
@@ -44,26 +37,55 @@ if (!hasAmount && !hasItemDescription) {
 }
 ```
 
-**Casos cubiertos**:
-- ✅ Dinero: `{amount: 50000, currency: "CLP"}` → válido
-- ✅ Objeto: `{amount: 0, title: "papel", description: "papel"}` → válido
-- ❌ Vacío: `{amount: 0}` → inválido (no tiene ni monto ni descripción)
+**2. Estructura de datos diferenciada** (este commit):
+```typescript
+const isMoneyLoan = hasAmount;
 
-### Testing
-**Request de prueba que ahora funciona**:
-```json
+if (isMoneyLoan) {
+  // Préstamo de DINERO
+  agreementData.amount = loan.amount;
+  agreementData.currency = loan.currency || 'CLP';
+  agreementData.title = loan.title || `Préstamo en efectivo de ${lenderName}`;
+  agreementData.item_description = loan.title || 'Préstamo en efectivo';
+} else {
+  // Préstamo de OBJETO
+  agreementData.amount = null;  // ← Diferencia clave
+  agreementData.currency = null;
+  agreementData.title = loan.title || `Préstamo de ${lenderName}`;
+  agreementData.item_description = loan.title || loan.description;
+}
+
+agreementData.metadata = {
+  created_from: 'received_loan_form',
+  loan_type: 'received',
+  is_money_loan: isMoneyLoan  // ← Para identificar tipo
+};
+```
+
+**Comparación antes/después**:
+```typescript
+// ❌ ANTES (objeto registrado como dinero):
 {
-  "lender": {"contact_id": "..."},
-  "loan": {
-    "amount": 0,
-    "currency": "CLP",
-    "due_date": "2025-10-16",
-    "title": "papel",
-    "description": "papel"
-  },
-  "token": "menu_llt_..."
+  amount: 0,              // Se guardaba 0
+  currency: 'CLP',        // Se guardaba CLP
+  title: 'papel',
+  item_description: null
+}
+
+// ✅ DESPUÉS (objeto correctamente registrado):
+{
+  amount: null,           // NULL = objeto
+  currency: null,         // NULL = objeto
+  title: 'papel',
+  item_description: 'papel',
+  metadata: { is_money_loan: false }
 }
 ```
+
+### Casos cubiertos
+- ✅ Dinero: `{amount: 50000}` → `amount: 50000, currency: CLP`
+- ✅ Objeto: `{amount: 0, title: "papel"}` → `amount: null, item_description: "papel"`
+- ❌ Vacío: `{amount: 0}` → Error de validación
 
 ### Deployment
 ```bash

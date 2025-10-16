@@ -262,29 +262,55 @@ serve(async (req) => {
       lender_tenant_contact_id = newTenantContact.id;
     }
 
+    // Obtener nombre del lender para usar en títulos
+    const { data: lenderContactData } = await supabase
+      .from('tenant_contacts')
+      .select('name')
+      .eq('id', lender_tenant_contact_id)
+      .single();
+
+    const lenderName = lenderContactData?.name || 'contacto';
+
     // 3. Crear agreement
     console.log('[CREATE_RECEIVED_LOAN] Creating agreement...');
+
+    // Determinar el tipo de préstamo y estructurar datos apropiadamente
+    const isMoneyLoan = hasAmount; // Si tiene monto > 0, es dinero
+    const agreementData: any = {
+      tenant_id: tenant_id,
+      tenant_contact_id: borrower_tenant_contact_id, // YO soy borrower
+      lender_tenant_contact_id: lender_tenant_contact_id, // LENDER
+      created_by: user_id,
+      type: 'loan',
+      start_date: loan.start_date || new Date().toISOString().split('T')[0],
+      due_date: loan.due_date,
+      status: 'active',
+      metadata: {
+        created_from: 'received_loan_form',
+        loan_type: 'received',
+        is_money_loan: isMoneyLoan
+      }
+    };
+
+    if (isMoneyLoan) {
+      // Préstamo de DINERO
+      agreementData.amount = loan.amount;
+      agreementData.currency = loan.currency || 'CLP';
+      agreementData.title = loan.title || `Préstamo en efectivo de ${lenderName}`;
+      agreementData.item_description = loan.title || 'Préstamo en efectivo';
+      agreementData.description = loan.description || null;
+    } else {
+      // Préstamo de OBJETO
+      agreementData.amount = null;
+      agreementData.currency = null;
+      agreementData.title = loan.title || `Préstamo de ${lenderName}`;
+      agreementData.item_description = loan.title || loan.description || loan.item_description;
+      agreementData.description = loan.description || loan.title || loan.item_description;
+    }
+
     const { data: agreement, error: agreementError } = await supabase
       .from('agreements')
-      .insert({
-        tenant_id: tenant_id,
-        tenant_contact_id: borrower_tenant_contact_id, // YO soy borrower
-        lender_tenant_contact_id: lender_tenant_contact_id, // LENDER
-        created_by: user_id,
-        type: 'loan',
-        title: loan.title || `Préstamo recibido de ${lender.name}`,
-        description: loan.description || null,
-        item_description: loan.item_description || null,
-        amount: loan.amount,
-        currency: loan.currency || 'CLP',
-        start_date: loan.start_date || new Date().toISOString().split('T')[0],
-        due_date: loan.due_date,
-        status: 'active',
-        metadata: {
-          created_from: 'received_loan_form',
-          loan_type: 'received'
-        }
-      })
+      .insert(agreementData)
       .select()
       .single();
 
