@@ -138,6 +138,65 @@ INSERT INTO tenants (whatsapp_phone_number_id, whatsapp_business_account_id, ...
 VALUES (v_waba_phone_number_id, v_waba_business_id, ...);
 ```
 
+**4. Frontend: Pantalla de Onboarding en Menú Web**
+- **Archivos modificados**:
+  - `/public/menu/index.html`
+  - `/public/menu/app.js`
+  - `/public/menu/styles.css`
+
+**HTML** (`index.html` líneas 33-101):
+- Pantalla de onboarding con formulario de 3 campos:
+  - Nombre (validación: 2-50 caracteres, solo letras)
+  - Apellido (validación: 2-50 caracteres, solo letras)
+  - Email (validación: RFC 5322)
+- Estados visuales:
+  - Error display (`.onboarding-error`)
+  - Loading state (`.onboarding-loading`)
+  - Mensaje de ayuda (`.onboarding-help`)
+
+**JavaScript** (`app.js`):
+- **Función `loadUserName()` modificada** (líneas 84-110):
+  - Detecta flag `requires_onboarding` del backend
+  - Redirige a pantalla de onboarding si aplica
+- **Nueva función `showOnboardingScreen()`** (líneas 112-129):
+  - Muestra pantalla de onboarding
+  - Oculta menú principal y footer
+  - Attach event listener al formulario
+- **Nueva función `handleOnboardingSubmit()`** (líneas 131-203):
+  - Valida datos del formulario (regex nombre, email)
+  - POST a `/complete-onboarding` endpoint
+  - Recarga página al completar (muestra menú completo)
+- **Nueva función `showOnboardingError()`** (líneas 205-215):
+  - Muestra errores de validación
+
+**CSS** (`styles.css` líneas 1385-1548):
+- Estilos para pantalla de onboarding:
+  - Layout centrado con max-width 420px
+  - Diseño responsive (mobile-first)
+  - Animación fadeIn 0.4s
+  - Estados de error y loading con borde izquierdo de color
+  - Inputs con focus en color primario (#25D366)
+
+**Flujo Frontend**:
+```
+1. Usuario abre /menu?token=...
+   ↓
+2. app.js llama validateSession()
+   ↓
+3. app.js llama loadUserName()
+   ↓
+4. GET /menu-data?type=user&token=...
+   ↓
+5. Si requires_onboarding === true:
+   → showOnboardingScreen()
+   → Usuario completa formulario
+   → handleOnboardingSubmit()
+   → POST /complete-onboarding
+   → window.location.reload()
+   ↓
+6. Menú principal se muestra con tenant creado
+```
+
 ### Deployment
 ```bash
 # Edge functions
@@ -146,6 +205,9 @@ npx supabase functions deploy menu-data --no-verify-jwt
 
 # Database migration (aplicada vía MCP)
 mcp__supabase__apply_migration improve_ensure_user_tenant_with_whatsapp_and_reciprocal
+
+# Frontend (archivos estáticos, no requiere deploy)
+# Los cambios en /public/menu/ son servidos directamente
 ```
 
 ### Validation

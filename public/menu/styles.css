@@ -1381,3 +1381,168 @@ body {
     gap: 16px;
     padding: 0;
 }
+
+/* ========== ONBOARDING SCREEN ========== */
+
+.onboarding-screen {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 24px;
+    background: var(--bg-main);
+    animation: fadeIn 0.4s ease;
+}
+
+.onboarding-content {
+    text-align: center;
+    max-width: 420px;
+    width: 100%;
+}
+
+.onboarding-icon {
+    font-size: 80px;
+    margin-bottom: 24px;
+    opacity: 0.9;
+}
+
+.onboarding-title {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+    line-height: 1.3;
+}
+
+.onboarding-message {
+    font-size: 16px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 32px;
+}
+
+/* Onboarding form */
+.onboarding-form {
+    text-align: left;
+}
+
+.onboarding-form .form-group {
+    margin-bottom: 20px;
+}
+
+.onboarding-form .form-group label {
+    display: block;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.onboarding-form .form-group input {
+    width: 100%;
+    padding: 14px 16px;
+    font-size: 16px;
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    transition: border-color var(--transition);
+    font-family: inherit;
+}
+
+.onboarding-form .form-group input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.onboarding-form .form-group input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+/* Form actions */
+.form-actions {
+    margin-top: 24px;
+}
+
+/* Onboarding error */
+.onboarding-error {
+    margin-top: 16px;
+    padding: 16px;
+    background: #fee;
+    border-left: 4px solid #dc3545;
+    border-radius: 8px;
+}
+
+.onboarding-error .error-text {
+    font-size: 14px;
+    color: #721c24;
+    margin: 0;
+    line-height: 1.5;
+}
+
+/* Onboarding loading */
+.onboarding-loading {
+    margin-top: 16px;
+    padding: 16px;
+    background: #e3f2fd;
+    border-left: 4px solid #2196f3;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.onboarding-loading p {
+    font-size: 14px;
+    color: #1565c0;
+    margin: 0;
+    line-height: 1.5;
+}
+
+/* Onboarding help */
+.onboarding-help {
+    margin-top: 24px;
+    padding: 16px;
+    background: #e8f5e9;
+    border-left: 4px solid #4caf50;
+    border-radius: 8px;
+}
+
+.onboarding-help .help-text {
+    font-size: 13px;
+    color: #2e7d32;
+    margin: 0;
+    line-height: 1.5;
+}
+
+/* Responsive para onboarding screen */
+@media (max-width: 359px) {
+    .onboarding-icon {
+        font-size: 64px;
+    }
+
+    .onboarding-title {
+        font-size: 20px;
+    }
+
+    .onboarding-message {
+        font-size: 15px;
+    }
+}
+
+@media (min-width: 768px) {
+    .onboarding-icon {
+        font-size: 96px;
+    }
+
+    .onboarding-title {
+        font-size: 28px;
+    }
+
+    .onboarding-message {
+        font-size: 17px;
+    }
+
+    .onboarding-screen {
+        padding: 48px 32px;
+    }
+}

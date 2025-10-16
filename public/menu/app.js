@@ -81,22 +81,136 @@ function showExpiredScreen() {
     if (footer) footer.style.display = 'none';
 }
 
-// Cargar nombre de usuario
+// Cargar nombre de usuario y detectar onboarding
 async function loadUserName() {
     try {
         const response = await fetch(`${SUPABASE_URL}/functions/v1/menu-data?token=${state.token}&type=user`);
         const data = await response.json();
 
-        if (data.success && data.name) {
-            // Actualizar saludo con el nombre del usuario
-            const greeting = $('#user-greeting');
-            if (greeting) {
-                greeting.textContent = `¡Hola ${data.name}! 👋`;
+        if (data.success) {
+            // Verificar si requiere onboarding
+            if (data.requires_onboarding) {
+                console.log('User requires onboarding');
+                showOnboardingScreen();
+                return;
+            }
+
+            // Si tiene nombre, actualizar saludo
+            if (data.name) {
+                const greeting = $('#user-greeting');
+                if (greeting) {
+                    greeting.textContent = `¡Hola ${data.name}! 👋`;
+                }
             }
         }
     } catch (error) {
         console.error('Error loading user name:', error);
         // Mantener saludo genérico si falla
+    }
+}
+
+// Mostrar pantalla de onboarding
+function showOnboardingScreen() {
+    const onboardingScreen = $('#onboarding-screen');
+    const welcomeSection = $('#welcome-section');
+    const mainMenu = $('#main-menu');
+    const footer = $('.footer');
+
+    if (onboardingScreen) onboardingScreen.style.display = 'block';
+    if (welcomeSection) welcomeSection.style.display = 'none';
+    if (mainMenu) mainMenu.style.display = 'none';
+    if (footer) footer.style.display = 'none';
+
+    // Setup onboarding form listener
+    const form = $('#onboarding-form');
+    if (form) {
+        form.addEventListener('submit', handleOnboardingSubmit);
+    }
+}
+
+// Manejar envío de formulario de onboarding
+async function handleOnboardingSubmit(event) {
+    event.preventDefault();
+
+    const form = event.target;
+    const submitButton = $('#btn-complete-onboarding');
+    const errorDiv = $('#onboarding-error');
+    const loadingDiv = $('#onboarding-loading');
+
+    // Obtener valores del formulario
+    const firstName = $('#first_name').value.trim();
+    const lastName = $('#last_name').value.trim();
+    const email = $('#email').value.trim();
+
+    // Validaciones básicas
+    if (!firstName || !lastName || !email) {
+        showOnboardingError('Por favor completa todos los campos');
+        return;
+    }
+
+    // Validar email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        showOnboardingError('Por favor ingresa un correo electrónico válido');
+        return;
+    }
+
+    // Validar nombres (solo letras y espacios)
+    const nameRegex = /^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/;
+    if (!nameRegex.test(firstName) || !nameRegex.test(lastName)) {
+        showOnboardingError('Los nombres solo pueden contener letras');
+        return;
+    }
+
+    // Mostrar loading
+    if (submitButton) submitButton.disabled = true;
+    if (errorDiv) errorDiv.style.display = 'none';
+    if (loadingDiv) loadingDiv.style.display = 'block';
+
+    try {
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/complete-onboarding`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                token: state.token,
+                first_name: firstName,
+                last_name: lastName,
+                email: email
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Error al completar onboarding');
+        }
+
+        console.log('Onboarding completed successfully:', data);
+
+        // Recargar la página para mostrar el menú completo
+        window.location.reload();
+
+    } catch (error) {
+        console.error('Error completing onboarding:', error);
+        showOnboardingError(error.message || 'Hubo un error. Por favor intenta de nuevo.');
+
+        // Ocultar loading y habilitar botón
+        if (loadingDiv) loadingDiv.style.display = 'none';
+        if (submitButton) submitButton.disabled = false;
+    }
+}
+
+// Mostrar error en onboarding
+function showOnboardingError(message) {
+    const errorDiv = $('#onboarding-error');
+    if (errorDiv) {
+        const errorText = errorDiv.querySelector('.error-text');
+        if (errorText) {
+            errorText.textContent = message;
+        }
+        errorDiv.style.display = 'block';
     }
 }
 

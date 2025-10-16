@@ -30,6 +30,76 @@
             </div>
         </div>
 
+        <!-- Pantalla de Onboarding (oculta por defecto) -->
+        <div class="onboarding-screen" id="onboarding-screen" style="display: none;">
+            <div class="onboarding-content">
+                <div class="onboarding-icon">👋</div>
+                <h2 class="onboarding-title">¡Bienvenido a PayME!</h2>
+                <p class="onboarding-message">
+                    Para comenzar, completa tu perfil con tu información personal.
+                </p>
+
+                <form id="onboarding-form" class="onboarding-form">
+                    <div class="form-group">
+                        <label for="first_name">Nombre</label>
+                        <input
+                            type="text"
+                            id="first_name"
+                            name="first_name"
+                            required
+                            placeholder="Tu nombre"
+                            minlength="2"
+                            maxlength="50"
+                            pattern="[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="last_name">Apellido</label>
+                        <input
+                            type="text"
+                            id="last_name"
+                            name="last_name"
+                            required
+                            placeholder="Tu apellido"
+                            minlength="2"
+                            maxlength="50"
+                            pattern="[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="email">Correo electrónico</label>
+                        <input
+                            type="email"
+                            id="email"
+                            name="email"
+                            required
+                            placeholder="tu@email.com"
+                        >
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn-primary" id="btn-complete-onboarding">
+                            Continuar
+                        </button>
+                    </div>
+
+                    <div class="onboarding-error" id="onboarding-error" style="display: none;">
+                        <p class="error-text"></p>
+                    </div>
+
+                    <div class="onboarding-loading" id="onboarding-loading" style="display: none;">
+                        <p>Creando tu cuenta...</p>
+                    </div>
+                </form>
+
+                <div class="onboarding-help">
+                    <p class="help-text">🔒 Tus datos están protegidos y nunca serán compartidos</p>
+                </div>
+            </div>
+        </div>
+
         <!-- Sección de Bienvenida -->
         <div class="welcome-section" id="welcome-section">
             <h2 class="greeting" id="user-greeting">¡Hola! 👋</h2>
