@@ -1546,3 +1546,71 @@ body {
         padding: 48px 32px;
     }
 }
+
+/* ========== SKELETON LOADER ========== */
+
+.skeleton-loader {
+    background: linear-gradient(
+        90deg,
+        #f0f0f0 0%,
+        #f8f8f8 40%,
+        #f0f0f0 80%,
+        #f0f0f0 100%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s ease-in-out infinite;
+    border-radius: 4px;
+    vertical-align: middle;
+    opacity: 0.7;
+}
+
+@keyframes skeleton-loading {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+/* Skeleton para campos de formulario */
+.skeleton-input {
+    width: 100%;
+    height: 48px;
+    margin-bottom: 20px;
+    border-radius: 8px;
+}
+
+/* Skeleton para textos */
+.skeleton-text {
+    width: 100%;
+    height: 16px;
+    margin-bottom: 8px;
+    border-radius: 4px;
+}
+
+.skeleton-text.small {
+    width: 60%;
+    height: 14px;
+}
+
+.skeleton-text.large {
+    width: 80%;
+    height: 20px;
+}
+
+/* Transiciones suaves al mostrar contenido */
+.fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+/* Nombre del greeting con transición suave */
+.greeting-name {
+    display: inline-block;
+    min-width: 80px;
+    transition: opacity 0.2s ease-in-out;
+}
+
+.greeting-name.loading {
+    opacity: 0.7;
+}

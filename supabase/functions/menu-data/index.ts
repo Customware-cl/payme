@@ -120,10 +120,23 @@ serve(async (req: Request) => {
       console.log('Loading data:', { type, contact_id: tokenData.contact_id });
 
       // Para obtener nombre de usuario y detectar si requiere onboarding
+      // OPTIMIZACIÓN: Usar JOIN en lugar de queries secuenciales
       if (type === 'user') {
         const { data: contact } = await supabase
           .from('tenant_contacts')
-          .select('name, contact_profile_id')
+          .select(`
+            name,
+            contact_profile_id,
+            contact_profiles!inner (
+              id,
+              first_name,
+              last_name,
+              email,
+              tenants!owner_contact_profile_id (
+                id
+              )
+            )
+          `)
           .eq('id', tokenData.contact_id)
           .single();
 
@@ -132,30 +145,18 @@ serve(async (req: Request) => {
         let hasProfileData = false;
         let userName = contact?.name || 'Usuario';
 
-        if (contact?.contact_profile_id) {
-          // Verificar si tiene tenant propio
-          const { data: userTenant } = await supabase
-            .from('tenants')
-            .select('id')
-            .eq('owner_contact_profile_id', contact.contact_profile_id)
-            .maybeSingle();
+        if (contact?.contact_profiles) {
+          const profile = contact.contact_profiles;
 
-          requiresOnboarding = !userTenant;
+          // Verificar si tiene tenant propio (optimizado con JOIN)
+          requiresOnboarding = !profile.tenants || profile.tenants.length === 0;
 
-          // Obtener datos del contact_profile
-          const { data: profile } = await supabase
-            .from('contact_profiles')
-            .select('first_name, last_name, email')
-            .eq('id', contact.contact_profile_id)
-            .single();
+          // Verificar si tiene datos de perfil
+          hasProfileData = !!(profile.first_name && profile.last_name && profile.email);
 
-          if (profile) {
-            hasProfileData = !!(profile.first_name && profile.last_name && profile.email);
-
-            // Usar solo el primer nombre del contact_profile si existe
-            if (profile.first_name) {
-              userName = profile.first_name;
-            }
+          // Usar solo el primer nombre del contact_profile si existe
+          if (profile.first_name) {
+            userName = profile.first_name;
           }
         }
 
@@ -257,24 +258,23 @@ serve(async (req: Request) => {
       }
 
       // Para profile y bank, necesitamos cargar el contact_profile
-      // Primero obtener el tenant_contact para ver su contact_profile_id
+      // OPTIMIZACIÓN: Usar JOIN en lugar de queries secuenciales
       const { data: contact } = await supabase
         .from('tenant_contacts')
-        .select('contact_profile_id')
+        .select(`
+          contact_profile_id,
+          contact_profiles!inner (
+            id,
+            first_name,
+            last_name,
+            email,
+            bank_accounts
+          )
+        `)
         .eq('id', tokenData.contact_id)
         .single();
 
-      let profile = null;
-      if (contact?.contact_profile_id) {
-        // Si el contact tiene un profile, cargarlo
-        const { data: profileData } = await supabase
-          .from('contact_profiles')
-          .select('*')
-          .eq('id', contact.contact_profile_id)
-          .single();
-
-        profile = profileData;
-      }
+      const profile = contact?.contact_profiles || null;
 
       if (type === 'profile') {
         return new Response(JSON.stringify({

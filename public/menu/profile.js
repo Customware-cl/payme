@@ -64,38 +64,111 @@ function setupEventListeners() {
     });
 }
 
-// Cargar perfil existente
+// Cargar perfil con caché y progressive loading
 async function loadProfile() {
-    showLoader(true);
-
     try {
-        const response = await fetch(`${PROFILE_ENDPOINT}?token=${state.token}&type=profile`);
-        const data = await response.json();
+        // 1. Intentar cargar desde caché primero (stale-while-revalidate)
+        const cachedData = CacheManager.get(state.token, 'profile');
 
-        if (data.success && data.profile) {
-            state.profileData = data.profile;
-            state.contactId = data.contact_id;
+        if (cachedData) {
+            console.log('[Profile] Using cached data');
+            renderProfile(cachedData);
 
-            // Rellenar formulario
-            if (data.profile.first_name) {
-                $('#first-name').value = data.profile.first_name;
+            // Si el caché está stale, revalidar en background sin loader
+            if (CacheManager.isStale(state.token, 'profile')) {
+                console.log('[Profile] Cache is stale, revalidating in background...');
+                revalidateProfile();
             }
-            if (data.profile.last_name) {
-                $('#last-name').value = data.profile.last_name;
-            }
-            if (data.profile.email) {
-                $('#email').value = data.profile.email;
-            }
+            return;
+        }
 
-            console.log('Profile loaded:', data.profile);
-        } else {
-            console.log('No profile data found, starting with empty form');
+        // 2. No hay caché, mostrar loader y hacer fetch
+        console.log('[Profile] No cache, fetching from API...');
+        showLoader(true);
+
+        const data = await fetchProfile();
+
+        if (data) {
+            // Guardar en caché
+            CacheManager.set(state.token, 'profile', data);
+            renderProfile(data);
         }
     } catch (error) {
         console.error('Error loading profile:', error);
         showToast('Error al cargar el perfil');
     } finally {
         showLoader(false);
+    }
+}
+
+// Fetch datos del perfil
+async function fetchProfile() {
+    try {
+        const response = await fetch(`${PROFILE_ENDPOINT}?token=${state.token}&type=profile`);
+        const data = await response.json();
+
+        if (data.success) {
+            return data;
+        } else {
+            console.log('No profile data found');
+            return null;
+        }
+    } catch (error) {
+        console.error('Error fetching profile:', error);
+        return null;
+    }
+}
+
+// Renderizar datos del perfil
+function renderProfile(data) {
+    if (data.profile) {
+        state.profileData = data.profile;
+        state.contactId = data.contact_id;
+
+        // Rellenar formulario con transición suave
+        if (data.profile.first_name) {
+            $('#first-name').value = data.profile.first_name;
+        }
+        if (data.profile.last_name) {
+            $('#last-name').value = data.profile.last_name;
+        }
+        if (data.profile.email) {
+            $('#email').value = data.profile.email;
+        }
+
+        console.log('Profile loaded:', data.profile);
+    } else {
+        console.log('No profile data found, starting with empty form');
+    }
+}
+
+// Revalidar perfil en background
+async function revalidateProfile() {
+    try {
+        const data = await fetchProfile();
+
+        if (data) {
+            // Actualizar caché
+            CacheManager.set(state.token, 'profile', data);
+
+            // Actualizar UI silenciosamente si cambió
+            const currentFirstName = $('#first-name').value;
+            const currentLastName = $('#last-name').value;
+
+            if (data.profile) {
+                const changed =
+                    currentFirstName !== (data.profile.first_name || '') ||
+                    currentLastName !== (data.profile.last_name || '');
+
+                if (changed) {
+                    console.log('[Profile] Data changed, updating UI');
+                    renderProfile(data);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error revalidating profile:', error);
+        // No hacer nada, mantener caché existente
     }
 }
 
@@ -125,6 +198,10 @@ async function saveProfile() {
         const data = await response.json();
 
         if (data.success) {
+            // Invalidar caché para forzar recarga en la próxima visita
+            CacheManager.invalidate(state.token, 'profile');
+            CacheManager.invalidate(state.token, 'user'); // También invalidar user para actualizar nombre
+
             showToast('✅ Perfil guardado correctamente');
             setTimeout(() => {
                 window.location.href = `/menu?token=${state.token}`;

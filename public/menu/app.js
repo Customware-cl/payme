@@ -17,54 +17,121 @@ async function init() {
 
     console.log('Menu initialized', { hasToken: !!state.token });
 
-    // Validar sesión antes de mostrar el menú
-    const isValid = await validateSession();
-
-    if (!isValid) {
-        showExpiredScreen();
-        return;
-    }
-
-    // Cargar nombre de usuario si hay token
-    if (state.token) {
-        await loadUserName();
-    }
-
-    // Setup event listeners
+    // Setup event listeners primero
     setupEventListeners();
+
+    // Cargar datos de usuario (combinado: validación + nombre + onboarding check)
+    if (state.token) {
+        await loadUserData();
+    } else {
+        showExpiredScreen();
+    }
 }
 
-// Validar sesión
-async function validateSession() {
-    // Si no hay token, sesión inválida
-    if (!state.token) {
-        console.log('No token found');
-        return false;
-    }
+// Cargar datos del usuario (combinado: validación + nombre + onboarding check)
+async function loadUserData() {
+    const greetingNameEl = $('#greeting-name');
 
     try {
-        // Intentar obtener datos de usuario para validar el token
+        // 1. Intentar cargar desde caché primero (stale-while-revalidate)
+        const cachedData = CacheManager.get(state.token, 'user');
+
+        if (cachedData) {
+            console.log('[Menu] Using cached data');
+            renderUserData(cachedData);
+
+            // Si el caché está stale (cerca de expirar), revalidar en background
+            if (CacheManager.isStale(state.token, 'user')) {
+                console.log('[Menu] Cache is stale, revalidating in background...');
+                revalidateUserData();
+            }
+            return;
+        }
+
+        // 2. No hay caché, hacer fetch (mostrar skeleton durante carga)
+        console.log('[Menu] No cache, fetching from API...');
+        const data = await fetchUserData();
+
+        if (!data) {
+            showExpiredScreen();
+            return;
+        }
+
+        // Guardar en caché
+        CacheManager.set(state.token, 'user', data);
+
+        // Renderizar datos
+        renderUserData(data);
+
+    } catch (error) {
+        console.error('Error loading user data:', error);
+        showExpiredScreen();
+    }
+}
+
+// Fetch de datos del usuario
+async function fetchUserData() {
+    try {
         const response = await fetch(`${SUPABASE_URL}/functions/v1/menu-data?token=${state.token}&type=user`);
 
-        // Si el servidor retorna 401, el token es inválido o expirado
         if (response.status === 401) {
             console.log('Token invalid or expired (401)');
-            return false;
+            return null;
         }
 
         const data = await response.json();
 
-        // Si la respuesta indica error, sesión inválida
         if (!data.success) {
-            console.log('Session validation failed:', data.error);
-            return false;
+            console.log('API error:', data.error);
+            return null;
         }
 
-        console.log('Session validated successfully');
-        return true;
+        return data;
     } catch (error) {
-        console.error('Error validating session:', error);
-        return false;
+        console.error('Error fetching user data:', error);
+        return null;
+    }
+}
+
+// Renderizar datos del usuario
+function renderUserData(data) {
+    const greetingNameEl = $('#greeting-name');
+
+    // Verificar si requiere onboarding
+    if (data.requires_onboarding) {
+        console.log('User requires onboarding');
+        showOnboardingScreen();
+        return;
+    }
+
+    // Mostrar nombre con transición suave
+    if (data.name && greetingNameEl) {
+        // Remover skeleton y mostrar nombre con fade-in
+        greetingNameEl.innerHTML = `<span class="fade-in">${data.name}</span>`;
+    }
+}
+
+// Revalidar datos en background
+async function revalidateUserData() {
+    try {
+        const data = await fetchUserData();
+
+        if (data) {
+            // Actualizar caché
+            CacheManager.set(state.token, 'user', data);
+
+            // Si los datos cambiaron, actualizar UI silenciosamente
+            const greetingNameEl = $('#greeting-name');
+            const currentName = greetingNameEl?.textContent?.trim();
+
+            if (data.name && currentName !== data.name) {
+                console.log('[Menu] Name changed, updating UI');
+                renderUserData(data);
+            }
+        }
+    } catch (error) {
+        console.error('Error revalidating user data:', error);
+        // No hacer nada, mantener caché existente
     }
 }
 
@@ -81,33 +148,7 @@ function showExpiredScreen() {
     if (footer) footer.style.display = 'none';
 }
 
-// Cargar nombre de usuario y detectar onboarding
-async function loadUserName() {
-    try {
-        const response = await fetch(`${SUPABASE_URL}/functions/v1/menu-data?token=${state.token}&type=user`);
-        const data = await response.json();
-
-        if (data.success) {
-            // Verificar si requiere onboarding
-            if (data.requires_onboarding) {
-                console.log('User requires onboarding');
-                showOnboardingScreen();
-                return;
-            }
-
-            // Si tiene nombre, actualizar saludo
-            if (data.name) {
-                const greeting = $('#user-greeting');
-                if (greeting) {
-                    greeting.textContent = `¡Hola ${data.name}! 👋`;
-                }
-            }
-        }
-    } catch (error) {
-        console.error('Error loading user name:', error);
-        // Mantener saludo genérico si falla
-    }
-}
+// Función removida: ahora se usa loadUserData() que es más eficiente
 
 // Mostrar pantalla de onboarding
 function showOnboardingScreen() {

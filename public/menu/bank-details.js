@@ -125,41 +125,114 @@ function setupEventListeners() {
     });
 }
 
-// Cargar datos bancarios existentes
+// Cargar datos bancarios con caché y progressive loading
 async function loadBankDetails() {
-    showLoader(true);
-
     try {
-        const response = await fetch(`${BANK_ENDPOINT}?token=${state.token}&type=bank`);
-        const data = await response.json();
+        // 1. Intentar cargar desde caché primero (stale-while-revalidate)
+        const cachedData = CacheManager.get(state.token, 'bank');
 
-        if (data.success && data.bank_account) {
-            state.bankData = data.bank_account;
-            state.contactId = data.contact_id;
+        if (cachedData) {
+            console.log('[Bank] Using cached data');
+            renderBankDetails(cachedData);
 
-            // Rellenar formulario
-            if (data.bank_account.rut) {
-                $('#rut').value = formatRUT(data.bank_account.rut);
+            // Si el caché está stale, revalidar en background sin loader
+            if (CacheManager.isStale(state.token, 'bank')) {
+                console.log('[Bank] Cache is stale, revalidating in background...');
+                revalidateBankDetails();
             }
-            if (data.bank_account.bank_name) {
-                $('#bank').value = data.bank_account.bank_name;
-            }
-            if (data.bank_account.account_type) {
-                $('#account-type').value = data.bank_account.account_type;
-            }
-            if (data.bank_account.account_number) {
-                $('#account-number').value = data.bank_account.account_number;
-            }
+            return;
+        }
 
-            console.log('Bank details loaded:', data.bank_account);
-        } else {
-            console.log('No bank data found, starting with empty form');
+        // 2. No hay caché, mostrar loader y hacer fetch
+        console.log('[Bank] No cache, fetching from API...');
+        showLoader(true);
+
+        const data = await fetchBankDetails();
+
+        if (data) {
+            // Guardar en caché
+            CacheManager.set(state.token, 'bank', data);
+            renderBankDetails(data);
         }
     } catch (error) {
         console.error('Error loading bank details:', error);
         showToast('Error al cargar los datos bancarios');
     } finally {
         showLoader(false);
+    }
+}
+
+// Fetch datos bancarios
+async function fetchBankDetails() {
+    try {
+        const response = await fetch(`${BANK_ENDPOINT}?token=${state.token}&type=bank`);
+        const data = await response.json();
+
+        if (data.success) {
+            return data;
+        } else {
+            console.log('No bank data found');
+            return null;
+        }
+    } catch (error) {
+        console.error('Error fetching bank details:', error);
+        return null;
+    }
+}
+
+// Renderizar datos bancarios
+function renderBankDetails(data) {
+    if (data.bank_account) {
+        state.bankData = data.bank_account;
+        state.contactId = data.contact_id;
+
+        // Rellenar formulario con transición suave
+        if (data.bank_account.rut) {
+            $('#rut').value = formatRUT(data.bank_account.rut);
+        }
+        if (data.bank_account.bank_name) {
+            $('#bank').value = data.bank_account.bank_name;
+        }
+        if (data.bank_account.account_type) {
+            $('#account-type').value = data.bank_account.account_type;
+        }
+        if (data.bank_account.account_number) {
+            $('#account-number').value = data.bank_account.account_number;
+        }
+
+        console.log('Bank details loaded:', data.bank_account);
+    } else {
+        console.log('No bank data found, starting with empty form');
+    }
+}
+
+// Revalidar datos bancarios en background
+async function revalidateBankDetails() {
+    try {
+        const data = await fetchBankDetails();
+
+        if (data) {
+            // Actualizar caché
+            CacheManager.set(state.token, 'bank', data);
+
+            // Actualizar UI silenciosamente si cambió
+            const currentRut = $('#rut').value.replace(/\./g, '').replace(/-/g, '');
+            const currentAccountNumber = $('#account-number').value;
+
+            if (data.bank_account) {
+                const changed =
+                    currentRut !== (data.bank_account.rut || '') ||
+                    currentAccountNumber !== (data.bank_account.account_number || '');
+
+                if (changed) {
+                    console.log('[Bank] Data changed, updating UI');
+                    renderBankDetails(data);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error revalidating bank details:', error);
+        // No hacer nada, mantener caché existente
     }
 }
 
@@ -202,6 +275,9 @@ async function saveBankDetails() {
         const data = await response.json();
 
         if (data.success) {
+            // Invalidar caché para forzar recarga en la próxima visita
+            CacheManager.invalidate(state.token, 'bank');
+
             showToast('✅ Datos bancarios guardados correctamente');
             setTimeout(() => {
                 window.location.href = `/menu?token=${state.token}`;
