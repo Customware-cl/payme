@@ -767,7 +767,7 @@ export class FlowHandlers {
       // 2. Obtener información del tenant (phone_number_id para enviar mensaje)
       const { data: tenant } = await this.supabase
         .from('tenants')
-        .select('whatsapp_phone_number_id')
+        .select('whatsapp_phone_number_id, whatsapp_access_token')
         .eq('id', tenantId)
         .single();
 
@@ -836,7 +836,10 @@ export class FlowHandlers {
       };
 
       // 6. Enviar mensaje a través de WhatsApp API
-      const accessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+      // Usar token del tenant (multi-tenant) con fallback a env var
+      const accessToken = tenant.whatsapp_access_token || Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+      console.log('[NOTIFICATION] Using token from:', tenant.whatsapp_access_token ? 'tenant' : 'env var');
+
       const response = await fetch(
         `https://graph.facebook.com/v18.0/${tenant.whatsapp_phone_number_id}/messages`,
         {

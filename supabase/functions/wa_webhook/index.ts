@@ -1094,9 +1094,14 @@ async function processInboundMessage(
           console.log('[MENU_WEB] Button web_menu clicked, sending menu web template');
           try {
             const { WhatsAppTemplates } = await import('../_shared/whatsapp-templates.ts');
+
+            // Usar token del tenant (multi-tenant) con fallback a env var
+            const waAccessToken = tenant.whatsapp_access_token || Deno.env.get('WHATSAPP_ACCESS_TOKEN')!;
+            console.log('[MENU_WEB] Using token from:', tenant.whatsapp_access_token ? 'tenant' : 'env var');
+
             const templates = new WhatsAppTemplates(
               phoneNumberId,
-              Deno.env.get('WHATSAPP_ACCESS_TOKEN')!
+              waAccessToken
             );
 
             const result = await templates.generateAndSendMenuAccess(
@@ -1609,7 +1614,10 @@ async function processInboundMessage(
     if (interactiveResponse) {
       // Enviar mensaje interactivo con botones directamente
       try {
-        const accessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+        // Usar token del tenant (multi-tenant) con fallback a env var
+        const accessToken = tenant.whatsapp_access_token || Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+        console.log('[INTERACTIVE] Using token from:', tenant.whatsapp_access_token ? 'tenant' : 'env var');
+
         const payload = {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',

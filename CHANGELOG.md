@@ -2,6 +2,281 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-22] - 🔧 Implementación Multi-Tenant: Soporte para Múltiples Números WhatsApp
+
+### ⚠️ Estado: DESPLEGADO EN PRUEBA - NO PROBADO EN PRODUCCIÓN
+
+**Razón:** El número productivo (15558789779) está bloqueado esperando verificación empresarial de Meta (RUT + Estatutos pendientes).
+
+**Ambiente probado:** ✅ Número de prueba (778143428720890)
+**Ambiente pendiente:** ⏸️ Número productivo (esperando verificación)
+
+### Objetivo
+Habilitar el sistema para soportar múltiples números de WhatsApp Bot independientes, cada uno con su propio token de acceso.
+
+**Caso de uso:** Migrar de número de prueba a número productivo manteniendo ambos funcionales.
+
+### Cambios Implementados
+
+**1. Fix crítico: Uso de token por tenant**
+
+**Archivos modificados:**
+- ✅ `supabase/functions/wa_webhook/index.ts` (2 ubicaciones)
+  - Línea ~1099: Envío de plantillas de menú web
+  - Línea ~1618: Envío de mensajes interactivos con botones
+- ✅ `supabase/functions/_shared/flow-handlers.ts` (1 ubicación)
+  - Línea ~770: Agregado `whatsapp_access_token` al select de tenant
+  - Línea ~840: Envío de notificaciones de préstamo
+
+**Cambios técnicos:**
+```typescript
+// ❌ ANTES (bug): Usaba token global para todos los números
+const accessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+
+// ✅ DESPUÉS (correcto): Usa token del tenant con fallback
+const accessToken = tenant.whatsapp_access_token || Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+console.log('[DEBUG] Using token from:', tenant.whatsapp_access_token ? 'tenant' : 'env var');
+```
+
+**2. Scripts de configuración y verificación**
+
+**Archivos creados:**
+- ✅ `scripts/setup-new-tenant.sql`
+  - Script SQL completo para crear nuevos tenants
+  - Incluye verificaciones de duplicados
+  - Instrucciones paso a paso para configuración en Meta
+  - Queries de validación post-instalación
+
+- ✅ `scripts/verify-multi-tenant-setup.ts`
+  - Verificación automática de configuración multi-tenant
+  - Valida que todos los tenants tengan tokens configurados
+  - Detecta phone_number_id duplicados
+  - Prueba tokens contra Meta API
+  - Verifica aislamiento de contactos por tenant
+
+### Características
+
+**✅ Completamente retrocompatible:**
+- El sistema funciona igual si hay un solo tenant
+- Si un tenant no tiene token, usa la variable de entorno como fallback
+- No requiere cambios en tenants existentes
+
+**✅ Aislamiento de datos:**
+- Cada tenant tiene sus propios contactos
+- Cada tenant usa su propio token de WhatsApp
+- Los mensajes se enrutan correctamente por phone_number_id
+- RLS garantiza separación de datos
+
+**✅ Logs mejorados:**
+- Se registra qué token está usando (tenant vs env var)
+- Facilita debugging de problemas de autenticación
+- Permite auditoría de uso por tenant
+
+### Instrucciones de Uso
+
+**Para agregar un nuevo número de WhatsApp:**
+
+1. **Obtener credenciales en Meta Business:**
+   - Phone Number ID del nuevo número
+   - System User Token permanente
+   - Business Account ID (WABA)
+
+2. **Ejecutar script SQL:**
+   ```sql
+   -- Ver scripts/setup-new-tenant.sql
+   -- Reemplazar valores {{MARCADOS}} con tus credenciales
+   ```
+
+3. **Configurar webhook en Meta:**
+   - URL: La misma que el número existente
+   - Verify Token: `token_prestabot_2025`
+   - Eventos: `messages`
+
+4. **Verificar configuración:**
+   ```bash
+   deno run --allow-env --allow-net --allow-read scripts/verify-multi-tenant-setup.ts
+   ```
+
+5. **Desplegar cambios:**
+   ```bash
+   npx supabase functions deploy wa_webhook --project-ref qgjxkszfdoolaxmsupil --no-verify-jwt
+   npx supabase functions deploy flows-handler --project-ref qgjxkszfdoolaxmsupil --no-verify-jwt
+   ```
+
+### Testing
+
+**Pre-deployment:**
+```bash
+# Verificar que no hay errores de sintaxis
+deno check supabase/functions/wa_webhook/index.ts
+deno check supabase/functions/_shared/flow-handlers.ts
+
+# Verificar configuración de tenants
+deno run --allow-env --allow-net --allow-read scripts/verify-multi-tenant-setup.ts
+```
+
+**Post-deployment:**
+1. Enviar mensaje de prueba desde número 1
+2. Enviar mensaje de prueba desde número 2
+3. Verificar logs en Supabase Dashboard:
+   - Buscar: `[MENU_WEB] Using token from:`
+   - Buscar: `[INTERACTIVE] Using token from:`
+   - Buscar: `[NOTIFICATION] Using token from:`
+4. Confirmar que cada número usa su token correcto
+
+### Impacto
+
+**Beneficios:**
+- ✅ Permite escalar a múltiples números sin cambios de código
+- ✅ Cada negocio puede tener su propio número
+- ✅ Facilita testing con números de sandbox
+- ✅ Soporte para diferentes WABA (Business Accounts)
+
+**Riesgos mitigados:**
+- ✅ Fallback a variable de entorno previene errores
+- ✅ Logs ayudan a identificar problemas de configuración
+- ✅ Script de verificación detecta problemas antes de deploy
+- ✅ Retrocompatible con setup actual
+
+### Contexto del Proyecto
+
+**Arquitectura clarificada:**
+- **Bot WhatsApp:** Número desde donde se envían mensajes (no es un usuario)
+- **Usuarios:** Personas que registran préstamos (Felipe Abarca, Catherine Pereira, etc.)
+- **Contactos:** Personas hacia las cuales un usuario tiene préstamos
+- **Multi-número:** Permite tener bot de prueba + bot productivo simultáneamente
+
+**Número actual (Prueba):**
+- Phone Number ID: 778143428720890
+- Estado: ✅ Funcionando
+- Usuarios: Felipe, Catherine, y otros
+
+**Número productivo (Bloqueado):**
+- Phone Number ID: 15558789779
+- Business Account ID: 1560176728670614
+- Estado: ⏸️ Esperando verificación empresarial
+- Bloqueador: Falta RUT + Estatutos de la empresa
+
+### Documentación Relacionada
+
+- 📄 **`docs/AGREGAR_NUMERO_PRODUCTIVO.md`** - 🆕 Guía paso a paso para cuando esté verificado
+- 📄 `docs/plan-multiples-numeros-whatsapp.md` - Plan completo de migración multi-tenant
+- 📄 `scripts/setup-new-tenant.sql` - Script genérico de configuración
+- 📄 `scripts/verify-multi-tenant-setup.ts` - Script de verificación automática
+
+### Próximos Pasos
+
+**Inmediatos (cuando se obtenga verificación):**
+- [ ] Obtener Access Token del número productivo desde Meta Business
+- [ ] Ejecutar SQL para crear tenant productivo (5 min)
+- [ ] Configurar webhook en Meta para número productivo (5 min)
+- [ ] Probar número productivo en ambiente real (10 min)
+
+**Futuro:**
+- [ ] Actualizar README.md con sección de multi-tenant
+- [ ] Documentar proceso de rotación de tokens
+- [ ] Considerar agregar endpoint para health check de tokens
+- [ ] Opcional: UI admin para gestionar tenants
+
+### Logs de Deploy
+
+**Fecha:** 2025-10-22
+**Edge Functions desplegadas:**
+- ✅ `wa_webhook` (148.9kB)
+- ✅ `flows-handler` (104.8kB)
+
+**Testing realizado:**
+- ✅ Verificación de sintaxis TypeScript
+- ✅ Consulta de tenants existentes
+- ✅ Verificación de aislamiento de datos
+- ⏸️ Testing en número productivo (pendiente de verificación empresarial)
+
+---
+
+## [2025-10-22] - 🔍 Validación y Corrección de Flujo de Usuarios Orgánicos
+
+### Validación Completada
+- **Objetivo**: Validar flujo completo de creación de usuarios orgánicos cuando un usuario registrado agrega un nuevo contacto
+- **Escenario probado**: Escenario C (Lender NO es usuario - Crecimiento Viral)
+- **Resultado**: ✅ Flujo funciona correctamente con 1 bug menor identificado
+
+### Correcciones Aplicadas
+
+**Edge Function: create-received-loan**
+- ✅ Corregidos 13 errores TypeScript que impedían el despliegue
+- ✅ Agregada referencia a Deno namespace (`/// <reference lib="deno.ns" />`)
+- ✅ Renombrada variable `lenderName` duplicada → `lenderDisplayName`
+- ✅ Agregado tipo explícito para `invitationStatus` con propiedades opcionales
+- ✅ Agregado type guard `instanceof Error` para manejo de excepciones
+- ✅ Corregido assertion `contactProfile!` para evitar null checks
+- ✅ Redesplegada función (versión 9, 85.87kB)
+
+**Shared Helper: whatsapp-templates.ts**
+- ✅ Corregidos 3 errores de `error.message` con type guards
+- ✅ Agregado `instanceof Error` en todos los catch blocks
+
+### Pruebas Exitosas
+
+**Test: Crear préstamo recibido con contacto nuevo**
+- ✅ Token LLT generado y validado correctamente (30 días)
+- ✅ Contact profile creado: `+56911223344` (María González Test)
+- ✅ Tenant contact creado con `metadata.created_from = 'received_loan'`
+- ✅ Self-contact usado correctamente como borrower (sin duplicados)
+- ✅ Agreement creado con relaciones correctas:
+  - `tenant_contact_id`: Self-contact (YO - borrower)
+  - `lender_tenant_contact_id`: Nuevo contacto (María - lender)
+  - `metadata.loan_type`: `received`
+  - `metadata.is_money_loan`: `true`
+- ✅ User detection ejecutado correctamente: `lender_is_user = false`
+- ℹ️ WhatsApp invitation no enviada (tenant sin configuración)
+
+### Bug Identificado
+
+**🐛 Bug #1: Falta manejo de duplicate key en contact_profile**
+- **Ubicación**: `/supabase/functions/create-received-loan/index.ts:207-236`
+- **Problema**: No maneja error 23505 cuando contact_profile ya existe
+- **Impacto**: Medio - Falla al crear contacto con teléfono existente
+- **Prioridad**: 🔴 Alta
+- **Fix propuesto**: Agregar retry con búsqueda si falla por duplicate key
+
+### Componentes Validados
+
+| Componente | Estado | Notas |
+|-----------|--------|-------|
+| Token LLT (30 días) | ✅ | Validación y expiración correctas |
+| Edge Function | ✅ | Desplegada v9, sin errores TypeScript |
+| User Detection | ✅ | `checkIfContactIsAppUser()` funcional |
+| Contact Creation | ⚠️ | Bug menor en manejo de duplicados |
+| Agreement Creation | ✅ | Metadata y relaciones correctas |
+| Self-Contact Pattern | ✅ | Usa existente, no duplica |
+| WhatsApp Invitation | ℹ️ | No probado (requiere config) |
+
+### Documentación Creada
+
+**Nuevo archivo**: `/docs/VALIDACION_USUARIOS_ORGANICOS.md`
+- Resumen ejecutivo de validación
+- Detalles de pruebas ejecutadas
+- Datos verificados en base de datos
+- Bug identificado con fix propuesto
+- Flujo completo documentado paso a paso
+- Escenarios pendientes de validación (A y B)
+- Recomendaciones de prioridad
+
+### Escenarios Pendientes
+
+1. **Escenario A**: Lender es usuario Y está en mis contactos
+2. **Escenario B**: Lender es usuario pero NO está en mis contactos
+3. **WhatsApp Invitation**: Envío de template `loan_invitation` con URL de registro
+
+### Referencias
+- Validación: `/docs/VALIDACION_USUARIOS_ORGANICOS.md`
+- Arquitectura: `/docs/SELF_CONTACT_ARCHITECTURE.md`
+- Viralidad: `/docs/VIRAL_INVITATIONS.md`
+- Edge Function: `/supabase/functions/create-received-loan/index.ts`
+- Migración: `/supabase/migrations/027_add_self_contact_support.sql`
+
+---
+
 ## [2025-10-21] - ⚡ Optimización de Performance en Aplicación Web
 
 ### Mejoras Implementadas
