@@ -47,11 +47,35 @@ export class ConversationMemory {
         contentLength: content.length
       });
 
+      // Resolver contactId a tenantContactId si es legacy contact
+      let resolvedContactId = contactId;
+
+      // Verificar si existe en tenant_contacts
+      const { data: tenantContact } = await this.supabase
+        .from('tenant_contacts')
+        .select('id')
+        .eq('id', contactId)
+        .maybeSingle();
+
+      // Si no existe, buscar en legacy contacts para obtener tenant_contact_id
+      if (!tenantContact) {
+        const { data: legacyContact } = await this.supabase
+          .from('contacts')
+          .select('tenant_contact_id')
+          .eq('id', contactId)
+          .maybeSingle();
+
+        if (legacyContact?.tenant_contact_id) {
+          resolvedContactId = legacyContact.tenant_contact_id;
+          console.log('[ConversationMemory] Resolved legacy contact to tenant_contact:', resolvedContactId);
+        }
+      }
+
       const { data, error } = await this.supabase
         .from('conversation_history')
         .insert({
           tenant_id: tenantId,
-          contact_id: contactId,
+          contact_id: resolvedContactId,  // Usar ID resuelto
           role,
           content,
           metadata
@@ -98,11 +122,35 @@ export class ConversationMemory {
         includeSystem
       });
 
+      // Resolver contactId a tenantContactId si es legacy contact
+      let resolvedContactId = contactId;
+
+      // Verificar si existe en tenant_contacts
+      const { data: tenantContact } = await this.supabase
+        .from('tenant_contacts')
+        .select('id')
+        .eq('id', contactId)
+        .maybeSingle();
+
+      // Si no existe, buscar en legacy contacts para obtener tenant_contact_id
+      if (!tenantContact) {
+        const { data: legacyContact } = await this.supabase
+          .from('contacts')
+          .select('tenant_contact_id')
+          .eq('id', contactId)
+          .maybeSingle();
+
+        if (legacyContact?.tenant_contact_id) {
+          resolvedContactId = legacyContact.tenant_contact_id;
+          console.log('[ConversationMemory] Resolved legacy contact to tenant_contact for history:', resolvedContactId);
+        }
+      }
+
       let query = this.supabase
         .from('conversation_history')
         .select('*')
         .eq('tenant_id', tenantId)
-        .eq('contact_id', contactId)
+        .eq('contact_id', resolvedContactId)  // Usar ID resuelto
         .order('created_at', { ascending: false })
         .limit(limit);
 
