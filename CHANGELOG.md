@@ -39,10 +39,41 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
   - `supabase/functions/_shared/whatsapp-window-manager.ts:388` - sendTemplateMessage insert
   - `supabase/functions/_shared/whatsapp-window-manager.ts:499` - sendFreeFormMessage insert
 
+**3. AI Agent fallaba al obtener contexto del usuario con legacy contact IDs**
+- ❌ **Problema**: Cuando AI Agent se llamaba exitosamente (después del fix #1), inmediatamente fallaba con error `Error obteniendo contexto del usuario` / `PGRST116: Cannot coerce the result to a single JSON object`. Esto ocurría porque `ConversationMemory.getUserContext()` buscaba el contacto en `tenant_contacts` con un ID legacy, no encontraba nada, y fallaba. El ai-agent no podía obtener contexto (nombre, préstamos activos, etc.) para generar respuestas contextuales, haciendo fallback al IntentDetector genérico.
+- ✅ **Solución**: Agregado fallback a legacy contacts en `getUserContext()` con el mismo patrón usado en otros archivos:
+  1. Busca en `tenant_contacts` con contactId
+  2. Si no encuentra, busca en legacy `contacts` y obtiene `tenant_contact_id` mapeado
+  3. Usa `tenantContactId` para todas las búsquedas de agreements (préstamos)
+  4. Maneja `contact_profiles` como array o objeto según tipo de JOIN
+- 📁 **Archivo afectado**:
+  - `supabase/functions/_shared/conversation-memory.ts:348-439` - Método `getUserContext()`
+
+**Flujo getUserContext ANTES (incorrecto):**
+```typescript
+// 1. AI Agent llama getUserContext(legacy_contact_id) ❌
+// 2. Busca en tenant_contacts con legacy ID ❌
+// 3. No encuentra, falla con PGRST116 ❌
+// 4. AI Agent no obtiene contexto, falla completamente ❌
+// 5. Webhook hace fallback a IntentDetector → mensaje genérico ❌
+```
+
+**Flujo getUserContext DESPUÉS (correcto):**
+```typescript
+// 1. AI Agent llama getUserContext(legacy_contact_id) ✅
+// 2. Busca en tenant_contacts, no encuentra ✅
+// 3. Fallback a legacy contacts, obtiene tenant_contact_id ✅
+// 4. Busca tenant_contact con ID mapeado ✅
+// 5. Busca préstamos con tenantContactId correcto ✅
+// 6. Retorna contexto completo (nombre, préstamos, montos) ✅
+// 7. AI Agent genera respuesta contextual inteligente ✅
+```
+
 **Impacto de los bugs:**
 - ⚠️ **Bug 1**: Usuarios NO recibían respuestas inteligentes después de primera interacción, solo mensajes genéricos
 - ⚠️ **Bug 2**: AI perdía contexto de conversaciones porque no veía sus propias respuestas anteriores
-- ⚠️ **Combinados**: Sistema parecía "tonto" después de primera interacción y no recordaba qué había dicho antes
+- ⚠️ **Bug 3**: AI no podía obtener contexto del usuario (préstamos, nombre) aunque se llamara correctamente
+- ⚠️ **Combinados**: Sistema NUNCA procesaba con IA después de primera interacción, parecía completamente "tonto"
 
 ---
 
