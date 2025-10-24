@@ -2,6 +2,153 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-24] - v2.0.6 - 🔧 Fix: Resolución de número de teléfono en envío de mensajes (fallback a legacy contacts)
+
+### 🐛 Bug Crítico Corregido
+
+**WhatsAppWindowManager no podía enviar mensajes con contactos legacy**
+- ❌ **Problema**: Los métodos `sendFreeFormMessage()` y `sendTemplateMessage()` buscaban el contacto en `tenant_contacts` usando un `contactId` que en realidad era un ID de la tabla legacy `contacts`. Esto causaba que no encontraran el contacto y fallaran con error: `Missing WhatsApp configuration or contact phone: {"missingPhone":true}`
+- ✅ **Solución**: Creado método helper `resolveContactPhone()` que implementa fallback a tabla legacy:
+  1. Intenta buscar en `tenant_contacts` primero
+  2. Si no encuentra, busca en tabla legacy `contacts`
+  3. Retorna `phone_e164` del contacto encontrado (legacy o tenant)
+- 📁 **Archivo afectado**:
+  - `supabase/functions/_shared/whatsapp-window-manager.ts` - Agregado helper method y modificados `sendTemplateMessage()` y `sendFreeFormMessage()`
+
+**Flujo ANTES (incorrecto):**
+```typescript
+// 1. sendFreeFormMessage(contactId) recibe legacy contact ID
+// 2. Busca en tenant_contacts con ese ID ❌
+//    → No encuentra nada, contact = null
+// 3. Intenta acceder a contact_profiles ❌
+//    → phoneE164 = undefined
+// 4. Falla validación → Error: Missing phone ❌
+```
+
+**Flujo DESPUÉS (correcto):**
+```typescript
+// 1. sendFreeFormMessage(contactId) recibe legacy contact ID
+// 2. Llama a resolveContactPhone(contactId) ✅
+// 3. Helper busca en tenant_contacts, no encuentra ✅
+// 4. Helper hace fallback a tabla legacy contacts ✅
+// 5. Retorna phone_e164 del legacy contact ✅
+// 6. Mensaje se envía exitosamente ✅
+```
+
+**Contexto:** Este fix era necesario porque el webhook ahora crea tanto `tenant_contacts` como `contacts` legacy (para satisfacer FK constraints), pero el sistema todavía usa los IDs de la tabla legacy en muchas partes del flujo. El helper asegura compatibilidad con ambos tipos de IDs.
+
+---
+
+## [2025-10-24] - 🔧 Fix: Ventana 24h siempre cerrada por falta de registro de mensajes
+
+### 🐛 Bug Crítico Corregido
+
+**Mensajes inbound no se guardaban en whatsapp_messages**
+- ❌ **Problema**: El webhook creaba `tenant_contacts` correctamente pero NO creaba el registro correspondiente en la tabla legacy `contacts`, causando que el insert a `whatsapp_messages` fallara silenciosamente (foreign key constraint). Como resultado, `getWindowStatus()` nunca encontraba mensajes inbound y SIEMPRE reportaba ventana cerrada, incluso cuando el usuario acababa de escribir.
+- ✅ **Solución**: Modificado webhook para crear o buscar registro en tabla legacy `contacts` con mapeo a `tenant_contact_id` antes de insertar en `whatsapp_messages`
+- 📁 **Archivo afectado**:
+  - `supabase/functions/wa_webhook/index.ts` - Agregado paso 2.5 para crear/buscar legacy contact
+
+**Flujo ANTES (incorrecto):**
+```typescript
+// 1. Crear tenant_contact ✅
+// 2. Intentar insertar en whatsapp_messages con tenant_contact.id ❌
+//    → Falla por FK constraint (contact_id debe existir en tabla contacts)
+//    → Falla silenciosamente, no se registra mensaje
+// 3. getWindowStatus() no encuentra mensajes → ventana siempre cerrada
+```
+
+**Flujo DESPUÉS (correcto):**
+```typescript
+// 1. Crear tenant_contact ✅
+// 2. Crear o buscar legacy contact con tenant_contact_id ✅
+// 3. Insertar en whatsapp_messages con legacy_contact.id ✅
+//    → Se guarda correctamente con logs de error si falla
+// 4. getWindowStatus() encuentra mensaje → ventana abierta por 24h ✅
+```
+
+**Búsqueda de contacto fallaba en ConversationManager**
+- ❌ **Problema**: `ConversationManager.getOrCreateConversationState()` fallaba con dos errores:
+  1. El JOIN con `contact_profiles` retorna array pero el código esperaba objeto
+  2. El webhook pasaba `legacy contact.id` pero ConversationManager buscaba en `tenant_contacts` con ese ID
+- ✅ **Solución**:
+  1. Agregado manejo de array para acceder correctamente al primer elemento de `contact_profiles`
+  2. Agregado fallback para buscar en tabla legacy `contacts` y obtener el `tenant_contact_id` mapeado
+- 📁 **Archivo afectado**:
+  - `supabase/functions/_shared/conversation-manager.ts` - Método `getOrCreateConversationState()` líneas 416-441
+
+**Flujo del fix:**
+```typescript
+// 1. Buscar en tenant_contacts con contactId
+if (contactError || !tenantContact) {
+  // 2. No encontrado, buscar en legacy contacts
+  const legacyContact = await supabase
+    .from('contacts')
+    .select('tenant_contact_id')
+    .eq('id', contactId)
+    .single();
+
+  // 3. Si hay mapeo, buscar el tenant_contact correspondiente
+  if (legacyContact?.tenant_contact_id) {
+    tenantContact = await supabase
+      .from('tenant_contacts')
+      .select('...')
+      .eq('id', legacyContact.tenant_contact_id)
+      .single();
+  }
+}
+```
+
+**getWindowStatus buscaba en campo incorrecto**
+- ❌ **Problema**: `WhatsAppWindowManager.getWindowStatus()` buscaba mensajes con `.eq('tenant_contact_id', contactId)` pero en la tabla `whatsapp_messages` el campo se llama `contact_id` (referencia a tabla legacy contacts), causando que NUNCA encontrara mensajes y siempre reportara ventana cerrada
+- ✅ **Solución**: Cambiado query para usar `.eq('contact_id', contactId)` que es el nombre correcto del campo
+- 📁 **Archivo afectado**:
+  - `supabase/functions/_shared/whatsapp-window-manager.ts` - Método `getWindowStatus()` línea 55
+
+### 🚀 Despliegue
+- ✅ Función `wa_webhook` redesplegada exitosamente (160.9kB)
+
+---
+
+## [2025-10-24] - 🔧 Fix: Evitar uso de templates incorrectos fuera de ventana 24h
+
+### 🐛 Bug Corregido
+
+**Template incorrecto cuando no hay template de categoría apropiada**
+- ❌ **Problema**: Cuando la ventana de 24h está cerrada y no existe template de la categoría solicitada (ej: 'general'), el código usaba un fallback que retornaba cualquier template aprobado (ej: templates de 'due_date'), causando error de WhatsApp: "Template name does not exist in the translation" (#132001)
+- ✅ **Solución**: Modificado método `selectBestTemplate` para retornar `null` cuando no hay template de la categoría correcta, permitiendo que el mensaje sea encolado en lugar de fallar
+- 📁 **Archivo afectado**:
+  - `supabase/functions/_shared/whatsapp-window-manager.ts` - Método `selectBestTemplate()`
+
+**Comportamiento ANTES (incorrecto):**
+```typescript
+// Si no encuentra template de la categoría solicitada
+// busca cualquier template aprobado (cualquier categoría)
+const { data: defaultTemplate } = await this.supabase
+  .from('templates')
+  .select('meta_template_name, name')
+  .is('tenant_id', null)
+  .eq('approval_status', 'approved')
+  .limit(1); // ❌ Sin filtro de categoría
+
+return defaultTemplate?.[0]?.meta_template_name || null;
+```
+
+**Comportamiento DESPUÉS (correcto):**
+```typescript
+// Si no encuentra template de la categoría solicitada
+// retorna null para que el mensaje sea encolado
+if (!templates || templates.length === 0) {
+  console.log('[WhatsAppWindowManager] No template found for category:', category);
+  return null; // ✅ Encolar mensaje en lugar de usar template incorrecto
+}
+```
+
+### 🚀 Despliegue
+- ✅ Función `ai-agent` redesplegada exitosamente (64.67kB)
+
+---
+
 ## [2025-10-23] - 🔧 Fix: Corregir parámetros GPT-5 y schema de base de datos
 
 ### 🐛 Bugs Corregidos

@@ -52,7 +52,7 @@ export class WhatsAppWindowManager {
         .from('whatsapp_messages')
         .select('created_at')
         .eq('tenant_id', tenantId)
-        .eq('tenant_contact_id', contactId)
+        .eq('contact_id', contactId)  // Cambiado de tenant_contact_id a contact_id
         .eq('direction', 'inbound')
         .order('created_at', { ascending: false })
         .limit(1)
@@ -213,6 +213,8 @@ export class WhatsAppWindowManager {
 
   // Seleccionar mejor template para un contexto
   private async selectBestTemplate(tenantId: string, category: string): Promise<string | null> {
+    console.log('[WhatsAppWindowManager] selectBestTemplate:', { tenantId, category });
+
     const { data: templates } = await this.supabase
       .from('templates')
       .select('meta_template_name, name')
@@ -222,18 +224,71 @@ export class WhatsAppWindowManager {
       .limit(1);
 
     if (!templates || templates.length === 0) {
-      // Buscar template general por defecto
-      const { data: defaultTemplate } = await this.supabase
-        .from('templates')
-        .select('meta_template_name, name')
-        .is('tenant_id', null)
-        .eq('approval_status', 'approved')
-        .limit(1);
-
-      return defaultTemplate?.[0]?.meta_template_name || defaultTemplate?.[0]?.name || null;
+      console.log('[WhatsAppWindowManager] No template found for category:', category);
+      // NO usar fallback genérico - retornar null para que se encole el mensaje
+      return null;
     }
 
-    return templates[0].meta_template_name || templates[0].name;
+    const templateName = templates[0].meta_template_name || templates[0].name;
+    console.log('[WhatsAppWindowManager] Selected template:', templateName);
+    return templateName;
+  }
+
+  // Helper para resolver número de teléfono de contacto (con fallback a legacy contacts)
+  private async resolveContactPhone(contactId: string): Promise<{
+    phone: string | null;
+    contact: any | null;
+    isLegacy: boolean;
+  }> {
+    console.log('[WhatsAppWindowManager] resolveContactPhone - Searching for contact:', contactId);
+
+    // 1. Intentar buscar en tenant_contacts primero
+    let { data: contact, error: contactError } = await this.supabase
+      .from('tenant_contacts')
+      .select('*, contact_profiles(phone_e164)')
+      .eq('id', contactId)
+      .maybeSingle();
+
+    if (contact && !contactError) {
+      const contactProfile = Array.isArray(contact.contact_profiles)
+        ? contact.contact_profiles[0]
+        : contact.contact_profiles;
+
+      const phone = contactProfile?.phone_e164 || null;
+      console.log('[WhatsAppWindowManager] resolveContactPhone - Found in tenant_contacts:', { phone, hasContact: !!contact });
+
+      return {
+        phone,
+        contact,
+        isLegacy: false
+      };
+    }
+
+    // 2. Fallback: buscar en tabla legacy contacts
+    console.log('[WhatsAppWindowManager] resolveContactPhone - Not found in tenant_contacts, checking legacy contacts');
+
+    const { data: legacyContact, error: legacyError } = await this.supabase
+      .from('contacts')
+      .select('phone_e164, tenant_contact_id, contact_profile_id, name, whatsapp_id')
+      .eq('id', contactId)
+      .maybeSingle();
+
+    if (!legacyContact || legacyError) {
+      console.log('[WhatsAppWindowManager] resolveContactPhone - Contact not found in either table');
+      return { phone: null, contact: null, isLegacy: false };
+    }
+
+    console.log('[WhatsAppWindowManager] resolveContactPhone - Found in legacy contacts:', {
+      phone: legacyContact.phone_e164,
+      tenantContactId: legacyContact.tenant_contact_id
+    });
+
+    // 3. Retornar datos del legacy contact
+    return {
+      phone: legacyContact.phone_e164,
+      contact: legacyContact,
+      isLegacy: true
+    };
   }
 
   // Enviar mensaje con template (HSM)
@@ -251,20 +306,45 @@ export class WhatsAppWindowManager {
         .eq('id', tenantId)
         .single();
 
-      const { data: contact } = await this.supabase
-        .from('tenant_contacts')
-        .select('*, contact_profiles(phone_e164)')
-        .eq('id', contactId)
-        .single();
+      // Fallback a env vars si el tenant no tiene token configurado
+      if (tenant && !tenant.whatsapp_access_token) {
+        tenant.whatsapp_access_token = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+        tenant.whatsapp_phone_number_id = tenant.whatsapp_phone_number_id || Deno.env.get('WHATSAPP_PHONE_NUMBER_ID');
+        console.log('[WhatsAppWindowManager] Using env vars as fallback');
+      }
 
-      if (!tenant?.whatsapp_access_token || !contact?.contact_profiles?.phone_e164) {
-        throw new Error('Missing WhatsApp configuration or contact phone');
+      // Usar helper para resolver contacto y teléfono (con fallback a legacy contacts)
+      const { phone: phoneE164, contact, isLegacy } = await this.resolveContactPhone(contactId);
+
+      console.log('[WhatsAppWindowManager] Template send - Contact resolution:', {
+        contactId,
+        hasContact: !!contact,
+        phoneE164,
+        isLegacy
+      });
+
+      console.log('[WhatsAppWindowManager] Validation check (template):', {
+        hasTenant: !!tenant,
+        hasAccessToken: !!tenant?.whatsapp_access_token,
+        accessTokenLength: tenant?.whatsapp_access_token?.length,
+        hasPhoneE164: !!phoneE164,
+        phoneE164Value: phoneE164
+      });
+
+      if (!tenant?.whatsapp_access_token || !phoneE164) {
+        const errorDetails = {
+          missingTenant: !tenant,
+          missingAccessToken: !tenant?.whatsapp_access_token,
+          missingPhone: !phoneE164
+        };
+        console.error('[WhatsAppWindowManager] Validation failed (template):', errorDetails);
+        throw new Error(`Missing WhatsApp configuration or contact phone: ${JSON.stringify(errorDetails)}`);
       }
 
       // Preparar payload para WhatsApp API
       const payload = {
         messaging_product: 'whatsapp',
-        to: contact.contact_profiles.phone_e164.replace('+', ''),
+        to: phoneE164.replace('+', ''),
         type: 'template',
         template: {
           name: templateName,
@@ -349,20 +429,45 @@ export class WhatsAppWindowManager {
         .eq('id', tenantId)
         .single();
 
-      const { data: contact } = await this.supabase
-        .from('tenant_contacts')
-        .select('*, contact_profiles(phone_e164)')
-        .eq('id', contactId)
-        .single();
+      // Fallback a env vars si el tenant no tiene token configurado
+      if (tenant && !tenant.whatsapp_access_token) {
+        tenant.whatsapp_access_token = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+        tenant.whatsapp_phone_number_id = tenant.whatsapp_phone_number_id || Deno.env.get('WHATSAPP_PHONE_NUMBER_ID');
+        console.log('[WhatsAppWindowManager] Using env vars as fallback');
+      }
 
-      if (!tenant?.whatsapp_access_token || !contact?.contact_profiles?.phone_e164) {
-        throw new Error('Missing WhatsApp configuration or contact phone');
+      // Usar helper para resolver contacto y teléfono (con fallback a legacy contacts)
+      const { phone: phoneE164, contact, isLegacy } = await this.resolveContactPhone(contactId);
+
+      console.log('[WhatsAppWindowManager] Free-form send - Contact resolution:', {
+        contactId,
+        hasContact: !!contact,
+        phoneE164,
+        isLegacy
+      });
+
+      console.log('[WhatsAppWindowManager] Validation check (free-form):', {
+        hasTenant: !!tenant,
+        hasAccessToken: !!tenant?.whatsapp_access_token,
+        accessTokenLength: tenant?.whatsapp_access_token?.length,
+        hasPhoneE164: !!phoneE164,
+        phoneE164Value: phoneE164
+      });
+
+      if (!tenant?.whatsapp_access_token || !phoneE164) {
+        const errorDetails = {
+          missingTenant: !tenant,
+          missingAccessToken: !tenant?.whatsapp_access_token,
+          missingPhone: !phoneE164
+        };
+        console.error('[WhatsAppWindowManager] Validation failed (free-form):', errorDetails);
+        throw new Error(`Missing WhatsApp configuration or contact phone: ${JSON.stringify(errorDetails)}`);
       }
 
       // Preparar payload para mensaje de texto
       const payload = {
         messaging_product: 'whatsapp',
-        to: contact.contact_profiles.phone_e164.replace('+', ''),
+        to: phoneE164.replace('+', ''),
         type: 'text',
         text: { body: message }
       };
