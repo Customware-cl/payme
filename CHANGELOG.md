@@ -170,6 +170,56 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
 // 7. Usuario recibe botones interactivos en WhatsApp ✅
 ```
 
+**7. ConversationManager sobrescribía respuesta del AI Agent después de procesamiento exitoso**
+- ❌ **Problema**: Después de que el AI Agent procesaba exitosamente el mensaje y retornaba `interactiveResponse` con botones (bug #5 y #6 resueltos), el webhook ejecutaba este flujo:
+  1. AI Agent retorna `responseMessage` + `interactiveResponse` ✅
+  2. Webhook limpia `responseMessage = null` para que use `interactiveResponse` ✅
+  3. Webhook ve `if (!responseMessage)` → llama `conversationManager.processInput()` ❌
+  4. ConversationManager encuentra estado "complete" → retorna mensaje genérico ❌
+  5. `responseMessage` ahora contiene "Gracias por tu consulta..." ❌
+  6. Webhook envía `interactiveResponse` (botones) pero logs muestran mensaje genérico ❌
+
+  El problema es que el webhook llamaba AMBOS sistemas (AI Agent + ConversationManager) para el mismo mensaje, y el ConversationManager sobrescribía la respuesta del AI Agent con un mensaje genérico.
+
+- ✅ **Solución**: Agregado flag `aiProcessed` para indicar cuando el AI Agent ya procesó exitosamente:
+  1. Cuando AI Agent retorna `success: true`, marca `aiProcessed = true`
+  2. Modificada condición: `if (!responseMessage && !aiProcessed)` antes de llamar a ConversationManager
+  3. Si AI procesó, NO se llama a ConversationManager → preserva respuesta del AI
+- 📁 **Archivo afectado**:
+  - `supabase/functions/wa_webhook/index.ts:425,451,499` - Agregado flag `aiProcessed` y condición
+
+**Flujo ANTES (incorrecto):**
+```typescript
+// 1. Usuario: "le presté 50 lucas a Caty" ✅
+// 2. Webhook: currentState = null (no hay flujo activo) ✅
+// 3. Webhook llama ai-agent ✅
+// 4. AI Agent retorna: responseMessage + interactiveResponse ✅
+// 5. Webhook limpia: responseMessage = null (para usar interactiveResponse) ✅
+// 6. Webhook ejecuta: if (!responseMessage) { ... } ❌
+//    → Llama conversationManager.processInput()
+// 7. ConversationManager encuentra estado "complete" ❌
+//    → Retorna: "Gracias por tu consulta..."
+// 8. responseMessage sobrescrito con mensaje genérico ❌
+// 9. Webhook envía interactiveResponse (botones SÍ se envían) ✅
+// 10. Pero logs muestran mensaje genérico en lugar del AI ❌
+```
+
+**Flujo DESPUÉS (correcto):**
+```typescript
+// 1. Usuario: "le presté 50 lucas a Caty" ✅
+// 2. Webhook: currentState = null (no hay flujo activo) ✅
+// 3. Webhook llama ai-agent ✅
+// 4. AI Agent retorna success: true ✅
+//    → aiProcessed = true
+// 5. AI Agent retorna: responseMessage + interactiveResponse ✅
+// 6. Webhook limpia: responseMessage = null (para usar interactiveResponse) ✅
+// 7. Webhook ejecuta: if (!responseMessage && !aiProcessed) { ... } ✅
+//    → aiProcessed = true, NO llama conversationManager ✅
+// 8. responseMessage preserva valor del AI (o null si usa interactiveResponse) ✅
+// 9. Webhook envía interactiveResponse con mensaje correcto ✅
+// 10. Usuario ve mensaje detallado del AI + botones ✅
+```
+
 **Impacto de los bugs:**
 - ⚠️ **Bug 1**: Usuarios NO recibían respuestas inteligentes después de primera interacción, solo mensajes genéricos
 - ⚠️ **Bug 2**: AI perdía contexto de conversaciones porque no veía sus propias respuestas anteriores
@@ -177,7 +227,8 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
 - ⚠️ **Bug 4**: Conversaciones no se guardaban, AI empezaba de cero cada vez
 - ⚠️ **Bug 5**: GPT-5 generaba texto plano en lugar de ejecutar funciones → sin botones interactivos
 - ⚠️ **Bug 6**: Incluso cuando GPT-5 ejecutaba funciones, el webhook fallaba al enviar los botones
-- ⚠️ **Combinados**: Sistema NUNCA procesaba con IA después de primera interacción + NUNCA enviaba botones interactivos
+- ⚠️ **Bug 7**: ConversationManager sobrescribía respuesta del AI con mensaje genérico
+- ⚠️ **Combinados**: Sistema NUNCA procesaba con IA después de primera interacción + NUNCA enviaba botones interactivos + mensajes incorrectos
 
 ---
 

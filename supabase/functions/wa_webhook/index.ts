@@ -422,6 +422,7 @@ async function processInboundMessage(
           // Verificar si hay conversación activa
           const currentState = await conversationManager.getCurrentState(tenant.id, contact.id);
           let flowType = null;
+          let aiProcessed = false;  // Flag para indicar si AI Agent ya procesó
 
           // Si NO hay flujo activo, delegar a AI Agent
           if (!currentState) {
@@ -447,6 +448,7 @@ async function processInboundMessage(
 
               if (aiResult.success) {
                 responseMessage = aiResult.response;
+                aiProcessed = true;  // ✅ Marcar que AI ya procesó
 
                 // Si hay acciones que requieren confirmación, agregar botones
                 if (aiResult.needs_confirmation && aiResult.actions && aiResult.actions.length > 0) {
@@ -493,7 +495,8 @@ async function processInboundMessage(
             }
           }
 
-          if (!responseMessage) {
+          // ✅ Solo llamar a conversationManager si AI NO procesó
+          if (!responseMessage && !aiProcessed) {
             // Procesar entrada en el flujo
             const result = await conversationManager.processInput(tenant.id, contact.id, text, flowType);
 
