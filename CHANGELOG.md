@@ -2,6 +2,50 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-24] - v2.0.7 - 🔧 Fix: AI Agent bloqueado por estados completados + Mensajes outbound no se guardaban
+
+### 🐛 Bugs Críticos Corregidos
+
+**1. AI Agent nunca se llamaba después de primera interacción**
+- ❌ **Problema**: Una vez que un usuario iniciaba una conversación, se creaba un `conversation_state` con `flow_type: "general_inquiry"`. Cuando ese flujo terminaba (`current_step: "complete"`), el estado seguía existiendo y nunca expiraba. El webhook verificaba `if (!currentState)` para llamar al ai-agent, pero como SIEMPRE había un estado (aunque completado), NUNCA llamaba a la IA. El usuario recibía respuestas genéricas en lugar de procesamiento inteligente.
+- ✅ **Solución**: Modificado `ConversationManager.getCurrentState()` para excluir estados con `current_step === 'complete'` usando `.neq('current_step', 'complete')`. Ahora un estado completado se considera "no activo" y permite que la IA procese nuevos mensajes.
+- 📁 **Archivo afectado**:
+  - `supabase/functions/_shared/conversation-manager.ts:1048` - Agregada condición para excluir estados completados
+
+**Flujo ANTES (incorrecto):**
+```typescript
+// 1. Usuario envía mensaje
+// 2. webhook.getCurrentState() encuentra estado con current_step: "complete" ❌
+// 3. currentState existe, NO llama a ai-agent ❌
+// 4. Llama a conversationManager.processInput() ❌
+// 5. ConversationManager ve estado "complete" y retorna mensaje genérico ❌
+// 6. Usuario recibe: "Gracias por tu consulta. Si necesitas ayuda..." ❌
+```
+
+**Flujo DESPUÉS (correcto):**
+```typescript
+// 1. Usuario envía mensaje
+// 2. webhook.getCurrentState() NO retorna estados "complete" ✅
+// 3. currentState es null, llama a ai-agent ✅
+// 4. AI analiza mensaje con GPT-5 y context ✅
+// 5. AI ejecuta funciones (crear préstamo, buscar contacto, etc.) ✅
+// 6. Usuario recibe respuesta inteligente y contextual ✅
+```
+
+**2. Mensajes outbound no se guardaban en base de datos**
+- ❌ **Problema**: Los métodos `sendTemplateMessage()` y `sendFreeFormMessage()` intentaban insertar en `whatsapp_messages` usando campo `tenant_contact_id`, pero la tabla usa `contact_id`. Esto generaba error `PGRST204: Could not find the 'tenant_contact_id' column` y los mensajes de salida NO se guardaban. Sin historial outbound, la IA perdía contexto de respuestas anteriores en conversaciones futuras.
+- ✅ **Solución**: Corregido campo de `tenant_contact_id` a `contact_id` en ambos inserts
+- 📁 **Archivos afectados**:
+  - `supabase/functions/_shared/whatsapp-window-manager.ts:388` - sendTemplateMessage insert
+  - `supabase/functions/_shared/whatsapp-window-manager.ts:499` - sendFreeFormMessage insert
+
+**Impacto de los bugs:**
+- ⚠️ **Bug 1**: Usuarios NO recibían respuestas inteligentes después de primera interacción, solo mensajes genéricos
+- ⚠️ **Bug 2**: AI perdía contexto de conversaciones porque no veía sus propias respuestas anteriores
+- ⚠️ **Combinados**: Sistema parecía "tonto" después de primera interacción y no recordaba qué había dicho antes
+
+---
+
 ## [2025-10-24] - v2.0.6 - 🔧 Fix: Resolución de número de teléfono en envío de mensajes (fallback a legacy contacts)
 
 ### 🐛 Bug Crítico Corregido

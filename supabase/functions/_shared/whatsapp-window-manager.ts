@@ -385,7 +385,7 @@ export class WhatsAppWindowManager {
         .from('whatsapp_messages')
         .insert({
           tenant_id: tenantId,
-          tenant_contact_id: contactId,
+          contact_id: contactId,  // Corregido: contact_id en lugar de tenant_contact_id
           wa_message_id: result.messages[0].id,
           direction: 'outbound',
           message_type: 'template',
@@ -496,7 +496,7 @@ export class WhatsAppWindowManager {
         .from('whatsapp_messages')
         .insert({
           tenant_id: tenantId,
-          tenant_contact_id: contactId,
+          contact_id: contactId,  // Corregido: contact_id en lugar de tenant_contact_id
           wa_message_id: result.messages[0].id,
           direction: 'outbound',
           message_type: 'text',

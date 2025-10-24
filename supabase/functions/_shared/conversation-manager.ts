@@ -406,18 +406,47 @@ export class ConversationManager {
       .eq('contact_id', contactId);
 
     // Obtener información del contacto desde tenant_contacts
-    const { data: tenantContact, error: contactError } = await this.supabase
+    let { data: tenantContact, error: contactError } = await this.supabase
       .from('tenant_contacts')
       .select('id, contact_profile_id, contact_profiles(phone_e164, telegram_id)')
       .eq('id', contactId)
       .single();
 
+    // Si no se encuentra, podría ser un legacy contact ID - buscar en contacts
     if (contactError || !tenantContact) {
-      throw new Error(`Contact not found: ${contactError?.message || 'Unknown error'}`);
+      console.log('[ConversationManager] Contact not found in tenant_contacts, checking legacy contacts table');
+      const { data: legacyContact } = await this.supabase
+        .from('contacts')
+        .select('tenant_contact_id')
+        .eq('id', contactId)
+        .single();
+
+      if (legacyContact?.tenant_contact_id) {
+        console.log('[ConversationManager] Found legacy contact mapping, fetching tenant_contact:', legacyContact.tenant_contact_id);
+        const { data: mappedTenantContact, error: mappedError } = await this.supabase
+          .from('tenant_contacts')
+          .select('id, contact_profile_id, contact_profiles(phone_e164, telegram_id)')
+          .eq('id', legacyContact.tenant_contact_id)
+          .single();
+
+        if (mappedError || !mappedTenantContact) {
+          throw new Error(`Mapped tenant_contact not found: ${mappedError?.message || 'Unknown error'}`);
+        }
+
+        tenantContact = mappedTenantContact;
+        contactError = null;
+      } else {
+        throw new Error(`Contact not found: ${contactError?.message || 'Unknown error'}`);
+      }
     }
 
+    // El JOIN retorna un array, acceder al primer elemento
+    const contactProfile = Array.isArray(tenantContact.contact_profiles)
+      ? tenantContact.contact_profiles[0]
+      : tenantContact.contact_profiles;
+
     // Usar phone_e164 o telegram_id como identificador
-    const phoneNumber = tenantContact.contact_profiles?.phone_e164 || tenantContact.contact_profiles?.telegram_id || 'unknown';
+    const phoneNumber = contactProfile?.phone_e164 || contactProfile?.telegram_id || 'unknown';
 
     // Crear nuevo estado
     // Para new_loan, incluir el lender_contact_id (quien presta = quien habla)
@@ -1016,6 +1045,7 @@ export class ConversationManager {
       .eq('tenant_id', tenantId)
       .eq('contact_id', contactId)
       .gt('expires_at', new Date().toISOString())
+      .neq('current_step', 'complete')  // Excluir estados completados (ya no son activos)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
