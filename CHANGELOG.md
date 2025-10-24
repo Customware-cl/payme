@@ -2,6 +2,253 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-23] - 🔧 Fix: Corregir parámetros GPT-5 y schema de base de datos
+
+### 🐛 Bugs Corregidos
+
+**1. Parámetro incompatible con GPT-5: max_tokens**
+- ❌ **Problema**: GPT-5 rechazaba llamadas con `max_tokens` (error: "Unsupported parameter")
+- ✅ **Solución**: Actualizado a `max_completion_tokens` en todos los archivos
+- 📁 **Archivos afectados**:
+  - `supabase/functions/_shared/openai-client.ts` - Interface y método analyzeImage
+  - `supabase/functions/ai-agent/index.ts` - Llamada principal a chatCompletion
+
+**2. Campo phone_e164 no existe en tenant_contacts**
+- ❌ **Problema**: Queries fallaban buscando `phone_e164` en `tenant_contacts` (columna no existe)
+- ✅ **Solución**: Agregado JOIN a `contact_profiles` en todas las búsquedas
+- 📁 **Archivos afectados**:
+  - `supabase/functions/_shared/contact-fuzzy-search.ts`:
+    - `findContactByName()` - Búsqueda fuzzy de contactos
+    - `findContactByPhone()` - Búsqueda por teléfono
+    - `getAllContacts()` - Listar todos los contactos
+  - `supabase/functions/_shared/conversation-memory.ts`:
+    - `getUserContext()` - Obtener contexto del usuario
+
+**Patrón del fix:**
+```typescript
+// ❌ ANTES (incorrecto)
+.select('id, name, phone_e164')
+
+// ✅ DESPUÉS (correcto)
+.select('id, name, contact_profile_id, contact_profiles(phone_e164)')
+
+// Acceso al campo:
+const phone = contact.contact_profiles?.phone_e164 || '';
+```
+
+### 🚀 Despliegue
+- ✅ Función `ai-agent` redesplegada exitosamente (64.64kB)
+
+---
+
+## [2025-10-23] - 🤖 Integración de IA: WhatsApp Bot Inteligente con GPT-5 nano
+
+### 🎯 Objetivo
+Transformar el bot de WhatsApp de basado en keywords a uno impulsado por IA que pueda procesar texto, audio e imágenes con lenguaje natural usando el nuevo modelo GPT-5 nano de OpenAI.
+
+### ✨ Capacidades Nuevas
+
+**1. Procesamiento de Mensajes de Texto con IA**
+- ✅ Interpretación de lenguaje natural usando **GPT-5 nano** (12x más barato que GPT-4o-mini)
+- ✅ Detección automática de intenciones sin keywords
+- ✅ Memoria conversacional completa (últimos 20 mensajes)
+- ✅ Búsqueda fuzzy de contactos (encuentra "erick" aunque esté guardado como "Erick Rodríguez")
+- ✅ Extracción inteligente de datos (montos, fechas, contactos)
+- ✅ Sistema de autonomía mixta (consultas directas, modificaciones con confirmación)
+- ✅ Parámetros GPT-5: `verbosity` y `reasoning_effort` para optimizar velocidad/costo
+
+**Ejemplo:**
+```
+Usuario: "le presté 50 lucas a erick para fin de mes"
+IA: ¿Confirmas préstamo otorgado a Erick Rodríguez por $50,000 con vencimiento 30-11-2025?
+[Botones: ✅ Confirmar | ❌ Cancelar]
+```
+
+**2. Procesamiento de Audio (Whisper)**
+- ✅ Transcripción automática de mensajes de voz a texto
+- ✅ Soporte para español chileno
+- ✅ Procesamiento post-transcripción con IA
+
+**Ejemplo:**
+```
+Usuario: [audio] "le presté 50 lucas a erick"
+IA: 🎤 Audio recibido: "le presté 50 lucas a erick"
+    ¿Confirmas préstamo otorgado a Erick Rodríguez por $50,000?
+```
+
+**3. Procesamiento de Imágenes (GPT-5 nano Vision)**
+- ✅ Análisis automático de comprobantes bancarios
+- ✅ Extracción de monto, destinatario y fecha
+- ✅ Detección de tipo de imagen (transferencia, objeto, etc.)
+- ✅ Soporte para caption
+- ✅ Configurado con `verbosity: 'low'` para respuestas concisas
+
+**Ejemplo:**
+```
+Usuario: [Imagen de comprobante] + "pagué a juan"
+IA: 📷 Imagen analizada:
+    Comprobante de transferencia por $50,000 a Juan Pérez
+    ¿Confirmas marcar como pagado el préstamo a Juan Pérez?
+```
+
+### 📦 Componentes Implementados
+
+**Edge Functions:**
+- ✅ `ai-agent/index.ts` - Orquestador principal de IA
+  - Gestión de contexto conversacional
+  - Function calling de OpenAI
+  - Ejecución de acciones según autonomía
+
+**Módulos Compartidos:**
+- ✅ `_shared/openai-client.ts` - Cliente unificado OpenAI
+  - `chatCompletion()`: GPT-5 nano para texto (con parámetros verbosity y reasoning_effort)
+  - `transcribeAudio()`: Whisper para audio
+  - `analyzeImage()`: GPT-5 nano Vision para imágenes
+  - `createTools()`: Definición de funciones disponibles
+
+- ✅ `_shared/conversation-memory.ts` - Gestión de historial
+  - Guardar/recuperar conversaciones
+  - Conversión a formato OpenAI
+  - Limpieza de datos antiguos
+
+- ✅ `_shared/contact-fuzzy-search.ts` - Búsqueda inteligente
+  - Algoritmo Levenshtein distance
+  - Normalización de texto (sin acentos)
+  - Scoring de similaridad (exact, partial, fuzzy)
+
+- ✅ `_shared/whatsapp-media-download.ts` - Descarga de medios
+  - Descarga de audio/imagen desde WhatsApp
+  - Conversión Blob → File para OpenAI
+
+**Base de Datos:**
+- ✅ Migración: `create_ai_conversation_tables.sql`
+  - Tabla `conversation_history`: Historial completo de conversaciones
+  - Tabla `ai_uncertainty_log`: Analytics de casos de baja confianza
+  - Tabla `ai_response_cache`: Optimización de costos (cache de respuestas)
+
+### 🔧 Modificaciones a Código Existente
+
+**wa_webhook/index.ts:**
+- ✅ Agregado handler para `message.type === 'audio'`
+  - Descarga audio → Whisper → ai-agent
+- ✅ Agregado handler para `message.type === 'image'`
+  - Descarga imagen → GPT-4 Vision → ai-agent
+- ✅ Modificado handler de `message.type === 'text'`
+  - Si NO hay flujo activo → delegar a ai-agent
+  - Si HAY flujo activo → mantener comportamiento actual (compatibilidad)
+  - Fallback a IntentDetector si falla IA
+
+### ⚙️ Configuración Requerida
+
+**Variables de Entorno:**
+```bash
+✅ OPENAI_API_KEY=sk-proj-... (CONFIGURADO)
+```
+
+**Deployment:**
+```bash
+✅ npx supabase functions deploy ai-agent (DESPLEGADO)
+✅ Webhook actualizado con nuevos handlers
+```
+
+### 📊 Funciones (Tools) Disponibles
+
+1. ✅ `create_loan` - Crear préstamo (lent/borrowed)
+2. ✅ `query_loans` - Consultar préstamos
+3. ✅ `mark_loan_returned` - Marcar como devuelto
+4. ✅ `reschedule_loan` - Reprogramar fecha
+5. ✅ `search_contacts` - Buscar contactos
+6. ✅ `show_uncertainty` - Registrar incertidumbre
+
+**Nota:** Actualmente son stubs que solicitan confirmación. Pendiente conectar con BD real de `loan_agreements`.
+
+### 🎛️ Sistema de Autonomía
+
+**Sin confirmación (ejecuta directo):**
+- Consultas (estado, saldos)
+- Mostrar información
+- Búsqueda de contactos
+
+**Con confirmación:**
+- Crear préstamos
+- Modificar datos
+- Marcar como devuelto
+- Eliminar registros
+
+### 📈 Fallback ante Incertidumbre
+
+**Threshold:** Confianza < 70%
+
+**Acciones:**
+1. Registrar en `ai_uncertainty_log` (analytics)
+2. Mostrar menú de opciones al usuario
+3. Usuario elige → retroalimentar sistema
+
+### 💰 Costos Estimados (OpenAI)
+
+**Modelo: GPT-5 nano** 🎉
+
+**Para 1000 usuarios activos/mes:**
+- GPT-5 nano (texto): **~$4-8** ⚡
+- Whisper (audio): ~$10-20
+- GPT-5 nano Vision (imágenes): **~$2-4** ⚡
+- **Total:** **~$16-32/mes** 💰
+
+**Comparación:**
+- Con GPT-4o: ~$80-160/mes
+- Con GPT-5 nano: ~$16-32/mes
+- **Ahorro: 80% (~$120/mes)** 🚀
+
+**Parámetros GPT-5 configurados:**
+- `verbosity: 'medium'` (texto) - respuestas balanceadas
+- `verbosity: 'low'` (imágenes) - respuestas concisas
+- `reasoning_effort: 'low'` - razonamiento ligero para velocidad
+
+**Optimizaciones futuras:**
+- Cachear respuestas frecuentes
+- Limitar tokens en historial
+
+### 📝 Documentación
+
+✅ Creado: `docs/INTEGRACION_IA.md`
+- Arquitectura completa
+- Flujos por tipo de mensaje
+- Ejemplos de uso
+- Troubleshooting
+- Roadmap
+
+### 🔄 Compatibilidad
+
+✅ **Retrocompatible:** Flujos conversacionales existentes siguen funcionando
+✅ **Fallback automático:** Si falla IA, usa IntentDetector original
+✅ **Comandos simples:** "hola", "ayuda", "menú" no usan IA (optimización)
+
+### ⏭️ Pendientes / Roadmap
+
+1. **Implementación de acciones reales:**
+   - Conectar `createLoan()`, `queryLoans()`, etc. con BD real
+   - Actualmente solo solicitan confirmación (stubs)
+
+2. **Optimizaciones de costos:**
+   - Implementar cache inteligente
+   - Usar `gpt-4o-mini` para consultas simples
+
+3. **Analytics dashboard:**
+   - Panel para `ai_uncertainty_log`
+   - Identificar patrones de mejora
+
+4. **Testing completo:**
+   - Pruebas end-to-end con audio real
+   - Pruebas con imágenes reales
+   - Validación de búsqueda fuzzy
+
+### 🐛 Issues Conocidos
+
+- Las funciones `create_loan`, `query_loans`, etc. son stubs (no crean datos reales aún)
+- Búsqueda fuzzy puede dar falsos positivos si hay nombres muy similares (ajustable con threshold)
+
+---
+
 ## [2025-10-22] - 🔧 Implementación Multi-Tenant: Soporte para Múltiples Números WhatsApp
 
 ### ⚠️ Estado: DESPLEGADO EN PRUEBA - NO PROBADO EN PRODUCCIÓN
