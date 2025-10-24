@@ -198,11 +198,22 @@ serve(async (req: Request) => {
         }
       );
 
+      // Construir mensaje de respuesta
+      // Si el asistente no generó texto, usar el mensaje del primer tool result
+      let responseMessage = assistantMessage.content || '';
+
+      if (!responseMessage && toolResults.length > 0) {
+        const firstMessageResult = toolResults.find(r => r.result.message);
+        if (firstMessageResult) {
+          responseMessage = firstMessageResult.result.message;
+        }
+      }
+
       // Retornar resultado con acciones ejecutadas
       return new Response(
         JSON.stringify({
           success: true,
-          response: assistantMessage.content || 'Procesando...',
+          response: responseMessage || 'Procesando...',
           actions: toolResults,
           needs_confirmation: toolResults.some(r => r.result.needs_confirmation),
           tokens_used: response.usage.total_tokens

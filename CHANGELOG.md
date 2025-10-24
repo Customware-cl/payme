@@ -220,6 +220,62 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
 // 10. Usuario ve mensaje detallado del AI + botones ✅
 ```
 
+**8. AI Agent retornaba "Procesando..." en lugar del mensaje de confirmación del tool call**
+- ❌ **Problema**: Después de que GPT-5 ejecutaba tool calls correctamente (bug #5 resuelto) y el webhook enviaba mensajes interactivos sin sobrescritura (bug #7 resuelto), el usuario seguía viendo "Procesando..." en lugar del mensaje detallado de confirmación. El problema estaba en el ai-agent línea 205:
+  ```typescript
+  response: assistantMessage.content || 'Procesando...'
+  ```
+  Cuando GPT-5 ejecuta tool calls, `assistantMessage.content` está **vacío** (porque el mensaje es solo `tool_calls`, no texto), entonces el fallback es siempre `'Procesando...'`. El mensaje correcto estaba en `toolResults[0].result.message`:
+  ```typescript
+  message: `¿Confirmas crear préstamo otorgado a Caty por $50.000 con vencimiento 2025-10-31?`
+  ```
+  Pero el webhook usaba `aiResult.response` para el body del mensaje interactivo, que era "Procesando...".
+
+- ✅ **Solución**: Modificado ai-agent para usar el mensaje del tool result cuando `assistantMessage.content` está vacío:
+  1. Verificar si `assistantMessage.content` tiene texto
+  2. Si no, buscar el primer `toolResult` que tenga `message`
+  3. Usar ese mensaje como `response`
+  4. Fallback a "Procesando..." solo si no hay mensaje en ningún lado
+- 📁 **Archivo afectado**:
+  - `supabase/functions/ai-agent/index.ts:201-210` - Agregada lógica para extraer mensaje de tool results
+
+**Flujo ANTES (incorrecto):**
+```typescript
+// 1. Usuario: "le presté 50 lucas a Caty" ✅
+// 2. GPT-5 ejecuta: create_loan() ✅
+// 3. createLoan() retorna: {
+//      message: "¿Confirmas crear préstamo otorgado a Caty por $50.000...?",
+//      needs_confirmation: true
+//    } ✅
+// 4. AI Agent construye respuesta:
+//    response: assistantMessage.content || 'Procesando...' ❌
+//    → assistantMessage.content = '' (vacío porque solo hay tool_calls)
+//    → response = 'Procesando...' ❌
+// 5. Webhook usa: body: { text: aiResult.response } ❌
+//    → body: { text: 'Procesando...' }
+// 6. Usuario ve: "Procesando..." + botones ❌
+```
+
+**Flujo DESPUÉS (correcto):**
+```typescript
+// 1. Usuario: "le presté 50 lucas a Caty" ✅
+// 2. GPT-5 ejecuta: create_loan() ✅
+// 3. createLoan() retorna: {
+//      message: "¿Confirmas crear préstamo otorgado a Caty por $50.000...?",
+//      needs_confirmation: true
+//    } ✅
+// 4. AI Agent construye respuesta:
+//    let responseMessage = assistantMessage.content || ''; ✅
+//    if (!responseMessage && toolResults.length > 0) {
+//      const firstMessage = toolResults.find(r => r.result.message);
+//      responseMessage = firstMessage.result.message; ✅
+//    }
+//    → responseMessage = "¿Confirmas crear préstamo otorgado a Caty por $50.000...?" ✅
+// 5. Webhook usa: body: { text: aiResult.response } ✅
+//    → body: { text: '¿Confirmas crear préstamo...' }
+// 6. Usuario ve: Mensaje detallado + botones ✅
+```
+
 **Impacto de los bugs:**
 - ⚠️ **Bug 1**: Usuarios NO recibían respuestas inteligentes después de primera interacción, solo mensajes genéricos
 - ⚠️ **Bug 2**: AI perdía contexto de conversaciones porque no veía sus propias respuestas anteriores
@@ -228,7 +284,8 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
 - ⚠️ **Bug 5**: GPT-5 generaba texto plano en lugar de ejecutar funciones → sin botones interactivos
 - ⚠️ **Bug 6**: Incluso cuando GPT-5 ejecutaba funciones, el webhook fallaba al enviar los botones
 - ⚠️ **Bug 7**: ConversationManager sobrescribía respuesta del AI con mensaje genérico
-- ⚠️ **Combinados**: Sistema NUNCA procesaba con IA después de primera interacción + NUNCA enviaba botones interactivos + mensajes incorrectos
+- ⚠️ **Bug 8**: AI Agent retornaba "Procesando..." en lugar del mensaje detallado de confirmación
+- ⚠️ **Combinados**: Sistema NUNCA procesaba con IA después de primera interacción + NUNCA enviaba botones interactivos + mensajes genéricos o "Procesando..."
 
 ---
 
