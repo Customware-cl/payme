@@ -13,6 +13,12 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
   - `supabase/functions/_shared/openai-client.ts` - Interface y método analyzeImage
   - `supabase/functions/ai-agent/index.ts` - Llamada principal a chatCompletion
 
+**1.1. Parámetro incompatible con GPT-5: temperature**
+- ❌ **Problema**: GPT-5 nano rechazaba `temperature: 0.7` (error: "Only the default (1) value is supported")
+- ✅ **Solución**: Removido parámetro `temperature`, GPT-5 nano usa temperature=1 por defecto
+- 📁 **Archivo afectado**:
+  - `supabase/functions/ai-agent/index.ts` - Llamada principal a chatCompletion
+
 **2. Campo phone_e164 no existe en tenant_contacts**
 - ❌ **Problema**: Queries fallaban buscando `phone_e164` en `tenant_contacts` (columna no existe)
 - ✅ **Solución**: Agregado JOIN a `contact_profiles` en todas las búsquedas

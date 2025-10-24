@@ -143,7 +143,7 @@ serve(async (req: Request) => {
       messages,
       tools,
       tool_choice: 'auto',
-      temperature: 0.7,
+      // temperature: 0.7, // GPT-5 nano solo acepta temperature=1 (default)
       max_completion_tokens: 1000, // GPT-5 usa max_completion_tokens
       verbosity: 'medium', // GPT-5: respuestas balanceadas (no muy largas ni muy cortas)
       reasoning_effort: 'low' // GPT-5: razonamiento ligero para respuestas rápidas
