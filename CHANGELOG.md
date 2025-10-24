@@ -69,11 +69,115 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
 // 7. AI Agent genera respuesta contextual inteligente ✅
 ```
 
+**4. ConversationMemory no podía guardar mensajes (FK constraint violation)**
+- ❌ **Problema**: Después de que la IA procesara exitosamente el mensaje y llamara funciones, intentaba guardar el historial conversacional en `conversation_history` usando `saveMessage()` y `getHistory()`. Estos métodos usaban el `contactId` legacy directamente, pero la tabla `conversation_history` tiene FK constraint a `tenant_contacts.id`, no a `contacts.id`. Resultado: error `23503: insert or update on table "conversation_history" violates foreign key constraint`. Sin historial guardado, cada conversación empezaba de cero sin memoria de interacciones previas.
+- ✅ **Solución**: Agregado resolver de legacy contact ID → tenant_contact_id en ambos métodos:
+  1. Busca en `tenant_contacts` con contactId
+  2. Si no encuentra, busca en legacy `contacts` y obtiene `tenant_contact_id`
+  3. Usa `resolvedContactId` (tenant_contact_id) para INSERT/SELECT en conversation_history
+- 📁 **Archivo afectado**:
+  - `supabase/functions/_shared/conversation-memory.ts:50-72` - Método `saveMessage()`
+  - `supabase/functions/_shared/conversation-memory.ts:125-147` - Método `getHistory()`
+
+**Flujo ANTES (incorrecto):**
+```typescript
+// 1. AI Agent procesa mensaje, llama a create_loan() ✅
+// 2. AI Agent intenta guardar historial con saveMessage(legacy_contact_id) ❌
+// 3. INSERT en conversation_history con legacy ID ❌
+// 4. FK constraint violation: legacy ID no existe en tenant_contacts ❌
+// 5. Error 23503, mensaje NO se guarda ❌
+// 6. Próxima conversación: AI no ve mensajes anteriores ❌
+```
+
+**Flujo DESPUÉS (correcto):**
+```typescript
+// 1. AI Agent procesa mensaje, llama a create_loan() ✅
+// 2. AI Agent llama saveMessage(legacy_contact_id) ✅
+// 3. saveMessage resuelve: legacy ID → tenant_contact_id ✅
+// 4. INSERT en conversation_history con tenant_contact_id ✅
+// 5. Mensaje guardado exitosamente ✅
+// 6. getHistory también resuelve correctamente ✅
+// 7. Próxima conversación: AI ve historial completo (17+ mensajes) ✅
+```
+
+**5. GPT-5 nano no ejecutaba tool calls (generaba confirmaciones de texto)**
+- ❌ **Problema**: Después de que la IA obtenía contexto y guardaba mensajes correctamente, GPT-5 nano generaba respuestas de texto con confirmaciones manuales en lugar de ejecutar las funciones disponibles (`create_loan`, `query_loans`, etc.). El prompt decía "solicita confirmación explícita" y "usa lenguaje natural + botones cuando sea posible", lo cual era ambiguo. GPT-5 interpretaba esto como "generar texto con confirmación" en lugar de "llamar a la función". Resultado: logs mostraban `finish_reason: "stop"` en lugar de `"tool_calls"`, y nunca aparecía `[AI-Agent] Tool calls detected`. El usuario veía texto plano en lugar de botones interactivos de WhatsApp.
+- ✅ **Solución**: Reescrito prompt del sistema en `OpenAIClient.createSystemMessage()` para ser EXTREMADAMENTE explícito:
+  - Eliminada ambigüedad: "solicita confirmación" → "LLAMA a create_loan() (NO respondas con texto)"
+  - Agregado: "Las funciones manejan confirmaciones automáticamente"
+  - Agregado: "NO generes confirmaciones manualmente"
+  - Agregados ejemplos concretos con sintaxis de function call
+- 📁 **Archivo afectado**:
+  - `supabase/functions/_shared/openai-client.ts:292-315` - Método `createSystemMessage()`
+
+**Flujo ANTES (incorrecto):**
+```typescript
+// 1. Usuario: "le presté 50 lucas a Caty" ✅
+// 2. AI Agent obtiene contexto ✅
+// 3. GPT-5 ve prompt: "solicita confirmación explícita" 🤔
+// 4. GPT-5 genera texto: "Perfecto. Para dejarlo registrado, voy a crear un préstamo..." ❌
+// 5. finish_reason: "stop" (no tool_calls) ❌
+// 6. AI Agent retorna texto plano ❌
+// 7. Usuario ve mensaje de texto sin botones ❌
+```
+
+**Flujo DESPUÉS (correcto):**
+```typescript
+// 1. Usuario: "le presté 50 lucas a Caty" ✅
+// 2. AI Agent obtiene contexto ✅
+// 3. GPT-5 ve prompt: "LLAMA a create_loan() (NO respondas con texto)" ✅
+// 4. GPT-5 ejecuta: create_loan(loan_type="lent", contact_name="Caty", amount=50000, due_date="2025-10-31") ✅
+// 5. finish_reason: "tool_calls" ✅
+// 6. [AI-Agent] Tool calls detected: 1 ✅
+// 7. [AI-Agent] Executing function: create_loan ✅
+// 8. AI Agent retorna needs_confirmation: true con botones interactivos ✅
+// 9. Usuario ve WhatsApp interactive message con botones ✅
+```
+
+**6. Webhook fallaba al enviar mensaje interactivo (phone_e164 undefined)**
+- ❌ **Problema**: Después de que GPT-5 ejecutara tool calls correctamente y el ai-agent retornara `needs_confirmation: true` con `interactiveResponse`, el webhook intentaba enviar el mensaje interactivo (botones de WhatsApp). Sin embargo, fallaba con error `TypeError: Cannot read properties of undefined (reading 'phone_e164')` en línea 1930. El código asumía que `contact.contact_profiles.phone_e164` siempre estaría disponible, pero esto solo es cierto para tenant contacts con JOIN. Cuando el contact era legacy (tabla `contacts`), tenía `phone_e164` directo, no vía `contact_profiles`. El path de mensajes regulares (línea 1974) usaba `WhatsAppWindowManager.sendMessage()` que tenía el helper `resolveContactPhone()` creado en v2.0.6, pero el path de mensajes interactivos (línea 1920) hacía una llamada directa a la API de WhatsApp sin resolución de teléfono.
+- ✅ **Solución**: Agregada lógica de resolución de teléfono inline en el path de mensajes interactivos:
+  1. Verifica si existe `contact.phone_e164` (legacy contact)
+  2. Si no, verifica `contact.contact_profiles.phone_e164` (tenant contact con JOIN)
+  3. Si no, hace query con JOIN a `tenant_contacts` → `contact_profiles`
+  4. Maneja `contact_profiles` como array o objeto según tipo de JOIN
+  5. Lanza error si no puede resolver el teléfono
+- 📁 **Archivo afectado**:
+  - `supabase/functions/wa_webhook/index.ts:1927-1961` - Path de envío de mensajes interactivos
+
+**Flujo ANTES (incorrecto):**
+```typescript
+// 1. AI Agent retorna needs_confirmation: true ✅
+// 2. Webhook detecta interactiveResponse ✅
+// 3. Webhook intenta: contact.contact_profiles.phone_e164 ❌
+//    → contact es legacy, no tiene contact_profiles
+//    → TypeError: Cannot read properties of undefined
+// 4. catch block: 'Error sending interactive message' ❌
+// 5. Usuario NO recibe botones de confirmación ❌
+```
+
+**Flujo DESPUÉS (correcto):**
+```typescript
+// 1. AI Agent retorna needs_confirmation: true ✅
+// 2. Webhook detecta interactiveResponse ✅
+// 3. Webhook resuelve phone_e164: ✅
+//    → Si contact.phone_e164 existe (legacy), lo usa
+//    → Si contact.contact_profiles.phone_e164 existe (tenant), lo usa
+//    → Si no, hace query con JOIN
+// 4. phoneE164 resuelto correctamente ✅
+// 5. Crea payload WhatsApp con to: phoneE164.replace('+', '') ✅
+// 6. Envía mensaje interactivo a API de WhatsApp ✅
+// 7. Usuario recibe botones interactivos en WhatsApp ✅
+```
+
 **Impacto de los bugs:**
 - ⚠️ **Bug 1**: Usuarios NO recibían respuestas inteligentes después de primera interacción, solo mensajes genéricos
 - ⚠️ **Bug 2**: AI perdía contexto de conversaciones porque no veía sus propias respuestas anteriores
 - ⚠️ **Bug 3**: AI no podía obtener contexto del usuario (préstamos, nombre) aunque se llamara correctamente
-- ⚠️ **Combinados**: Sistema NUNCA procesaba con IA después de primera interacción, parecía completamente "tonto"
+- ⚠️ **Bug 4**: Conversaciones no se guardaban, AI empezaba de cero cada vez
+- ⚠️ **Bug 5**: GPT-5 generaba texto plano en lugar de ejecutar funciones → sin botones interactivos
+- ⚠️ **Bug 6**: Incluso cuando GPT-5 ejecutaba funciones, el webhook fallaba al enviar los botones
+- ⚠️ **Combinados**: Sistema NUNCA procesaba con IA después de primera interacción + NUNCA enviaba botones interactivos
 
 ---
 
