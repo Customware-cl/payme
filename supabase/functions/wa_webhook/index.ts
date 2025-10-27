@@ -273,50 +273,17 @@ async function processInboundMessage(
       throw new Error('Failed to get or create tenant_contact');
     }
 
-    // 2.5. Crear o buscar contact legacy (para compatibilidad con whatsapp_messages)
-    let { data: legacyContact } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('tenant_id', tenant.id)
-      .eq('tenant_contact_id', tenantContact.id)
-      .maybeSingle();
-
-    if (!legacyContact) {
-      console.log('[Webhook] Creating legacy contact for tenant_contact:', tenantContact.id);
-      const { data: newLegacyContact, error: legacyError } = await supabase
-        .from('contacts')
-        .insert({
-          tenant_id: tenant.id,
-          contact_profile_id: contactProfile.id,
-          tenant_contact_id: tenantContact.id,
-          phone_e164: formattedPhone,
-          name: contactName,
-          whatsapp_id: message.from,
-          opt_in_status: 'pending',
-          preferred_language: 'es',
-          metadata: {}
-        })
-        .select()
-        .single();
-
-      if (legacyError || !newLegacyContact) {
-        console.error('[Webhook] Error creating legacy contact:', legacyError);
-        // No fallar por esto, continuar con tenant_contact
-      } else {
-        legacyContact = newLegacyContact;
-        console.log('[Webhook] Created legacy contact:', legacyContact.id);
-      }
-    }
-
-    // Usar legacy contact si existe, sino usar tenant_contact (fallback)
-    const contact = legacyContact || tenantContact;
+    // 2.5. Usar tenant_contact directamente (deprecación de contacts legacy)
+    const contact = tenantContact;
+    console.log('[Webhook] Using tenant_contact:', contact.id);
 
     // 3. Registrar mensaje entrante
     const { error: messageInsertError } = await supabase
       .from('whatsapp_messages')
       .insert({
         tenant_id: tenant.id,
-        contact_id: contact.id,
+        tenant_contact_id: contact.id,  // FASE 2: usar tenant_contact_id (modern)
+        contact_id: null,  // Legacy column, deprecated (será eliminada en FASE 4)
         wa_message_id: message.id,
         direction: 'inbound',
         message_type: message.type,
@@ -667,7 +634,8 @@ async function processInboundMessage(
           .from('events')
           .insert({
             tenant_id: tenant.id,
-            contact_id: contact.id,
+            tenant_contact_id: contact.id,  // FASE 2: usar tenant_contact_id (modern)
+            contact_id: null,  // Legacy column, deprecated
             event_type: 'list_item_selected',
             payload: { list_item_id: selectedId, message_id: message.id },
             whatsapp_message_id: message.id
@@ -820,7 +788,8 @@ async function processInboundMessage(
           .from('events')
           .insert({
             tenant_id: tenant.id,
-            contact_id: contact.id,
+            tenant_contact_id: contact.id,  // FASE 2: usar tenant_contact_id (modern)
+            contact_id: null,  // Legacy column, deprecated
             event_type: 'button_clicked',
             payload: { button_id: buttonId, message_id: message.id },
             whatsapp_message_id: message.id
@@ -1291,7 +1260,8 @@ async function processInboundMessage(
             .from('events')
             .insert({
               tenant_id: tenant.id,
-              contact_id: contact.id,
+              tenant_contact_id: contact.id,  // FASE 2: usar tenant_contact_id (modern)
+              contact_id: null,  // Legacy column, deprecated
               event_type: 'opt_in_received',
               payload: { opted_in: true, timestamp: new Date().toISOString() }
             });
@@ -1338,7 +1308,8 @@ async function processInboundMessage(
               .from('events')
               .insert({
                 tenant_id: tenant.id,
-                contact_id: contact.id,
+                tenant_contact_id: contact.id,  // FASE 2: usar tenant_contact_id (modern)
+                contact_id: null,  // Legacy column, deprecated
                 agreement_id: loanAgreement.id,
                 event_type: 'confirmed_returned',
                 payload: {
@@ -1429,7 +1400,8 @@ async function processInboundMessage(
                 .from('events')
                 .insert({
                   tenant_id: tenant.id,
-                  contact_id: contact.id,
+                  tenant_contact_id: contact.id,  // FASE 2: usar tenant_contact_id (modern)
+                  contact_id: null,  // Legacy column, deprecated
                   agreement_id: agreementId,
                   event_type: 'loan_marked_returned_from_reminder',
                   payload: {

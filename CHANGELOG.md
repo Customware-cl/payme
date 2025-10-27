@@ -2,6 +2,85 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-01-27] - v2.4.0 - 🏗️ Arquitectura: Deprecación de Sistema Legacy de Contactos
+
+### 🎯 Objetivo
+
+Consolidar arquitectura de contactos eliminando la tabla legacy `contacts` y migrando completamente a `tenant_contacts` + `contact_profiles` para mejorar integridad referencial y simplificar el codebase.
+
+### 🔧 Cambios Implementados
+
+#### **FASE 1: Data Migration** (Migración 032)
+- ✅ Agregadas columnas `tenant_contact_id` a todas las tablas dependientes:
+  - `whatsapp_messages` (871 registros migrados)
+  - `events` (211 registros migrados)
+  - `messages`, `owner_notifications`, `message_queue`
+  - `conversation_states`, `telegram_conversation_states`
+- ✅ Backfill automático usando mapeo `contacts.tenant_contact_id`
+- ✅ Índices parciales creados para optimizar queries durante transición
+- ✅ Validación de integridad: 100% de registros migrados exitosamente
+
+#### **FASE 2: Code Migration**
+- ✅ **wa_webhook/index.ts**:
+  - Eliminada creación de `legacyContact` (líneas 276-309)
+  - Usar `tenant_contact_id` directamente en inserts
+  - 5 inserciones de `events` actualizadas
+- ✅ **whatsapp-window-manager.ts**:
+  - Query de ventana 24h usa `tenant_contact_id` (línea 55)
+  - Inserts de `whatsapp_messages` usan `tenant_contact_id` (líneas 388, 500)
+- ✅ **conversation-memory.ts**: Fallbacks legacy → modern ya existentes, mantenidos temporalmente
+- ✅ **Edge functions desplegadas**: Zero-downtime deployment
+
+#### **FASE 3: Schema Migration** (Pendiente)
+- ⏳ Agregar FKs `tenant_contact_id → tenant_contacts(id)` con CASCADE
+- ⏳ Hacer `tenant_contact_id NOT NULL` en todas las tablas
+- ⏳ Actualizar RLS policies (mayoría ya usa `tenant_id`, no requiere cambios)
+- ⏳ Deprecar columnas legacy en `agreements` (contact_id, lender_contact_id)
+
+#### **FASE 4: Cleanup** (Pendiente)
+- ⏳ Drop columnas `contact_id` de todas las tablas
+- ⏳ Drop RLS policies y triggers de tabla `contacts`
+- ⏳ Drop tabla `contacts CASCADE` (**IRREVERSIBLE**)
+- ⏳ Limpiar código: remover fallbacks legacy en conversation-memory.ts
+
+### 📊 Estado Actual
+
+**Arquitectura Legacy** (deprecada, en transición):
+- Tabla `contacts` (6 registros)
+- Columnas `contact_id` (nullable, deprecated)
+
+**Arquitectura Modern** (activa):
+- Tabla `tenant_contacts` (13 registros)
+- Tabla `contact_profiles` (10 registros, identidad global)
+- Columnas `tenant_contact_id` (activas, con datos backfilled)
+
+### ⚠️ Breaking Changes
+
+**Post-FASE 3** (cuando se aplique):
+- ❗ FKs cambiadas: `contact_id` dejará de funcionar
+- ❗ `tenant_contact_id` será NOT NULL (no admite nulls)
+- ❗ Punto de no retorno: rollback de código requerirá rollback de schema
+
+**Post-FASE 4** (cleanup final):
+- ❗ Tabla `contacts` eliminada permanentemente (**IRREVERSIBLE**)
+- ❗ Columnas `contact_id` eliminadas de todas las tablas
+- ❗ No hay rollback posible
+
+### 🔄 Rollback Points
+
+- **Después de FASE 1**: ✅ Safe - columnas nuevas nullable, código legacy funciona
+- **Después de FASE 2**: ✅ Safe - dual-write activo, puede rollback code
+- **Después de FASE 3**: ❌ Point of no return - FKs cambiadas, NOT NULL aplicado
+- **Después de FASE 4**: ❌ IRREVERSIBLE - tabla contacts eliminada
+
+### 📝 Migraciones Aplicadas
+
+- `032_deprecate_contacts_phase1_data_migration.sql` ✅
+- `033_deprecate_contacts_phase3_schema_migration.sql` ⏳ (próxima)
+- `034_deprecate_contacts_phase4_cleanup.sql` ⏳ (final)
+
+---
+
 ## [2025-01-27] - v2.3.0 - ✨ Feature: Verificación Inteligente de Contactos + Logging Persistente
 
 ### 🎯 Objetivos

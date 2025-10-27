@@ -52,7 +52,7 @@ export class WhatsAppWindowManager {
         .from('whatsapp_messages')
         .select('created_at')
         .eq('tenant_id', tenantId)
-        .eq('contact_id', contactId)  // Cambiado de tenant_contact_id a contact_id
+        .eq('tenant_contact_id', contactId)  // FASE 2: usar tenant_contact_id (modern)
         .eq('direction', 'inbound')
         .order('created_at', { ascending: false })
         .limit(1)
@@ -187,7 +187,7 @@ export class WhatsAppWindowManager {
   ): Promise<string> {
     const queueItem: MessageQueueItem = {
       tenant_id: tenantId,
-      contact_id: contactId,
+      contact_id: contactId,  // FASE 2: TODO - cambiar interface a tenant_contact_id
       message_type: 'text',
       content: { text: message },
       priority: options.priority || 'normal',
@@ -385,7 +385,8 @@ export class WhatsAppWindowManager {
         .from('whatsapp_messages')
         .insert({
           tenant_id: tenantId,
-          contact_id: contactId,  // Corregido: contact_id en lugar de tenant_contact_id
+          tenant_contact_id: contactId,  // FASE 2: usar tenant_contact_id (modern)
+          contact_id: null,  // Legacy column, deprecated
           wa_message_id: result.messages[0].id,
           direction: 'outbound',
           message_type: 'template',
@@ -496,7 +497,8 @@ export class WhatsAppWindowManager {
         .from('whatsapp_messages')
         .insert({
           tenant_id: tenantId,
-          contact_id: contactId,  // Corregido: contact_id en lugar de tenant_contact_id
+          tenant_contact_id: contactId,  // FASE 2: usar tenant_contact_id (modern)
+          contact_id: null,  // Legacy column, deprecated
           wa_message_id: result.messages[0].id,
           direction: 'outbound',
           message_type: 'text',
