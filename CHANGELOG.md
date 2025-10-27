@@ -2,6 +2,83 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-01-27] - v2.2.1 - 🐛 Hotfix: Forzar uso de SQL Agent para queries con contactos
+
+### 🐛 Problema Identificado
+
+OpenAI elegía `query_loans` (by_contact) para **TODAS** las preguntas con contactos, ignorando la dirección:
+- ❌ "cuánto me debe Caty?" → `query_loans` (by_contact) → Respuesta incorrecta
+- ❌ "cuánto le debo a Caty?" → `query_loans` (by_contact) → **Misma respuesta** (incorrecto)
+
+`query_loans` (by_contact) es una query pre-definida rígida que **no diferencia direcciones** ("me debe" vs "le debo").
+
+### ✅ Solución Implementada
+
+**Modificado: `_shared/openai-client.ts`**
+
+**Cambio 1: `query_loans` - Marcada como SOLO para resúmenes generales**
+```typescript
+// ANTES:
+enum: ['all', 'pending', 'by_contact', 'balance']
+description: 'Para preguntas sobre préstamos CON UNA PERSONA ESPECÍFICA'
+
+// DESPUÉS:
+enum: ['all', 'pending', 'balance']  // ⛔ Eliminado 'by_contact'
+description: '⚠️ NO USAR para preguntas con contactos - usa query_loans_dynamic'
+```
+
+**Cambio 2: `query_loans_dynamic` - Explícitamente para contactos**
+```typescript
+// ANTES:
+description: 'Para preguntas complejas o específicas...'
+
+// DESPUÉS:
+description: '✅ USAR PARA: Preguntas con CONTACTOS ESPECÍFICOS (ej: "cuánto me debe Caty", "qué le debo a Juan"), queries con DIRECCIÓN específica...'
+```
+
+### 🎯 Resultado Esperado
+
+| Pregunta | Tool usado | SQL generado | Resultado |
+|----------|------------|--------------|-----------|
+| "¿cuánto me debe Caty?" | `query_loans_dynamic` | `WHERE lender_tenant_contact_id = user_id` | ✅ Correcto (YO presté) |
+| "¿cuánto le debo a Caty?" | `query_loans_dynamic` | `WHERE tenant_contact_id = user_id` | ✅ Correcto (YO recibí) |
+| "¿cuánto me deben en total?" | `query_loans` (balance) | Query pre-definida | ✅ Correcto (general) |
+
+### 📦 Archivos Modificados
+
+1. **`supabase/functions/_shared/openai-client.ts`**
+   - Tool `query_loans`: Removido enum value `'by_contact'`
+   - Tool `query_loans`: Descripción actualizada con warning ⚠️
+   - Tool `query_loans_dynamic`: Descripción mejorada con énfasis en contactos ✅
+
+### 🚀 Deployment
+
+- **Commit**: `7af61c0`
+- **Edge Function**: `ai-agent` v24 (98.79kB)
+- **Status**: ✅ Deployado exitosamente
+
+### 📋 Testing Requerido
+
+**Test 1: Dirección "me debe"**
+```
+Usuario: "cuánto me debe Caty?"
+Esperado: Lista de préstamos donde YO soy lender (presté a Caty)
+```
+
+**Test 2: Dirección "le debo"**
+```
+Usuario: "cuánto le debo a Caty?"
+Esperado: Lista de préstamos donde YO soy borrower (Caty me prestó)
+```
+
+**Test 3: Vencimientos específicos**
+```
+Usuario: "préstamos vencidos con Caty donde le debo más de 50 mil"
+Esperado: Filtros múltiples aplicados (contacto + dirección + monto + vencimiento)
+```
+
+---
+
 ## [2025-01-26] - v2.2.0 - 🤖 AI SQL Agent - Consultas Dinámicas con Text-to-SQL
 
 ### 🎯 Objetivo
