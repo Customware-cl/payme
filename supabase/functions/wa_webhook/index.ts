@@ -1,6 +1,6 @@
 // Edge Function: WhatsApp Webhook Handler
 // Versión con flujos conversacionales integrados
-// v2.0.2 - Force redeploy 2025-10-09
+// v2.0.5 - Fix getWindowStatus query field name 2025-10-24
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -273,11 +273,46 @@ async function processInboundMessage(
       throw new Error('Failed to get or create tenant_contact');
     }
 
-    // Usar tenantContact como 'contact' para el resto del código
-    const contact = tenantContact;
+    // 2.5. Crear o buscar contact legacy (para compatibilidad con whatsapp_messages)
+    let { data: legacyContact } = await supabase
+      .from('contacts')
+      .select('*')
+      .eq('tenant_id', tenant.id)
+      .eq('tenant_contact_id', tenantContact.id)
+      .maybeSingle();
+
+    if (!legacyContact) {
+      console.log('[Webhook] Creating legacy contact for tenant_contact:', tenantContact.id);
+      const { data: newLegacyContact, error: legacyError } = await supabase
+        .from('contacts')
+        .insert({
+          tenant_id: tenant.id,
+          contact_profile_id: contactProfile.id,
+          tenant_contact_id: tenantContact.id,
+          phone_e164: formattedPhone,
+          name: contactName,
+          whatsapp_id: message.from,
+          opt_in_status: 'pending',
+          preferred_language: 'es',
+          metadata: {}
+        })
+        .select()
+        .single();
+
+      if (legacyError || !newLegacyContact) {
+        console.error('[Webhook] Error creating legacy contact:', legacyError);
+        // No fallar por esto, continuar con tenant_contact
+      } else {
+        legacyContact = newLegacyContact;
+        console.log('[Webhook] Created legacy contact:', legacyContact.id);
+      }
+    }
+
+    // Usar legacy contact si existe, sino usar tenant_contact (fallback)
+    const contact = legacyContact || tenantContact;
 
     // 3. Registrar mensaje entrante
-    await supabase
+    const { error: messageInsertError } = await supabase
       .from('whatsapp_messages')
       .insert({
         tenant_id: tenant.id,
@@ -287,6 +322,12 @@ async function processInboundMessage(
         message_type: message.type,
         content: { text: message.text, interactive: message.interactive, button: message.button, contacts: message.contacts }
       });
+
+    if (messageInsertError) {
+      console.error('[Webhook] Error inserting message:', messageInsertError);
+    } else {
+      console.log('[Webhook] Message saved successfully');
+    }
 
     // 4. Procesar según tipo de mensaje usando flujos conversacionales
     let responseMessage = null;
@@ -377,32 +418,85 @@ async function processInboundMessage(
       if (!responseMessage && !interactiveResponse) {
         try {
           const conversationManager = new ConversationManager(supabase.supabaseUrl, supabase.supabaseKey);
-          const intentDetector = new IntentDetector();
 
-          // Detectar intención si no hay conversación activa
+          // Verificar si hay conversación activa
           const currentState = await conversationManager.getCurrentState(tenant.id, contact.id);
           let flowType = null;
+          let aiProcessed = false;  // Flag para indicar si AI Agent ya procesó
 
+          // Si NO hay flujo activo, delegar a AI Agent
           if (!currentState) {
-            const intentResult = intentDetector.detectIntent(text);
-            flowType = intentResult.intent;
+            console.log('[AI-AGENT] No active flow, delegating to AI agent');
 
-            // Log para debug
-            console.log('Intent detection:', {
-              text: text.substring(0, 50),
-              intent: intentResult.intent,
-              confidence: intentResult.confidence,
-              reasoning: intentResult.reasoning
-            });
+            try {
+              const aiResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/ai-agent`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+                },
+                body: JSON.stringify({
+                  tenant_id: tenant.id,
+                  contact_id: contact.id,
+                  message: text,
+                  message_type: 'text',
+                  metadata: {}
+                })
+              });
 
-            // Si la confianza es baja, ofrecer ayuda (umbral consistente con IntentDetector)
-            if (intentResult.confidence < 0.15) {
-              const suggestions = intentDetector.getSuggestions(text);
-              responseMessage = `No estoy seguro de lo que necesitas. ¿Te refieres a alguno de estos?\n\n${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n\nO escribe "ayuda" para ver todas las opciones.`;
+              const aiResult = await aiResponse.json();
+
+              if (aiResult.success) {
+                responseMessage = aiResult.response;
+                aiProcessed = true;  // ✅ Marcar que AI ya procesó
+
+                // Si hay acciones que requieren confirmación, agregar botones
+                if (aiResult.needs_confirmation && aiResult.actions && aiResult.actions.length > 0) {
+                  interactiveResponse = {
+                    type: 'button',
+                    body: { text: responseMessage },
+                    action: {
+                      buttons: [
+                        { type: 'reply', reply: { id: 'confirm_yes', title: '✅ Confirmar' } },
+                        { type: 'reply', reply: { id: 'confirm_no', title: '❌ Cancelar' } }
+                      ]
+                    }
+                  };
+                  responseMessage = null;
+                }
+              } else {
+                console.error('[AI-AGENT] Error:', aiResult.error);
+                // Fallback a IntentDetector si falla AI
+                const intentDetector = new IntentDetector();
+                const intentResult = intentDetector.detectIntent(text);
+                flowType = intentResult.intent;
+
+                console.log('[AI-AGENT] Fallback to IntentDetector:', {
+                  intent: intentResult.intent,
+                  confidence: intentResult.confidence
+                });
+
+                if (intentResult.confidence < 0.15) {
+                  const suggestions = intentDetector.getSuggestions(text);
+                  responseMessage = `No estoy seguro de lo que necesitas. ¿Te refieres a alguno de estos?\n\n${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n\nO escribe "ayuda" para ver todas las opciones.`;
+                }
+              }
+            } catch (error) {
+              console.error('[AI-AGENT] Exception:', error);
+              // Fallback a IntentDetector
+              const intentDetector = new IntentDetector();
+              const intentResult = intentDetector.detectIntent(text);
+              flowType = intentResult.intent;
+
+              if (intentResult.confidence < 0.15) {
+                const suggestions = intentDetector.getSuggestions(text);
+                responseMessage = `No estoy seguro de lo que necesitas. ¿Te refieres a alguno de estos?\n\n${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n\nO escribe "ayuda" para ver todas las opciones.`;
+              }
             }
           }
 
-          if (!responseMessage) {
+          // ✅ Solo llamar a conversationManager si AI NO procesó
+          if (!responseMessage && !aiProcessed) {
             // Procesar entrada en el flujo
             const result = await conversationManager.processInput(tenant.id, contact.id, text, flowType);
 
@@ -1094,9 +1188,14 @@ async function processInboundMessage(
           console.log('[MENU_WEB] Button web_menu clicked, sending menu web template');
           try {
             const { WhatsAppTemplates } = await import('../_shared/whatsapp-templates.ts');
+
+            // Usar token del tenant (multi-tenant) con fallback a env var
+            const waAccessToken = tenant.whatsapp_access_token || Deno.env.get('WHATSAPP_ACCESS_TOKEN')!;
+            console.log('[MENU_WEB] Using token from:', tenant.whatsapp_access_token ? 'tenant' : 'env var');
+
             const templates = new WhatsAppTemplates(
               phoneNumberId,
-              Deno.env.get('WHATSAPP_ACCESS_TOKEN')!
+              waAccessToken
             );
 
             const result = await templates.generateAndSendMenuAccess(
@@ -1603,17 +1702,271 @@ async function processInboundMessage(
       } else {
         responseMessage = 'No recibí información del contacto. Por favor intenta de nuevo.';
       }
+    } else if (message.type === 'audio') {
+      // Procesar mensajes de audio con Whisper (transcripción)
+      console.log('====== PROCESSING AUDIO MESSAGE ======');
+      console.log('Audio object:', JSON.stringify(message.audio, null, 2));
+
+      try {
+        const { downloadWhatsAppMedia, blobToFile } = await import('../_shared/whatsapp-media-download.ts');
+        const { OpenAIClient } = await import('../_shared/openai-client.ts');
+
+        const audioId = message.audio?.id;
+        if (!audioId) {
+          responseMessage = 'No pude procesar el audio. Por favor intenta de nuevo.';
+        } else {
+          // Descargar audio
+          const accessToken = tenant.whatsapp_access_token || Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+          const downloadResult = await downloadWhatsAppMedia(audioId, phoneNumberId, accessToken!);
+
+          if (!downloadResult.success || !downloadResult.data) {
+            console.error('[Audio] Download failed:', downloadResult.error);
+            responseMessage = 'Hubo un error descargando el audio. Por favor intenta de nuevo.';
+          } else {
+            // Transcribir con Whisper
+            const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+            if (!openaiApiKey) {
+              responseMessage = 'El procesamiento de audio no está configurado. Por favor contacta soporte.';
+            } else {
+              const openai = new OpenAIClient(openaiApiKey);
+              const audioFile = blobToFile(downloadResult.data, 'audio.ogg', downloadResult.mimeType);
+
+              const transcriptionResult = await openai.transcribeAudio(audioFile, {
+                language: 'es',
+                prompt: 'Transcripción de mensaje de voz sobre préstamos y pagos en español chileno.'
+              });
+
+              if (!transcriptionResult.success || !transcriptionResult.transcription) {
+                console.error('[Audio] Transcription failed:', transcriptionResult.error);
+                responseMessage = 'No pude entender el audio. Por favor intenta de nuevo o escribe un mensaje de texto.';
+              } else {
+                const transcription = transcriptionResult.transcription;
+                console.log('[Audio] Transcription:', transcription);
+
+                // Procesar transcripción con AI Agent
+                const aiResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/ai-agent`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+                  },
+                  body: JSON.stringify({
+                    tenant_id: tenant.id,
+                    contact_id: contact.id,
+                    message: transcription,
+                    message_type: 'audio_transcription',
+                    metadata: {
+                      audio_id: audioId,
+                      original_mime_type: downloadResult.mimeType
+                    }
+                  })
+                });
+
+                const aiResult = await aiResponse.json();
+
+                if (aiResult.success) {
+                  responseMessage = `🎤 Audio recibido: "${transcription.substring(0, 100)}${transcription.length > 100 ? '...' : ''}"\n\n${aiResult.response}`;
+
+                  // Si hay acciones que requieren confirmación, agregar botones
+                  if (aiResult.needs_confirmation && aiResult.actions && aiResult.actions.length > 0) {
+                    const action = aiResult.actions[0];
+                    // Crear botones de confirmación
+                    interactiveResponse = {
+                      type: 'button',
+                      body: { text: responseMessage },
+                      action: {
+                        buttons: [
+                          { type: 'reply', reply: { id: 'confirm_yes', title: '✅ Confirmar' } },
+                          { type: 'reply', reply: { id: 'confirm_no', title: '❌ Cancelar' } }
+                        ]
+                      }
+                    };
+                    responseMessage = null;
+                  }
+                } else {
+                  responseMessage = `🎤 Audio: "${transcription}"\n\nHubo un error procesando tu mensaje. Por favor intenta de nuevo.`;
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[Audio] Processing error:', error);
+        responseMessage = 'Hubo un error procesando el audio. Por favor intenta de nuevo.';
+      }
+    } else if (message.type === 'image') {
+      // Procesar mensajes de imagen con GPT-4 Vision
+      console.log('====== PROCESSING IMAGE MESSAGE ======');
+      console.log('Image object:', JSON.stringify(message.image, null, 2));
+
+      try {
+        const { downloadWhatsAppMedia } = await import('../_shared/whatsapp-media-download.ts');
+        const { OpenAIClient } = await import('../_shared/openai-client.ts');
+
+        const imageId = message.image?.id;
+        const caption = message.image?.caption || '';
+
+        if (!imageId) {
+          responseMessage = 'No pude procesar la imagen. Por favor intenta de nuevo.';
+        } else {
+          // Descargar imagen
+          const accessToken = tenant.whatsapp_access_token || Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+          const downloadResult = await downloadWhatsAppMedia(imageId, phoneNumberId, accessToken!);
+
+          if (!downloadResult.success || !downloadResult.data) {
+            console.error('[Image] Download failed:', downloadResult.error);
+            responseMessage = 'Hubo un error descargando la imagen. Por favor intenta de nuevo.';
+          } else {
+            // Convertir Blob a base64 para enviar a OpenAI
+            const arrayBuffer = await downloadResult.data.arrayBuffer();
+            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+            const dataUrl = `data:${downloadResult.mimeType || 'image/jpeg'};base64,${base64}`;
+
+            const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
+            if (!openaiApiKey) {
+              responseMessage = 'El análisis de imágenes no está configurado. Por favor contacta soporte.';
+            } else {
+              const openai = new OpenAIClient(openaiApiKey);
+
+              // Crear prompt para análisis
+              const analysisPrompt = caption
+                ? `Analiza esta imagen enviada por un usuario de una app de préstamos. El usuario agregó este texto: "${caption}".
+
+Determina:
+1. ¿Qué tipo de imagen es? (comprobante de pago, transferencia, foto de objeto prestado, etc.)
+2. Si es un comprobante, extrae: monto, destinatario/origen, fecha, tipo de transacción
+3. ¿Qué acción quiere realizar el usuario? (registrar préstamo, confirmar pago, etc.)
+
+Responde en español chileno de forma concisa.`
+                : `Analiza esta imagen enviada por un usuario de una app de préstamos.
+
+Determina:
+1. ¿Qué tipo de imagen es? (comprobante de pago, transferencia, foto de objeto prestado, etc.)
+2. Si es un comprobante, extrae: monto, destinatario/origen, fecha
+3. ¿Qué acción podría querer realizar el usuario?
+
+Responde en español chileno de forma concisa.`;
+
+              const visionResult = await openai.analyzeImage(dataUrl, analysisPrompt, {
+                model: 'gpt-5-nano',
+                max_tokens: 500,
+                detail: 'auto',
+                verbosity: 'low' // GPT-5: respuestas concisas
+              });
+
+              if (!visionResult.success || !visionResult.analysis) {
+                console.error('[Image] Analysis failed:', visionResult.error);
+                responseMessage = 'No pude analizar la imagen. Por favor agrega una descripción de texto.';
+              } else {
+                const analysis = visionResult.analysis;
+                console.log('[Image] Analysis:', analysis);
+
+                // Construir mensaje para AI Agent
+                const aiMessage = caption
+                  ? `[Imagen recibida]\n\nAnálisis de la imagen: ${analysis}\n\nTexto del usuario: ${caption}`
+                  : `[Imagen recibida]\n\nAnálisis de la imagen: ${analysis}`;
+
+                // Procesar con AI Agent
+                const aiResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/ai-agent`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+                  },
+                  body: JSON.stringify({
+                    tenant_id: tenant.id,
+                    contact_id: contact.id,
+                    message: aiMessage,
+                    message_type: 'image_analysis',
+                    metadata: {
+                      image_id: imageId,
+                      caption: caption,
+                      analysis: analysis,
+                      mime_type: downloadResult.mimeType
+                    }
+                  })
+                });
+
+                const aiResult = await aiResponse.json();
+
+                if (aiResult.success) {
+                  responseMessage = `📷 Imagen analizada:\n${analysis}\n\n${aiResult.response}`;
+
+                  // Si hay acciones que requieren confirmación, agregar botones
+                  if (aiResult.needs_confirmation && aiResult.actions && aiResult.actions.length > 0) {
+                    interactiveResponse = {
+                      type: 'button',
+                      body: { text: responseMessage },
+                      action: {
+                        buttons: [
+                          { type: 'reply', reply: { id: 'confirm_yes', title: '✅ Confirmar' } },
+                          { type: 'reply', reply: { id: 'confirm_no', title: '❌ Cancelar' } }
+                        ]
+                      }
+                    };
+                    responseMessage = null;
+                  }
+                } else {
+                  responseMessage = `📷 Análisis: ${analysis}\n\nHubo un error procesando tu solicitud.`;
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[Image] Processing error:', error);
+        responseMessage = 'Hubo un error procesando la imagen. Por favor intenta de nuevo.';
+      }
     }
 
     // 5. Enviar respuesta
     if (interactiveResponse) {
       // Enviar mensaje interactivo con botones directamente
       try {
-        const accessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+        // Usar token del tenant (multi-tenant) con fallback a env var
+        const accessToken = tenant.whatsapp_access_token || Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+        console.log('[INTERACTIVE] Using token from:', tenant.whatsapp_access_token ? 'tenant' : 'env var');
+
+        // Resolver phone_e164 (legacy contact vs tenant contact con JOIN)
+        let phoneE164: string;
+
+        if (contact.phone_e164) {
+          // Es legacy contact (tabla contacts) con phone_e164 directo
+          phoneE164 = contact.phone_e164;
+          console.log('[INTERACTIVE] Using phone from legacy contact:', phoneE164);
+        } else if (contact.contact_profiles?.phone_e164) {
+          // Es tenant contact con JOIN a contact_profiles
+          const contactProfile = Array.isArray(contact.contact_profiles)
+            ? contact.contact_profiles[0]
+            : contact.contact_profiles;
+          phoneE164 = contactProfile.phone_e164;
+          console.log('[INTERACTIVE] Using phone from tenant contact JOIN:', phoneE164);
+        } else {
+          // Fallback: buscar en tenant_contacts con JOIN
+          console.log('[INTERACTIVE] Phone not found, querying with JOIN...');
+          const { data: contactWithPhone } = await supabase
+            .from('tenant_contacts')
+            .select('contact_profiles(phone_e164)')
+            .eq('id', contact.id)
+            .maybeSingle();
+
+          const profile = Array.isArray(contactWithPhone?.contact_profiles)
+            ? contactWithPhone.contact_profiles[0]
+            : contactWithPhone?.contact_profiles;
+
+          phoneE164 = profile?.phone_e164 || '';
+          console.log('[INTERACTIVE] Phone from fallback query:', phoneE164);
+        }
+
+        if (!phoneE164) {
+          console.error('[INTERACTIVE] Could not resolve phone number for contact:', contact.id);
+          throw new Error('Phone number not found for contact');
+        }
+
         const payload = {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
-          to: contact.contact_profiles.phone_e164.replace('+', ''),
+          to: phoneE164.replace('+', ''),
           type: 'interactive',
           interactive: interactiveResponse
         };
