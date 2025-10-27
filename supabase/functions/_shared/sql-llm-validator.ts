@@ -40,8 +40,8 @@ export async function validateSQLWithLLM(
       ],
       max_completion_tokens: 500,
       verbosity: 'low',
-      reasoning_effort: 'low',
-      temperature: 0.1 // Muy determinístico para validación
+      reasoning_effort: 'low'
+      // temperature omitido - gpt-5-nano solo acepta default (1)
     });
 
     if (!result.success || !result.data) {

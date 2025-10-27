@@ -2,6 +2,64 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-01-27] - v2.2.2 - 🐛 Hotfix: Remover parámetro temperature incompatible con gpt-5-nano
+
+### 🐛 Problema Identificado
+
+El SQL Agent fallaba al ejecutar `query_loans_dynamic`:
+
+```
+Error: Unsupported value: 'temperature' does not support 0.2 with this model.
+Only the default (1) value is supported.
+```
+
+**Causa raíz**: GPT-5-nano **NO acepta** parámetro `temperature` diferente del default (1).
+
+Los siguientes archivos tenían configurado `temperature`:
+- `sql-generator.ts:42` → `temperature: 0.2`
+- `sql-llm-validator.ts:44` → `temperature: 0.1`
+
+### ✅ Solución Implementada
+
+**Archivos modificados:**
+1. `supabase/functions/_shared/sql-generator.ts` - Removido `temperature: 0.2`
+2. `supabase/functions/_shared/sql-llm-validator.ts` - Removido `temperature: 0.1`
+
+**Cambios:**
+```typescript
+// ANTES:
+{
+  max_completion_tokens: 800,
+  verbosity: 'low',
+  reasoning_effort: 'low',
+  temperature: 0.2 // ❌ No soportado por gpt-5-nano
+}
+
+// DESPUÉS:
+{
+  max_completion_tokens: 800,
+  verbosity: 'low',
+  reasoning_effort: 'low'
+  // temperature omitido - gpt-5-nano solo acepta default (1)
+}
+```
+
+### 🧪 Testing
+
+- ✅ SQL Generator puede llamar a GPT-5-nano sin error
+- ✅ SQL Validator puede validar queries sin error
+- ✅ `query_loans_dynamic` ejecuta correctamente todo el pipeline
+
+### 📦 Deployment
+
+```bash
+npx supabase functions deploy ai-agent --no-verify-jwt
+```
+
+**Versión deployada**: ai-agent v26
+
+---
+
 ## [2025-01-27] - v2.2.1 - 🐛 Hotfix: Forzar uso de SQL Agent para queries con contactos
 
 ### 🐛 Problema Identificado

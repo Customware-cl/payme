@@ -38,8 +38,8 @@ export async function generateSQL(
       ],
       max_completion_tokens: 800,
       verbosity: 'low',
-      reasoning_effort: 'low',
-      temperature: 0.2 // Algo de creatividad pero mayormente determinístico
+      reasoning_effort: 'low'
+      // temperature omitido - gpt-5-nano solo acepta default (1)
     });
 
     if (!result.success || !result.data) {
