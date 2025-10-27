@@ -406,22 +406,23 @@ Día de la semana: ${new Date().toLocaleDateString('es-CL', { weekday: 'long' })
         type: 'function',
         function: {
           name: 'query_loans',
-          description: 'Consultar información sobre préstamos del usuario. Usa esta función cuando el usuario pida ver, listar, revisar o conocer el estado de sus préstamos.',
+          description: 'Consultar información SIMPLE y GENERAL sobre préstamos. SOLO para resúmenes generales sin dirección específica. ⚠️ NO USAR para preguntas con contactos ("me debe X" vs "le debo a X") - usa query_loans_dynamic para esos casos.',
           parameters: {
             type: 'object',
             properties: {
               query_type: {
                 type: 'string',
-                enum: ['all', 'pending', 'by_contact', 'balance'],
-                description: `Tipo de consulta a realizar:
-- "balance": Para preguntas sobre TOTALES/RESUMEN/SALDOS GENERALES (ej: "cuánto me deben en total", "cuál es mi balance", "cuánto debo en total", "resumen general", "estado financiero")
-- "pending": Para preguntas sobre préstamos VENCIDOS o PRÓXIMOS A VENCER (ej: "qué préstamos están vencidos", "cuáles vencen pronto", "qué tengo pendiente", "recordatorios", "alertas de vencimiento")
-- "all": Para pedir LISTA COMPLETA de préstamos activos sin filtro específico (ej: "muéstrame todos los préstamos", "lista completa", "qué préstamos tengo", "todos mis préstamos activos")
-- "by_contact": Para preguntas sobre préstamos CON UNA PERSONA ESPECÍFICA (ej: "cuánto me debe Juan", "qué préstamos tengo con María", "cómo estoy con Pedro", "relación con [nombre]")`
+                enum: ['all', 'pending', 'balance'],
+                description: `Tipo de consulta GENERAL (sin contactos específicos):
+- "balance": Resumen GENERAL de totales sin especificar personas (ej: "cuánto me deben EN TOTAL", "balance global", "resumen general")
+- "pending": Lista de vencidos/próximos a vencer SIN filtrar por contacto (ej: "qué está vencido", "alertas generales")
+- "all": Lista completa de todos los préstamos activos (ej: "todos mis préstamos")
+
+⚠️ IMPORTANTE: Para preguntas con contactos específicos ("cuánto me debe Caty", "qué le debo a Juan") usa query_loans_dynamic en su lugar.`
               },
               contact_name: {
                 type: 'string',
-                description: 'Nombre del contacto (OBLIGATORIO solo para query_type="by_contact", dejar vacío en otros casos)'
+                description: '⛔ DEPRECATED: Ya no usar. Para preguntas con contactos usa query_loans_dynamic.'
               }
             },
             required: ['query_type']
@@ -581,18 +582,18 @@ Día de la semana: ${new Date().toLocaleDateString('es-CL', { weekday: 'long' })
         type: 'function',
         function: {
           name: 'query_loans_dynamic',
-          description: 'Ejecuta consulta SQL dinámica para preguntas complejas o específicas sobre préstamos que NO pueden responderse con las queries pre-definidas (balance, pending, all, by_contact). Usa esta función cuando el usuario pida: filtros específicos (montos, fechas custom, múltiples condiciones), agregaciones complejas (promedios, contactos con más préstamos), comparaciones entre períodos, o cualquier consulta que requiera lógica personalizada.',
+          description: '✅ USAR PARA: Preguntas con CONTACTOS ESPECÍFICOS (ej: "cuánto me debe Caty", "qué le debo a Juan"), queries con DIRECCIÓN específica ("me debe" vs "le debo"), filtros complejos (montos, fechas, vencimientos), agregaciones (promedios, totales por contacto), o cualquier pregunta que requiera lógica personalizada. Esta función genera SQL dinámico y puede manejar CUALQUIER pregunta sobre préstamos con máxima precisión.',
           parameters: {
             type: 'object',
             properties: {
               question: {
                 type: 'string',
-                description: 'La pregunta COMPLETA del usuario en lenguaje natural. Incluye todos los detalles necesarios para generar la query correcta.'
+                description: 'La pregunta COMPLETA del usuario en lenguaje natural con TODOS los detalles (nombres, montos, fechas, condiciones, etc.). Incluye la pregunta exacta tal cual la hizo el usuario.'
               },
               expected_result_type: {
                 type: 'string',
                 enum: ['single_value', 'list', 'aggregation', 'comparison'],
-                description: 'Tipo de resultado esperado: "single_value" (ej: total a pagar), "list" (ej: lista de préstamos), "aggregation" (ej: suma por contacto), "comparison" (ej: este mes vs anterior)'
+                description: 'Tipo de resultado: "single_value" (un total/monto, ej: "cuánto le debo"), "list" (lista de préstamos), "aggregation" (agrupaciones, promedios), "comparison" (comparar períodos/contactos)'
               }
             },
             required: ['question', 'expected_result_type']
