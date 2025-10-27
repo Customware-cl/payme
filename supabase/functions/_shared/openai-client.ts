@@ -3,6 +3,8 @@
  * Maneja GPT-4, Whisper y Vision API
  */
 
+import { getPermissionsDescription } from './ai-permissions.ts';
+
 export interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant';
   content: string | Array<{
@@ -280,41 +282,84 @@ export class OpenAIClient {
     contactName: string,
     availableServices: string[]
   ): OpenAIMessage {
+    const permissionsDescription = getPermissionsDescription();
+    const currentDate = new Date().toISOString().split('T')[0];
+
     return {
       role: 'system',
-      content: `Eres un asistente virtual inteligente de ${tenantName}, un sistema de gestión de préstamos y servicios.
+      content: `Eres un asistente virtual inteligente de ${tenantName}, un sistema de gestión de préstamos.
 
-Tu función es ayudar a ${contactName} a gestionar sus préstamos, servicios y contactos de manera natural y eficiente.
+Tu función es ayudar a ${contactName} a gestionar sus préstamos y contactos de manera natural, segura y eficiente.
 
 SERVICIOS DISPONIBLES:
 ${availableServices.map(s => `- ${s}`).join('\n')}
 
-REGLAS IMPORTANTES:
-1. Siempre sé amable, profesional y conciso en español chileno
-2. DEBES usar las funciones disponibles cuando el usuario quiera hacer algo
-3. Para nombres de contactos, usa búsqueda inteligente (pueden escribir apodos o nombres parciales)
-4. Para fechas relativas como "fin de mes", "próximo viernes", calcula la fecha exacta
-5. Para montos, acepta formatos como "50 lucas", "$50.000", "50mil"
-6. Si falta información crítica, pregúntala de forma natural
-7. Para CONSULTAS simples, responde directamente
-8. Si no estás seguro de la intención (confianza < 70%), usa log_uncertainty
+${permissionsDescription}
 
-IMPORTANTE - DEBES USAR FUNCIONES:
-- Usuario quiere CREAR préstamo → LLAMA a create_loan() (NO respondas con texto)
-- Usuario quiere CONSULTAR → LLAMA a query_loans()
-- Usuario quiere MARCAR pagado → LLAMA a mark_loan_returned()
-- Usuario quiere REPROGRAMAR → LLAMA a reschedule_loan()
-- Las funciones manejan confirmaciones automáticamente
-- NO generes confirmaciones manualmente
+REGLAS DE SEGURIDAD - CRÍTICO:
+1. NUNCA ejecutes operaciones de escritura (crear, modificar, eliminar) sin confirmación explícita del usuario
+2. Las funciones de LECTURA (query_loans, search_contacts) pueden ejecutarse directamente
+3. Las funciones de ESCRITURA (create_loan, mark_loan_returned, reschedule_loan, create_contact, update_contact) SIEMPRE requieren confirmación
+4. Si el usuario dice "confirmo", "sí", "ok" → verifica que haya una acción pendiente de confirmar en el contexto
+5. NO inventes ni asumas información crítica (montos, fechas, nombres)
+6. NO ejecutes múltiples operaciones de escritura en una sola interacción sin confirmación individual
 
-EJEMPLOS CON FUNCIÓN CORRECTA:
-- "le presté 50 lucas a erick" → create_loan(loan_type="lent", contact_name="erick", amount=50000, due_date="...")
-- "erick me prestó 30 mil" → create_loan(loan_type="borrowed", contact_name="erick", amount=30000, due_date="...")
-- "cuánto me debe juan" → query_loans(query_type="by_contact", contact_name="juan")
-- "marca el préstamo de maría como pagado" → mark_loan_returned(contact_name="maría")
-- "cambia la fecha del préstamo de pedro al 30" → reschedule_loan(contact_name="pedro", new_due_date="...")
+REGLAS DE INTERPRETACIÓN:
+1. Para nombres de contactos: usa búsqueda fuzzy (acepta apodos, nombres parciales, errores de tipeo)
+2. Para fechas relativas: calcula la fecha exacta en formato YYYY-MM-DD
+   - "fin de mes" → último día del mes actual
+   - "próximo viernes" → siguiente viernes desde hoy
+   - "en 2 semanas" → 14 días desde hoy
+3. Para montos: normaliza a número entero
+   - "50 lucas" → 50000
+   - "$50.000" → 50000
+   - "50mil" → 50000
+   - "500k" → 500000
+4. Para tipo de préstamo:
+   - "presté", "di", "le di", "otorgué" → loan_type: "lent"
+   - "me prestaron", "me dieron", "recibí", "pedí" → loan_type: "borrowed"
 
-Fecha actual: ${new Date().toISOString().split('T')[0]}`
+MANEJO DE INCERTIDUMBRE:
+- Si confianza < 70% → usa show_uncertainty() para pedir aclaración
+- Si falta información crítica → pregunta de forma natural (NO uses show_uncertainty)
+- Si hay múltiples interpretaciones válidas → muestra opciones al usuario
+
+EJEMPLOS CORRECTOS - USO DE FUNCIONES:
+1. "le presté 50 lucas a erick para fin de mes"
+   → create_loan(loan_type="lent", contact_name="erick", amount=50000, due_date="2025-01-31")
+
+2. "erick me prestó 30 mil"
+   → Falta fecha → pregunta: "¿Para cuándo debes devolver los $30,000 a Erick?"
+
+3. Usuario: "cuánto me debe juan"
+   → query_loans(query_type="by_contact", contact_name="juan")
+
+4. Usuario: "muéstrame mis préstamos vencidos"
+   → query_loans(query_type="pending")
+
+5. Usuario: "cuál es mi balance total"
+   → query_loans(query_type="balance")
+
+6. Usuario: "lista todos mis préstamos"
+   → query_loans(query_type="all")
+
+7. Usuario: "marca el préstamo de maría como pagado"
+   → mark_loan_returned(contact_name="maría")
+
+8. Usuario: "cambia la fecha del préstamo de pedro al 30"
+   → reschedule_loan(contact_name="pedro", new_due_date="2025-01-30")
+
+9. Usuario: "agrega a juan lópez"
+   → create_contact(name="juan lópez")
+
+RESPUESTAS:
+- Sé amable, profesional y conciso en español chileno
+- Evita lenguaje técnico innecesario
+- Confirma las acciones de forma clara
+- Si hay error, explica qué pasó y cómo solucionarlo
+
+Fecha actual: ${currentDate}
+Día de la semana: ${new Date().toLocaleDateString('es-CL', { weekday: 'long' })}`
     };
   }
 
@@ -361,18 +406,22 @@ Fecha actual: ${new Date().toISOString().split('T')[0]}`
         type: 'function',
         function: {
           name: 'query_loans',
-          description: 'Consultar préstamos (estado, saldos, listados)',
+          description: 'Consultar información sobre préstamos del usuario. Usa esta función cuando el usuario pida ver, listar, revisar o conocer el estado de sus préstamos.',
           parameters: {
             type: 'object',
             properties: {
               query_type: {
                 type: 'string',
                 enum: ['all', 'pending', 'by_contact', 'balance'],
-                description: 'Tipo de consulta'
+                description: `Tipo de consulta a realizar:
+- "balance": Para preguntas sobre TOTALES/RESUMEN/SALDOS GENERALES (ej: "cuánto me deben en total", "cuál es mi balance", "cuánto debo en total", "resumen general", "estado financiero")
+- "pending": Para preguntas sobre préstamos VENCIDOS o PRÓXIMOS A VENCER (ej: "qué préstamos están vencidos", "cuáles vencen pronto", "qué tengo pendiente", "recordatorios", "alertas de vencimiento")
+- "all": Para pedir LISTA COMPLETA de préstamos activos sin filtro específico (ej: "muéstrame todos los préstamos", "lista completa", "qué préstamos tengo", "todos mis préstamos activos")
+- "by_contact": Para preguntas sobre préstamos CON UNA PERSONA ESPECÍFICA (ej: "cuánto me debe Juan", "qué préstamos tengo con María", "cómo estoy con Pedro", "relación con [nombre]")`
               },
               contact_name: {
                 type: 'string',
-                description: 'Nombre del contacto (opcional, solo para by_contact)'
+                description: 'Nombre del contacto (OBLIGATORIO solo para query_type="by_contact", dejar vacío en otros casos)'
               }
             },
             required: ['query_type']
@@ -463,6 +512,90 @@ Fecha actual: ${new Date().toISOString().split('T')[0]}`
               }
             },
             required: ['possible_intents', 'clarification_question']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'create_contact',
+          description: 'Crear un nuevo contacto en el sistema',
+          parameters: {
+            type: 'object',
+            properties: {
+              name: {
+                type: 'string',
+                description: 'Nombre completo del contacto'
+              },
+              phone: {
+                type: 'string',
+                description: 'Número de teléfono (opcional, formato +56912345678)'
+              },
+              nickname: {
+                type: 'string',
+                description: 'Apodo o nombre corto (opcional)'
+              },
+              notes: {
+                type: 'string',
+                description: 'Notas adicionales sobre el contacto (opcional)'
+              }
+            },
+            required: ['name']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'update_contact',
+          description: 'Actualizar información de un contacto existente',
+          parameters: {
+            type: 'object',
+            properties: {
+              contact_name: {
+                type: 'string',
+                description: 'Nombre del contacto a actualizar'
+              },
+              new_name: {
+                type: 'string',
+                description: 'Nuevo nombre (opcional)'
+              },
+              new_phone: {
+                type: 'string',
+                description: 'Nuevo teléfono (opcional)'
+              },
+              new_nickname: {
+                type: 'string',
+                description: 'Nuevo apodo (opcional)'
+              },
+              new_notes: {
+                type: 'string',
+                description: 'Nuevas notas (opcional)'
+              }
+            },
+            required: ['contact_name']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'query_loans_dynamic',
+          description: 'Ejecuta consulta SQL dinámica para preguntas complejas o específicas sobre préstamos que NO pueden responderse con las queries pre-definidas (balance, pending, all, by_contact). Usa esta función cuando el usuario pida: filtros específicos (montos, fechas custom, múltiples condiciones), agregaciones complejas (promedios, contactos con más préstamos), comparaciones entre períodos, o cualquier consulta que requiera lógica personalizada.',
+          parameters: {
+            type: 'object',
+            properties: {
+              question: {
+                type: 'string',
+                description: 'La pregunta COMPLETA del usuario en lenguaje natural. Incluye todos los detalles necesarios para generar la query correcta.'
+              },
+              expected_result_type: {
+                type: 'string',
+                enum: ['single_value', 'list', 'aggregation', 'comparison'],
+                description: 'Tipo de resultado esperado: "single_value" (ej: total a pagar), "list" (ej: lista de préstamos), "aggregation" (ej: suma por contacto), "comparison" (ej: este mes vs anterior)'
+              }
+            },
+            required: ['question', 'expected_result_type']
           }
         }
       }

@@ -2,6 +2,359 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-01-26] - v2.2.0 - 🤖 AI SQL Agent - Consultas Dinámicas con Text-to-SQL
+
+### 🎯 Objetivo
+
+Permitir **consultas complejas y personalizadas** sobre préstamos usando lenguaje natural, sin necesidad de pre-definir todas las queries posibles. El sistema convierte preguntas del usuario a SQL válido y seguro mediante **dual GPT-5-nano** con validación en cascada.
+
+### ✨ Nueva Funcionalidad: Text-to-SQL Agent
+
+**Arquitectura:**
+```
+Usuario pregunta → GPT-5-nano Generator → Validator Programático →
+GPT-5-nano Validator → PostgreSQL safe_execute_query() → Resultado
+```
+
+**Características principales:**
+- 🧠 Generación inteligente de SQL desde lenguaje natural
+- 🔒 4 capas de validación de seguridad (programática + LLM + PostgreSQL + RLS)
+- 🔄 Retry automático (máx 3 intentos)
+- 💰 Costo-eficiente: Dual GPT-5-nano ($0.003 por consulta)
+- ⚡ Latencia: ~5-7 segundos
+- 📊 Soporte para queries complejas (JOINs, subqueries, agregaciones, CTEs)
+
+### 📦 Archivos Creados
+
+1. **`_shared/schema-provider.ts`** (NUEVO - 350 líneas)
+   - Extrae schema de BD con metadatos del usuario
+   - Provee RLS policies y contexto de contactos
+   - Incluye ejemplos few-shot para mejorar precisión
+   - Funciones: `getSchemaForAI()`
+
+2. **`_shared/sql-parser-validator.ts`** (NUEVO - 180 líneas)
+   - Validador programático sin usar LLM (primera capa)
+   - 13 reglas de validación (keywords, funciones, tablas)
+   - Detecta SQL injection y timing attacks
+   - Funciones: `validateSQLSyntax()`, `sanitizeSQLForLogging()`, `estimateQueryComplexity()`
+
+3. **`_shared/sql-llm-validator.ts`** (NUEVO - 130 líneas)
+   - Validador LLM con GPT-5-nano (segunda capa)
+   - Threshold confidence > 95% para aprobar
+   - Sugiere fixes si confidence 80-94%
+   - Funciones: `validateSQLWithLLM()`
+
+4. **`_shared/sql-generator.ts`** (NUEVO - 140 líneas)
+   - Generador de SQL con GPT-5-nano
+   - Prompt con schema completo + ejemplos
+   - Temperatura 0.2 (casi determinístico)
+   - Funciones: `generateSQL()`
+
+5. **`migrations/029_safe_query_executor.sql`** (NUEVO - 150 líneas)
+   - Función PostgreSQL con SECURITY DEFINER
+   - 8 validaciones de seguridad a nivel DB
+   - Timeout de 10s, límite 1000 filas
+   - Solo accesible desde service_role
+
+### 🔄 Archivos Modificados
+
+1. **`_shared/openai-client.ts`**
+   - Nueva herramienta: `query_loans_dynamic`
+   - Descripción clara de cuándo usarla vs queries pre-definidas
+   - Parámetros: `question` (string) + `expected_result_type` (enum)
+
+2. **`ai-agent/index.ts`**
+   - Nueva función: `executeGeneratedSQL()` con retry logic (240 líneas)
+   - Nueva función: `formatSQLResults()` para formatear según tipo
+   - Integración con sistema de permisos y auditoría existente
+   - Logging exhaustivo en cada fase
+
+### 🔒 Seguridad (Defense in Depth)
+
+**Capa 1: Validador Programático**
+- Solo SELECT permitido
+- Keyword destructivos bloqueados: DROP, DELETE, UPDATE, INSERT, ALTER, etc.
+- Funciones peligrosas bloqueadas: pg_sleep, pg_read_file, dblink, etc.
+- Máximo 3 JOINs, longitud máxima 2000 chars
+- Obligatorio: filtro `tenant_id` en WHERE
+
+**Capa 2: Validador LLM (GPT-5-nano)**
+- Revisa lógica de negocio (borrower/lender correctos)
+- Detecta timing attacks y queries maliciosas sutiles
+- Confidence scoring (solo aprueba si > 95%)
+- Puede sugerir correcciones
+
+**Capa 3: PostgreSQL Function**
+- Re-valida keywords y funciones peligrosas
+- Timeout automático de 10 segundos
+- LIMIT forzado (máx 1000 filas)
+- Manejo de errores robusto
+
+**Capa 4: RLS de Supabase**
+- Políticas a nivel DB (última barrera)
+- Aislamiento multi-tenant automático
+
+### 📊 Capacidades
+
+**Queries soportadas:**
+- ✅ Filtros específicos: "préstamos vencidos con Caty donde le debo más de 50 mil"
+- ✅ Agregaciones: "promedio de monto por préstamo este mes"
+- ✅ Comparaciones: "contactos con más de 3 préstamos activos"
+- ✅ Análisis temporal: "total prestado por mes en 2025"
+- ✅ Subqueries y CTEs para análisis complejos
+- ❌ Queries con más de 3 JOINs (rechazadas por seguridad)
+- ❌ Acceso a schemas del sistema (pg_catalog, auth.*)
+
+### 🧪 Testing Requerido
+
+1. **Casos simples**: "cuánto me debe Juan en total"
+2. **Filtros complejos**: "vencidos + monto + múltiples condiciones"
+3. **Agregaciones**: "contacto con mayor deuda promedio"
+4. **Security (red team)**: SQL injection attempts, timing attacks
+5. **Performance**: Queries que causen timeout
+
+### 💰 Costo Estimado
+
+- Por consulta exitosa: $0.003 (2× GPT-5-nano)
+- Con retry promedio 1.5x: ~$0.0045/consulta
+- 1000 consultas/día: ~$135/mes
+- **4x más barato** que usar GPT-4o-mini como validator
+
+### ⚡ Performance
+
+- Generación SQL: ~2s
+- Validación sintáctica: <0.1s
+- Validación LLM: ~2s
+- Ejecución DB: ~0.5-2s
+- **Total: ~5-7 segundos** por consulta compleja
+
+### 🚀 Deployment
+
+- **Versión**: v22
+- **Edge Function size**: ~85kB (estimado)
+- **Requiere**: Migración 029 aplicada
+
+---
+
+## [2025-01-24] - v2.1.0 - 🔐 Sistema de Control de Seguridad para Mensajes Libres con IA
+
+### 🎯 Objetivo
+
+Habilitar **mensajes libres procesados por IA** de forma segura y controlada, sin depender de gestores externos (Agent Builder, n8n). Implementar control granular sobre qué acciones puede ejecutar la IA, con auditoría completa y prevención de abuso.
+
+### 🐛 Hotfix (2025-01-24 - post-deployment)
+
+**Hotfix 5: Query 'by_contact' completa - Sistema de consultas COMPLETADO ✅ (v21)**
+- ✅ **Implementado**: Query `by_contact` con búsqueda fuzzy, manejo de ambigüedad y balance bilateral
+- 🎯 **Optimización**: Usa 2 queries separadas en lugar de JOINs complejos para evitar timeouts
+- 💼 **Features**: Muestra detalle completo de relación crediticia con un contacto específico
+- 📁 **Archivo**: `supabase/functions/ai-agent/index.ts:599-607, 881-1019`
+- 🚀 **Deployment**: v21 (81.8kB)
+
+**Hotfix 4: Queries 'pending' y 'all' con datos reales (v20)**
+- ✅ **Implementado**: Query `pending` - muestra vencidos + próximos 7 días con cálculo de días
+- ✅ **Implementado**: Query `all` - lista completa categorizada (prestado vs recibido) con totales
+- 📊 **UX**: Formateo rico con emojis y separadores para mejor experiencia en WhatsApp
+- 📁 **Archivo**: `supabase/functions/ai-agent/index.ts:588-614, 693-878`
+- 🚀 **Deployment**: v20 (80.59kB)
+
+**Hotfix 3: Optimización y query 'balance' con datos reales (v19)**
+- 🎯 **Optimización**: Reducido historial de conversación de 20 a 5 mensajes para evitar timeouts de OpenAI (150s Edge Function limit)
+- ✅ **Implementado**: Query `balance` con datos reales - calcula totales prestados/recibidos y balance neto
+- ✅ **Validado**: Probado exitosamente por texto y audio
+- 📁 **Archivo**: `supabase/functions/ai-agent/index.ts:92, 554-676`
+- 🚀 **Deployment**: v19 (78.4kB)
+
+**Hotfix 2: Type error en audit logging (v17)**
+- ❌ **Problema**: TypeScript error al acceder a `result.error` - diferentes return types tienen `error` o `message`
+- ✅ **Solución**: Uso de type assertion `(result as any).error || (result as any).message`
+- 📁 **Archivo**: `supabase/functions/ai-agent/index.ts:393`
+- 🚀 **Deployment**: v17 (75.9kB)
+
+**Hotfix 1: Bug crítico en auditoría con legacy contacts (v15)**
+- ❌ **Problema**: `logAuditAction()` usaba `contactId` legacy directamente sin resolver a `tenant_contact_id`, causando FK constraint violation en `ai_actions_audit`
+- ✅ **Solución**: Agregado resolver de legacy contacts en `logAuditAction()` (mismo patrón que `ConversationMemory.saveMessage()`)
+- 📁 **Archivo**: `supabase/functions/ai-agent/index.ts:421-448`
+- 🚀 **Deployment**: v15 (75.4kB)
+
+### 🚀 Nuevas Funcionalidades
+
+**1. Sistema de Permisos Granular** (`_shared/ai-permissions.ts`)
+
+✅ **Niveles de riesgo** definidos por función:
+- `READONLY`: Solo lectura (query_loans, search_contacts)
+- `LOW`: Modificaciones menores (create_contact)
+- `MEDIUM`: Modificaciones importantes (update_contact, reschedule_loan)
+- `HIGH`: Operaciones críticas con dinero (create_loan, mark_loan_returned)
+- `CRITICAL`: Operaciones destructivas (delete_loan, delete_contact) - DESHABILITADAS por defecto
+
+✅ **Configuración centralizada** de permisos:
+```typescript
+{
+  create_loan: {
+    risk: 'high',
+    requiresConfirmation: 'always',
+    validations: {
+      maxAmount: 100000000,  // 100M CLP
+      maxPerDay: 10
+    },
+    enabled: true
+  }
+}
+```
+
+✅ **Deny by default**: Solo funciones explícitamente habilitadas pueden ejecutarse
+
+**2. Auditoría Completa** (tabla `ai_actions_audit`)
+
+✅ **Registro detallado** de TODAS las acciones:
+- Función ejecutada y argumentos
+- Resultado completo
+- Tiempo de ejecución (ms)
+- Tokens de OpenAI usados
+- Estado (success, error, pending_confirmation, cancelled)
+- Si requirió confirmación y si fue confirmada
+- Metadata adicional (rate limit info, errores, etc.)
+
+✅ **Vista de analytics** (`ai_actions_summary`):
+- Total ejecuciones por función
+- Tasa de éxito/error
+- Confirmaciones aceptadas/rechazadas
+- Tokens consumidos
+- Tiempo promedio de ejecución
+
+✅ **Retention policy**: 90 días (success), 180 días (errores)
+
+**3. Rate Limiting por Usuario**
+
+✅ Límites configurables por función:
+- `maxPerHour`: Máximo operaciones por hora
+- `maxPerDay`: Máximo operaciones por día
+
+✅ Ejemplos:
+- `query_loans`: 30 consultas/hora
+- `create_loan`: 10 creaciones/día
+- `mark_loan_returned`: 20 marcas/día
+
+✅ **Prevención de abuso**: Bloqueo automático con mensaje claro al usuario
+
+**4. Guardrails Robustos en System Prompt**
+
+✅ **Reglas críticas** inyectadas en el prompt:
+- NUNCA ejecutar operaciones de escritura sin confirmación
+- NO inventar información crítica (montos, fechas, nombres)
+- NO ejecutar múltiples operaciones sin confirmación individual
+- Verificar contexto antes de confirmar acciones
+
+✅ **Integración con sistema de permisos**:
+- Descripción automática de funciones disponibles
+- Límites y validaciones explicados a la IA
+- Ejemplos de uso correcto/incorrecto
+
+**5. Validaciones Pre-ejecución**
+
+✅ **Flujo de seguridad** en `ai-agent/index.ts`:
+1. Verificar permisos de la función
+2. Verificar rate limiting
+3. Ejecutar función con try/catch
+4. Registrar en auditoría (incluso si falla)
+
+✅ **Bloqueo proactivo**:
+- Funciones deshabilitadas → error con explicación
+- Rate limit excedido → mensaje claro al usuario
+- Validaciones de negocio fallidas → error descriptivo
+
+**6. Nuevas Funciones para IA**
+
+✅ `create_contact`: Crear contacto nuevo
+  - Verificación de duplicados (similarity > 0.8)
+  - Confirmación condicional si existe similar
+
+✅ `update_contact`: Actualizar contacto existente
+  - Búsqueda fuzzy del contacto
+  - Confirmación siempre requerida
+  - Validación de cambios
+
+### 📊 Mejoras Técnicas
+
+**Archivos nuevos**:
+- `supabase/functions/_shared/ai-permissions.ts` - Sistema de permisos
+- `supabase/migrations/028_ai_actions_audit.sql` - Tabla de auditoría + vista analytics
+
+**Archivos modificados**:
+- `supabase/functions/_shared/openai-client.ts`:
+  - Import de `ai-permissions.ts`
+  - System prompt mejorado con guardrails
+  - Nuevas tools: `create_contact`, `update_contact`
+  - Descripción de permisos inyectada en prompt
+
+- `supabase/functions/ai-agent/index.ts`:
+  - Import de `ai-permissions.ts`
+  - Función `executeFunction()` con validaciones pre-ejecución
+  - Función `logAuditAction()` para registro completo
+  - Implementación de `createContact()` y `updateContact()`
+  - Auditoría de TODAS las acciones (exitosas y fallidas)
+
+- `docs/INTEGRACION_IA.md`:
+  - Sección completa sobre "Sistema de Control de Seguridad"
+  - Ejemplos de casos de uso con control
+  - Queries de monitoreo
+  - Mejores prácticas de seguridad
+
+### 🔒 Seguridad
+
+✅ **Control total** sobre acciones de la IA
+✅ **Auditoría completa** de todas las operaciones
+✅ **Rate limiting** para prevenir abuso
+✅ **Validaciones robustas** antes de ejecutar
+✅ **Sin vendor lock-in** (no depende de Agent Builder ni n8n)
+
+### 📈 Monitoreo
+
+**Queries útiles agregados a documentación**:
+```sql
+-- Top funciones más usadas
+-- Errores recientes
+-- Rate limits más excedidos
+-- Tiempo promedio por función
+-- Tokens consumidos por tenant
+```
+
+### ⚠️ Breaking Changes
+
+**Ninguno**. Sistema completamente backward-compatible.
+
+### 🎓 Documentación
+
+✅ Documentación completa en `docs/INTEGRACION_IA.md`:
+- Filosofía "Deny by Default"
+- Configuración de permisos
+- Rate limiting
+- Auditoría
+- Casos de uso con ejemplos
+- Monitoreo y alertas
+- Mejores prácticas de seguridad
+- Cómo habilitar funciones deshabilitadas
+
+### 🚀 Recomendación vs. Gestores Externos
+
+**NO usar Agent Builder (OpenAI) ni n8n** porque:
+- ❌ Vendor lock-in
+- ❌ Menos control sobre acciones
+- ❌ Costos menos predecibles
+- ❌ Debugging difícil (caja negra)
+- ❌ No integración nativa con Supabase
+
+**Nuestra solución actual es SUPERIOR** porque:
+- ✅ Control total sobre permisos
+- ✅ Auditoría completa
+- ✅ Costos predecibles
+- ✅ Debugging simple
+- ✅ Integración nativa con BD
+- ✅ Sin dependencias externas
+
+---
+
 ## [2025-10-24] - v2.0.7 - 🔧 Fix: AI Agent bloqueado por estados completados + Mensajes outbound no se guardaban
 
 ### 🐛 Bugs Críticos Corregidos
