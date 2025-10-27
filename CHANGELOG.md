@@ -2,6 +2,445 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-01-27] - v2.3.0 - ✨ Feature: Verificación Inteligente de Contactos + Logging Persistente
+
+### 🎯 Objetivos
+
+1. **Verificación Inteligente de Contactos**: Implementar verificación proactiva para que el AI Agent reconozca variantes de nombres (apodos, errores de tipeo, nombres parciales) y ofrezca opciones cuando hay ambigüedad.
+
+2. **Logging Persistente de OpenAI**: Crear tabla de auditoría para almacenar todos los payloads/respuestas de OpenAI con análisis de tokens y costos.
+
+### ✨ Nueva Funcionalidad
+
+#### Caso de Uso
+**Problema anterior:**
+- Usuario pregunta: "cuánto le debo a Catita"
+- Contacto registrado: "Caty"
+- Sistema NO reconocía que son la misma persona
+
+**Solución implementada:**
+1. **Verificación proactiva**: Antes de ejecutar cualquier operación con nombres, el agente usa `search_contacts()` para verificar el contacto
+2. **Fuzzy matching mejorado**: Usa distancia de Levenshtein con thresholds configurables
+3. **Respuestas inteligentes según confianza:**
+   - ✅ **Alta (>95%)**: Confirmación automática → "Encontrado: Caty"
+   - 🤔 **Media (80-95%)**: Pedir confirmación → "¿Te refieres a Caty? (similaridad: 83%)"
+   - 🔍 **Baja (<80%)**: Mostrar candidatos → Lista de opciones + crear nuevo
+   - ❌ **Sin matches**: Ofrecer crear contacto → "No encontré a Roberto. ¿Quieres agregarlo?"
+
+### 🔧 Cambios Implementados
+
+**1. System Prompt (`openai-client.ts:307-327`)**
+```diff
++ REGLAS DE INTERPRETACIÓN:
++ 1. Para nombres de contactos: usa búsqueda fuzzy (acepta apodos, nombres parciales, errores de tipeo)
++    ⚠️ VERIFICACIÓN OBLIGATORIA DE CONTACTOS:
++    - Si el usuario menciona un nombre que NO está en CONTACTOS DISPONIBLES → SIEMPRE usa search_contacts() PRIMERO
++    - Si el nombre es similar pero no exacto (ej: "Catita" vs "Caty") → search_contacts() para verificar
++    - Si search_contacts() retorna múltiples candidatos → presenta opciones al usuario
++    - Si search_contacts() no encuentra nada → ofrece crear el contacto con create_contact()
++    - Solo procede con create_loan u otras operaciones DESPUÉS de verificar/resolver el contacto
+```
+
+**2. Tool Description (`openai-client.ts:484-486`)**
+```diff
+- description: 'Buscar contactos del usuario'
++ description: '🔍 VERIFICACIÓN DE CONTACTOS (USA SIEMPRE ANTES DE create_loan/query_loans_dynamic con nombres). Busca contactos usando fuzzy matching para manejar apodos, variantes y errores de tipeo. Retorna candidatos con nivel de similaridad. OBLIGATORIO usar cuando el usuario menciona un nombre que no está exacto en CONTACTOS DISPONIBLES.'
+```
+
+**3. Función searchContacts (`ai-agent/index.ts:1308-1387`)**
+```typescript
+// Antes: Solo retornaba lista de matches
+// Después: Retorna información estructurada con niveles de confianza
+
+// Sin coincidencias → Sugerir crear contacto
+if (matches.length === 0) {
+  return {
+    success: true,
+    message: `❌ No encontré ningún contacto con el nombre "${args.search_term}". ¿Quieres que lo agregue a tus contactos?`,
+    data: {
+      matches: [],
+      suggestion: 'create_contact',
+      suggested_name: args.search_term
+    }
+  };
+}
+
+// Coincidencia exacta o muy alta (>0.95) → Confirmación automática
+if (matches.length === 1 && matches[0].similarity >= 0.95) {
+  return {
+    message: `✅ Encontrado: ${matches[0].name} (similaridad: ${(matches[0].similarity * 100).toFixed(0)}%)`,
+    data: {
+      best_match: matches[0],
+      confidence: 'high'
+    }
+  };
+}
+
+// Coincidencia parcial (0.8-0.95) → Pedir confirmación
+// Múltiples coincidencias → Mostrar candidatos con porcentajes
+```
+
+**4. Ejemplos Agregados al System Prompt (`openai-client.ts:362-376`)**
+```
+EJEMPLOS DE VERIFICACIÓN DE CONTACTOS:
+A. Usuario: "cuánto le debo a Catita" (pero en CONTACTOS DISPONIBLES solo está "Caty")
+   → PRIMERO: search_contacts(search_term="Catita")
+   → RESULTADO: "🤔 ¿Te refieres a Caty? (similaridad: 83%)"
+   → LUEGO: Asume que sí y ejecuta query_loans_dynamic con "Caty"
+
+B. Usuario: "presté 100 lucas a Juanito" (pero no existe "Juanito" en contactos)
+   → PRIMERO: search_contacts(search_term="Juanito")
+   → RESULTADO: Candidatos: "Juan Pérez (85%)", "Juan Carlos (78%)"
+   → RESPUESTA: Muestra candidatos y pregunta a cuál se refiere
+
+C. Usuario: "cuánto me debe Roberto" (no existe ningún Roberto)
+   → PRIMERO: search_contacts(search_term="Roberto")
+   → RESULTADO: "❌ No encontré ningún contacto con el nombre Roberto"
+   → RESPUESTA: "No tengo registrado a Roberto en tus contactos. ¿Quieres que lo agregue?"
+```
+
+### 📊 Niveles de Similaridad
+
+| Rango | Nivel | Comportamiento |
+|-------|-------|----------------|
+| ≥ 0.95 | Alta | Confirmación automática |
+| 0.80 - 0.94 | Media | Pedir confirmación al usuario |
+| 0.50 - 0.79 | Baja | Mostrar candidatos + opción crear |
+| < 0.50 | Sin match | Ofrecer crear contacto nuevo |
+
+### 🔧 Algoritmo de Fuzzy Matching
+
+Ya existía en `contact-fuzzy-search.ts`:
+- **Levenshtein Distance**: Calcula similitud entre strings
+- **Normalización**: Remueve acentos y caracteres especiales
+- **Partial matching**: Detecta cuando un nombre contiene al otro
+
+### 🧪 Testing Manual
+
+**Casos a probar:**
+1. ✅ "cuánto le debo a Catita" → Debe reconocer "Caty"
+2. ✅ "presté 100 lucas a Juanito" → Debe mostrar candidatos "Juan"
+3. ✅ "cuánto me debe Roberto" → Debe ofrecer crear contacto
+4. ✅ "consulta préstamos de Caty" → Debe usar match exacto sin verificación
+
+### 📦 Deployment
+
+```bash
+npx supabase functions deploy ai-agent
+```
+
+**Edge Function deployada:** ai-agent v29
+
+### 🎯 Impacto en UX
+
+**Antes:**
+- Usuario: "cuánto le debo a Catita"
+- Bot: "No encontré préstamos con Catita" ❌
+
+**Después:**
+- Usuario: "cuánto le debo a Catita"
+- Bot: "🤔 ¿Te refieres a Caty? (similaridad: 83%)"
+- Bot: "Le debes $50.000 a Caty" ✅
+
+### 🔗 Archivos Modificados
+
+1. `supabase/functions/_shared/openai-client.ts`:
+   - System prompt con reglas de verificación obligatoria
+   - Tool description más explícita para search_contacts
+   - Ejemplos de verificación de contactos
+
+2. `supabase/functions/ai-agent/index.ts`:
+   - Función searchContacts mejorada con niveles de confianza
+   - Respuestas estructuradas con sugerencias de acción
+
+3. Sistema de permisos (`ai-permissions.ts`):
+   - search_contacts ya estaba registrado (READONLY, max 20/hora)
+
+### 🚀 Próximos Pasos (Verificación de Contactos)
+
+- [ ] Probar con usuarios reales y ajustar thresholds si es necesario
+- [ ] Considerar agregar caché de búsquedas recientes para optimizar
+- [ ] Evaluar agregar función para seleccionar contacto de lista directamente
+
+---
+
+## 📊 PARTE 2: Logging Persistente de OpenAI
+
+### 🎯 Objetivo
+
+Almacenar todos los requests/responses de OpenAI en base de datos para:
+- 🐛 **Debugging**: Ver payloads completos y tool_calls para entender comportamiento del AI
+- 💰 **Análisis de costos**: Trackear tokens usados y estimar gastos por tenant/modelo
+- 📈 **Optimización**: Identificar prompts que consumen muchos tokens
+- 🔍 **Auditoría**: Trazabilidad completa de todas las interacciones con OpenAI
+
+### 🗄️ Nueva Tabla: `openai_requests_log`
+
+```sql
+CREATE TABLE openai_requests_log (
+  id UUID PRIMARY KEY,
+
+  -- Contexto
+  tenant_id UUID NOT NULL,
+  contact_id UUID,
+
+  -- Request
+  model TEXT NOT NULL,
+  request_type TEXT NOT NULL, -- chat_completion, transcription, vision
+  request_payload JSONB NOT NULL, -- Payload completo enviado
+
+  -- Response
+  response_payload JSONB, -- Respuesta completa (null si error)
+  status TEXT NOT NULL, -- success, error
+  error_message TEXT,
+
+  -- Tokens y Costos
+  prompt_tokens INT,
+  completion_tokens INT,
+  total_tokens INT,
+  cached_tokens INT, -- Prompt caching de OpenAI
+
+  -- Tool Calls
+  tool_calls_count INT DEFAULT 0,
+  tool_calls JSONB, -- Array con todos los function calls
+
+  -- Metadata
+  finish_reason TEXT, -- stop, length, tool_calls, content_filter
+  response_time_ms INT,
+
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### 📊 Vista de Análisis de Costos
+
+```sql
+CREATE VIEW openai_cost_analysis AS
+SELECT
+  DATE_TRUNC('day', created_at) as date,
+  tenant_id,
+  model,
+  COUNT(*) as request_count,
+  SUM(total_tokens) as total_tokens,
+  SUM(cached_tokens) as total_cached_tokens,
+  AVG(response_time_ms) as avg_response_time_ms,
+  -- Estimación de costo según precios actuales
+  CASE
+    WHEN model LIKE 'gpt-5%' THEN
+      (SUM(prompt_tokens) * 0.000002 + SUM(completion_tokens) * 0.000008)
+    WHEN model LIKE 'gpt-4o%' THEN
+      (SUM(prompt_tokens) * 0.0000025 + SUM(completion_tokens) * 0.00001)
+    ELSE 0
+  END as estimated_cost_usd
+FROM openai_requests_log
+GROUP BY date, tenant_id, model;
+```
+
+### 🔧 Cambios Implementados
+
+**1. Constructor de OpenAIClient (`openai-client.ts:83-97`)**
+```typescript
+constructor(
+  apiKey: string,
+  baseUrl: string = 'https://api.openai.com/v1',
+  options?: {
+    supabase?: any;      // Para logging en BD
+    tenantId?: string;   // Contexto del tenant
+    contactId?: string;  // Contexto del usuario
+  }
+)
+```
+
+**2. Método de Logging (`openai-client.ts:704-754`)**
+```typescript
+private async logOpenAIRequest(params: {
+  requestType: 'chat_completion' | 'transcription' | 'vision';
+  model: string;
+  requestPayload: any;
+  responsePayload?: any;
+  status: 'success' | 'error';
+  errorMessage?: string;
+  responseTimeMs: number;
+}): Promise<void>
+```
+
+**3. Integración en chatCompletion() (`openai-client.ts:102-247`)**
+- Mide `response_time_ms` con `Date.now()`
+- Captura request payload completo
+- Captura response payload completo
+- Extrae tokens, tool_calls y finish_reason
+- Inserta en BD al finalizar (success o error)
+
+**4. Uso en ai-agent (`ai-agent/index.ts:39-43`)**
+```typescript
+const openai = new OpenAIClient(openaiApiKey, 'https://api.openai.com/v1', {
+  supabase,
+  tenantId: tenant_id,
+  contactId: contact_id
+});
+```
+
+### 🔍 Cómo Consultar los Logs
+
+**Ver últimos 10 requests:**
+```sql
+SELECT
+  created_at,
+  model,
+  status,
+  total_tokens,
+  tool_calls_count,
+  response_time_ms,
+  finish_reason
+FROM openai_requests_log
+ORDER BY created_at DESC
+LIMIT 10;
+```
+
+**Ver payload completo de un request:**
+```sql
+SELECT
+  request_payload->'messages' as messages,
+  request_payload->'tools' as tools,
+  response_payload->'choices'->0->'message'->'tool_calls' as tool_calls
+FROM openai_requests_log
+WHERE id = 'uuid-aqui';
+```
+
+**Ver cuánto le debo a "Catita" (buscar en payloads):**
+```sql
+SELECT
+  created_at,
+  request_payload->'messages' as messages,
+  tool_calls,
+  response_payload
+FROM openai_requests_log
+WHERE request_payload::text ILIKE '%Catita%'
+ORDER BY created_at DESC;
+```
+
+**Análisis de costos del último mes:**
+```sql
+SELECT
+  date,
+  model,
+  request_count,
+  total_tokens,
+  estimated_cost_usd
+FROM openai_cost_analysis
+WHERE date >= NOW() - INTERVAL '30 days'
+ORDER BY date DESC;
+```
+
+### 📦 Deployment
+
+**Migración aplicada:**
+```bash
+supabase migrations apply 031_openai_requests_log
+```
+
+**Edge Function deployada:**
+```bash
+npx supabase functions deploy ai-agent
+```
+
+**Versión:** ai-agent v30
+
+### 🎯 Impacto
+
+**Antes:**
+- Logs efímeros en consola de Supabase (~7 días)
+- No se podía ver el payload completo enviado a OpenAI
+- No había forma de analizar costos por tenant
+- Debugging requería activar logs manualmente y esperar a reproducir el error
+
+**Después:**
+- ✅ Todos los requests persistidos permanentemente en BD
+- ✅ Payloads completos (request + response) queryables con SQL
+- ✅ Vista de análisis de costos por día/tenant/modelo
+- ✅ Debugging post-mortem: puedes ver qué pasó en cualquier momento
+- ✅ Análisis de tool_calls: ver qué funciones se ejecutan y con qué argumentos
+- ✅ Optimización de prompts: identificar mensajes que consumen muchos tokens
+
+### 📊 Ejemplo de Registro
+
+Cuando el usuario pregunta **"cuánto le debo a Catita"**:
+
+```json
+{
+  "id": "...",
+  "tenant_id": "...",
+  "contact_id": "...",
+  "model": "gpt-5-nano",
+  "request_type": "chat_completion",
+  "request_payload": {
+    "model": "gpt-5-nano",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Eres un asistente virtual... VERIFICACIÓN OBLIGATORIA DE CONTACTOS..."
+      },
+      {
+        "role": "user",
+        "content": "cuánto le debo a Catita"
+      }
+    ],
+    "tools": [...]
+  },
+  "response_payload": {
+    "id": "chatcmpl-...",
+    "choices": [{
+      "message": {
+        "tool_calls": [{
+          "function": {
+            "name": "search_contacts",
+            "arguments": "{\"search_term\":\"Catita\"}"
+          }
+        }]
+      },
+      "finish_reason": "tool_calls"
+    }],
+    "usage": {
+      "prompt_tokens": 1250,
+      "completion_tokens": 45,
+      "total_tokens": 1295
+    }
+  },
+  "status": "success",
+  "prompt_tokens": 1250,
+  "completion_tokens": 45,
+  "total_tokens": 1295,
+  "tool_calls_count": 1,
+  "tool_calls": [...],
+  "finish_reason": "tool_calls",
+  "response_time_ms": 1834,
+  "created_at": "2025-01-27T..."
+}
+```
+
+### 🔗 Archivos Modificados/Creados
+
+1. **Migración:**
+   - `supabase/migrations/031_openai_requests_log.sql` - Tabla + vista de análisis
+
+2. **OpenAI Client:**
+   - `openai-client.ts:83-97` - Constructor con opciones de logging
+   - `openai-client.ts:102-247` - chatCompletion() con logging integrado
+   - `openai-client.ts:704-754` - Método logOpenAIRequest()
+
+3. **AI Agent:**
+   - `ai-agent/index.ts:39-43` - Pasar contexto a OpenAIClient
+
+### 🚀 Próximos Pasos (Logging)
+
+- [ ] Agregar logging para Whisper (transcription)
+- [ ] Agregar logging para Vision API (image analysis)
+- [ ] Crear dashboard en Supabase para visualizar métricas
+- [ ] Configurar alertas cuando costos superen threshold
+- [ ] Implementar retention policy (ej: mantener solo últimos 90 días)
+
+---
+
 ## [2025-01-27] - v2.2.2 - 🐛 Hotfix: Remover parámetro temperature incompatible con gpt-5-nano
 
 ### 🐛 Problema Identificado

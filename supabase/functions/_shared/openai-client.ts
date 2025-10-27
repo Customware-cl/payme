@@ -76,10 +76,24 @@ export interface TranscriptionResponse {
 export class OpenAIClient {
   private apiKey: string;
   private baseUrl: string;
+  private supabase?: any; // SupabaseClient (opcional para logging)
+  private tenantId?: string;
+  private contactId?: string;
 
-  constructor(apiKey: string, baseUrl: string = 'https://api.openai.com/v1') {
+  constructor(
+    apiKey: string,
+    baseUrl: string = 'https://api.openai.com/v1',
+    options?: {
+      supabase?: any;
+      tenantId?: string;
+      contactId?: string;
+    }
+  ) {
     this.apiKey = apiKey;
     this.baseUrl = baseUrl;
+    this.supabase = options?.supabase;
+    this.tenantId = options?.tenantId;
+    this.contactId = options?.contactId;
   }
 
   /**
@@ -88,12 +102,45 @@ export class OpenAIClient {
   async chatCompletion(
     request: ChatCompletionRequest
   ): Promise<{ success: boolean; data?: ChatCompletionResponse; error?: string }> {
+    const startTime = Date.now();
+    let responsePayload: any = null;
+    let errorMessage: string | undefined;
+
     try {
+      const enableDetailedLogs = Deno.env.get('OPENAI_DETAILED_LOGS') === 'true';
+
+      // Logs resumidos (siempre activos)
       console.log('[OpenAI] Chat completion request:', {
         model: request.model,
         messages: request.messages.length,
-        has_tools: !!request.tools
+        has_tools: !!request.tools,
+        tool_count: request.tools?.length || 0
       });
+
+      // Logs detallados (opcional - activar con env var)
+      if (enableDetailedLogs) {
+        console.log('[OpenAI] 📤 FULL REQUEST:', JSON.stringify({
+          model: request.model,
+          messages: request.messages.map((m, i) => ({
+            index: i,
+            role: m.role,
+            content: typeof m.content === 'string'
+              ? m.content.substring(0, 500) + (m.content.length > 500 ? '...' : '')
+              : m.content,
+            tool_calls: (m as any).tool_calls || undefined
+          })),
+          tools: request.tools?.map(t => ({
+            type: t.type,
+            function: {
+              name: t.function.name,
+              description: t.function.description
+            }
+          })),
+          tool_choice: request.tool_choice,
+          temperature: request.temperature,
+          max_completion_tokens: request.max_completion_tokens
+        }, null, 2));
+      }
 
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -105,19 +152,71 @@ export class OpenAIClient {
       });
 
       const result = await response.json();
+      responsePayload = result;
 
       if (!response.ok) {
         console.error('[OpenAI] Error response:', result);
+        errorMessage = result.error?.message || 'Error calling OpenAI API';
+
+        // Log error en BD
+        await this.logOpenAIRequest({
+          requestType: 'chat_completion',
+          model: request.model,
+          requestPayload: request,
+          responsePayload: result,
+          status: 'error',
+          errorMessage,
+          responseTimeMs: Date.now() - startTime
+        });
+
         return {
           success: false,
-          error: result.error?.message || 'Error calling OpenAI API'
+          error: errorMessage
         };
       }
 
+      // Logs resumidos (siempre activos)
       console.log('[OpenAI] Success:', {
         model: result.model,
         tokens: result.usage?.total_tokens,
-        finish_reason: result.choices[0]?.finish_reason
+        finish_reason: result.choices[0]?.finish_reason,
+        has_tool_calls: !!result.choices[0]?.message?.tool_calls,
+        tool_calls_count: result.choices[0]?.message?.tool_calls?.length || 0
+      });
+
+      // Logs detallados (opcional)
+      if (enableDetailedLogs) {
+        console.log('[OpenAI] 📥 FULL RESPONSE:', JSON.stringify({
+          id: result.id,
+          model: result.model,
+          usage: result.usage,
+          choices: result.choices.map((c: any) => ({
+            index: c.index,
+            finish_reason: c.finish_reason,
+            message: {
+              role: c.message.role,
+              content: c.message.content,
+              tool_calls: c.message.tool_calls?.map((tc: any) => ({
+                id: tc.id,
+                type: tc.type,
+                function: {
+                  name: tc.function.name,
+                  arguments: tc.function.arguments
+                }
+              }))
+            }
+          }))
+        }, null, 2));
+      }
+
+      // Log success en BD
+      await this.logOpenAIRequest({
+        requestType: 'chat_completion',
+        model: request.model,
+        requestPayload: request,
+        responsePayload: result,
+        status: 'success',
+        responseTimeMs: Date.now() - startTime
       });
 
       return {
@@ -127,9 +226,22 @@ export class OpenAIClient {
 
     } catch (error) {
       console.error('[OpenAI] Exception:', error);
+      errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+      // Log exception en BD
+      await this.logOpenAIRequest({
+        requestType: 'chat_completion',
+        model: request.model,
+        requestPayload: request,
+        responsePayload: responsePayload,
+        status: 'error',
+        errorMessage,
+        responseTimeMs: Date.now() - startTime
+      });
+
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: errorMessage
       };
     }
   }
@@ -306,6 +418,13 @@ REGLAS DE SEGURIDAD - CRÍTICO:
 
 REGLAS DE INTERPRETACIÓN:
 1. Para nombres de contactos: usa búsqueda fuzzy (acepta apodos, nombres parciales, errores de tipeo)
+   ⚠️ VERIFICACIÓN OBLIGATORIA DE CONTACTOS:
+   - Si el usuario menciona un nombre que NO está en CONTACTOS DISPONIBLES → SIEMPRE usa search_contacts() PRIMERO
+   - Si el nombre es similar pero no exacto (ej: "Catita" vs "Caty") → search_contacts() para verificar
+   - Si search_contacts() retorna múltiples candidatos → presenta opciones al usuario
+   - Si search_contacts() no encuentra nada → ofrece crear el contacto con create_contact()
+   - Solo procede con create_loan u otras operaciones DESPUÉS de verificar/resolver el contacto
+
 2. Para fechas relativas: calcula la fecha exacta en formato YYYY-MM-DD
    - "fin de mes" → último día del mes actual
    - "próximo viernes" → siguiente viernes desde hoy
@@ -351,6 +470,22 @@ EJEMPLOS CORRECTOS - USO DE FUNCIONES:
 
 9. Usuario: "agrega a juan lópez"
    → create_contact(name="juan lópez")
+
+EJEMPLOS DE VERIFICACIÓN DE CONTACTOS:
+A. Usuario: "cuánto le debo a Catita" (pero en CONTACTOS DISPONIBLES solo está "Caty")
+   → PRIMERO: search_contacts(search_term="Catita")
+   → RESULTADO: "🤔 ¿Te refieres a Caty? (similaridad: 83%)"
+   → LUEGO: Asume que sí y ejecuta query_loans_dynamic con "Caty"
+
+B. Usuario: "presté 100 lucas a Juanito" (pero no existe "Juanito" en contactos)
+   → PRIMERO: search_contacts(search_term="Juanito")
+   → RESULTADO: Candidatos: "Juan Pérez (85%)", "Juan Carlos (78%)"
+   → RESPUESTA: Muestra candidatos y pregunta a cuál se refiere
+
+C. Usuario: "cuánto me debe Roberto" (no existe ningún Roberto)
+   → PRIMERO: search_contacts(search_term="Roberto")
+   → RESULTADO: "❌ No encontré ningún contacto con el nombre Roberto"
+   → RESPUESTA: "No tengo registrado a Roberto en tus contactos. ¿Quieres que lo agregue?"
 
 RESPUESTAS:
 - Sé amable, profesional y conciso en español chileno
@@ -475,13 +610,13 @@ Día de la semana: ${new Date().toLocaleDateString('es-CL', { weekday: 'long' })
         type: 'function',
         function: {
           name: 'search_contacts',
-          description: 'Buscar contactos del usuario',
+          description: '🔍 VERIFICACIÓN DE CONTACTOS (USA SIEMPRE ANTES DE create_loan/query_loans_dynamic con nombres). Busca contactos usando fuzzy matching para manejar apodos, variantes y errores de tipeo. Retorna candidatos con nivel de similaridad. OBLIGATORIO usar cuando el usuario menciona un nombre que no está exacto en CONTACTOS DISPONIBLES.',
           parameters: {
             type: 'object',
             properties: {
               search_term: {
                 type: 'string',
-                description: 'Término de búsqueda (nombre, apodo, teléfono)'
+                description: 'Nombre o apodo del contacto a buscar (ej: "Catita", "Caty", "Catalina")'
               }
             },
             required: ['search_term']
@@ -601,5 +736,61 @@ Día de la semana: ${new Date().toLocaleDateString('es-CL', { weekday: 'long' })
         }
       }
     ];
+  }
+
+  /**
+   * Registrar request de OpenAI en base de datos (opcional)
+   * Solo se ejecuta si se pasó supabase client en el constructor
+   */
+  private async logOpenAIRequest(params: {
+    requestType: 'chat_completion' | 'transcription' | 'vision';
+    model: string;
+    requestPayload: any;
+    responsePayload?: any;
+    status: 'success' | 'error';
+    errorMessage?: string;
+    responseTimeMs: number;
+  }): Promise<void> {
+    // Si no hay supabase client o tenant_id, no logear
+    if (!this.supabase || !this.tenantId) {
+      return;
+    }
+
+    try {
+      // Extraer información de tokens y tool calls del response
+      const usage = params.responsePayload?.usage;
+      const choice = params.responsePayload?.choices?.[0];
+      const toolCalls = choice?.message?.tool_calls;
+
+      const logEntry = {
+        tenant_id: this.tenantId,
+        contact_id: this.contactId || null,
+        model: params.model,
+        request_type: params.requestType,
+        request_payload: params.requestPayload,
+        response_payload: params.responsePayload || null,
+        status: params.status,
+        error_message: params.errorMessage || null,
+        prompt_tokens: usage?.prompt_tokens || null,
+        completion_tokens: usage?.completion_tokens || null,
+        total_tokens: usage?.total_tokens || null,
+        cached_tokens: usage?.prompt_tokens_details?.cached_tokens || null,
+        tool_calls_count: toolCalls?.length || 0,
+        tool_calls: toolCalls || null,
+        finish_reason: choice?.finish_reason || null,
+        response_time_ms: params.responseTimeMs
+      };
+
+      const { error } = await this.supabase
+        .from('openai_requests_log')
+        .insert(logEntry);
+
+      if (error) {
+        console.error('[OpenAI] Error logging request:', error);
+      }
+    } catch (error) {
+      // No queremos que errores en logging bloqueen la ejecución
+      console.error('[OpenAI] Exception logging request:', error);
+    }
   }
 }

@@ -34,11 +34,6 @@ serve(async (req: Request) => {
       throw new Error('OPENAI_API_KEY no configurada');
     }
 
-    // Inicializar clientes
-    const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
-    const openai = new OpenAIClient(openaiApiKey);
-    const memory = new ConversationMemory(supabase);
-
     // Parsear request
     const {
       tenant_id,
@@ -47,6 +42,15 @@ serve(async (req: Request) => {
       message_type = 'text', // text, audio_transcription, image_analysis
       metadata = {}
     } = await req.json();
+
+    // Inicializar clientes
+    const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+    const openai = new OpenAIClient(openaiApiKey, 'https://api.openai.com/v1', {
+      supabase,
+      tenantId: tenant_id,
+      contactId: contact_id
+    });
+    const memory = new ConversationMemory(supabase);
 
     console.log('[AI-Agent] Request:', {
       tenant_id,
@@ -1312,6 +1316,9 @@ async function searchContacts(
     search_term: string;
   }
 ) {
+  console.log('[searchContacts] Buscando:', args.search_term);
+
+  // Búsqueda con threshold bajo (0.5) para capturar variantes
   const result = await findContactByName(supabase, tenantId, args.search_term, 0.5);
 
   if (!result.success) {
@@ -1321,11 +1328,65 @@ async function searchContacts(
     };
   }
 
+  const matches = result.matches || [];
+
+  // Sin coincidencias → Sugerir crear contacto
+  if (matches.length === 0) {
+    return {
+      success: true,
+      message: `❌ No encontré ningún contacto con el nombre "${args.search_term}". ¿Quieres que lo agregue a tus contactos?`,
+      needs_confirmation: false,
+      data: {
+        matches: [],
+        suggestion: 'create_contact',
+        suggested_name: args.search_term
+      }
+    };
+  }
+
+  // Coincidencia exacta o muy alta (>0.95) → Confirmación automática
+  if (matches.length === 1 && matches[0].similarity >= 0.95) {
+    return {
+      success: true,
+      message: `✅ Encontrado: ${matches[0].name} (similaridad: ${(matches[0].similarity * 100).toFixed(0)}%)`,
+      needs_confirmation: false,
+      data: {
+        matches: [matches[0]],
+        best_match: matches[0],
+        confidence: 'high'
+      }
+    };
+  }
+
+  // Coincidencia parcial (0.8-0.95) → Pedir confirmación
+  if (matches.length === 1 && matches[0].similarity >= 0.8) {
+    return {
+      success: true,
+      message: `🤔 ¿Te refieres a "${matches[0].name}"? (similaridad: ${(matches[0].similarity * 100).toFixed(0)}%)`,
+      needs_confirmation: false,
+      data: {
+        matches: [matches[0]],
+        best_match: matches[0],
+        confidence: 'medium',
+        suggestion: 'confirm_or_create'
+      }
+    };
+  }
+
+  // Múltiples coincidencias → Mostrar candidatos
+  const formattedList = matches.slice(0, 5).map((m, i) =>
+    `${i + 1}. ${m.name} (similaridad: ${(m.similarity * 100).toFixed(0)}%)`
+  ).join('\n');
+
   return {
     success: true,
-    message: formatMatchResults(result.matches || []),
+    message: `🔍 Encontré varios contactos similares a "${args.search_term}":\n${formattedList}\n\n¿A cuál te refieres? También puedo crear uno nuevo si ninguno es el correcto.`,
     needs_confirmation: false,
-    data: { matches: result.matches }
+    data: {
+      matches: matches.slice(0, 5),
+      confidence: 'low',
+      suggestion: 'select_or_create'
+    }
   };
 }
 
