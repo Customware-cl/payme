@@ -2,6 +2,1087 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-28] - v2.4.3 - ✨ Mejoras de UX: Emojis y formato de números chileno
+
+### 🎯 Mejoras Solicitadas
+
+**Solicitud 1**: Hacer las respuestas más amigables usando emojis
+**Solicitud 2**: Usar formato de números chileno (punto para miles, coma para decimales)
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/_shared/openai-client.ts`
+
+#### 1. Agregado soporte de emojis (línea 407)
+
+```typescript
+2. USA EMOJIS cuando sea apropiado para hacer las respuestas más cálidas y expresivas
+```
+
+**Ejemplos de uso**:
+- "Le debes $99.000 a Caty 💰"
+- "Caty te debe $364.888 💵"
+- "✅ Listo! Registré el préstamo de $50.000 a Juan"
+- "No encontré préstamos con ese nombre 🤔"
+
+#### 2. Formato de números chileno (línea 408-411)
+
+```typescript
+3. FORMATO DE NÚMEROS (Chile): Usa PUNTO para miles y COMA para decimales
+   - Correcto: $99.000 | $1.234.567 | $50.000,50
+   - Incorrecto: $99,000 | $1,234,567 | $50,000.50
+```
+
+#### 3. Actualizado tono de conversación (línea 418)
+
+```typescript
+9. Tono: Amigable, cálido, cercano - como hablarías con un amigo por WhatsApp
+```
+
+### 📦 Cambios Aplicados
+
+```bash
+supabase/functions/_shared/openai-client.ts
+  - Línea 407: Agregada instrucción de uso de emojis
+  - Línea 408-411: Agregadas reglas de formato de números chileno
+  - Línea 413-416: Actualizados ejemplos con emojis y formato correcto
+  - Línea 418: Refinado tono de conversación (amigable, cálido, cercano)
+```
+
+### ✅ Resultado Esperado
+
+**Antes de v2.4.3**:
+```
+Usuario: "¿cuánto le debo a Caty?"
+Bot: "Le debes $99,000 a Caty"  ← formato estadounidense, sin emojis
+```
+
+**Después de v2.4.3**:
+```
+Usuario: "¿cuánto le debo a Caty?"
+Bot: "Le debes $99.000 a Caty 💰"  ← formato chileno + emoji
+```
+
+**Principios aplicados**:
+- ✅ Respuestas más cálidas y expresivas con emojis
+- ✅ Formato de números localizado para Chile (punto/coma)
+- ✅ Tono amigable y cercano tipo WhatsApp
+- ✅ Mantiene respuestas directas y concisas de v2.4.2
+
+---
+
+## [2025-10-28] - v2.4.2 - 🎨 Mejora de UX: Respuestas directas y concisas del AI Agent
+
+### 🎯 Problema Identificado
+
+**Bot demasiado técnico**: El AI Agent generaba respuestas verbosas con explicaciones técnicas innecesarias, confundiendo a los usuarios.
+
+**Ejemplo del problema**:
+```
+Usuario: "¿cuánto le debo a Caty?"
+Bot (ANTES): "Gracias. Encontré a Caty en tus contactos (Coincidencia alta).
+
+Sobre cuánto le debes a Caty:
+• La consulta actual para calcular el total que debes a Caty arrojó un valor nulo.
+Eso sugiere que, en los préstamos registrados, no hay préstamos en los que tú seas
+prestatario y Caty sea prestamista (o no hay registros activos de ese tipo)..."
+
+Usuario esperaba: "Le debes $99,000 a Caty"
+```
+
+**Causa**: System prompt contenía:
+- Estructura completa de BD con UUIDs y foreign keys
+- Instrucciones técnicas para desarrolladores
+- "Si hay error, explica qué pasó y cómo solucionarlo" → explicaciones técnicas
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/_shared/openai-client.ts`
+
+#### 1. Nueva sección "ESTILO DE RESPUESTA" al inicio del prompt (línea 406)
+
+```typescript
+🎯 ESTILO DE RESPUESTA - CRÍTICO - LEE ESTO PRIMERO:
+1. Responde DIRECTAMENTE y CONCISO, como un asistente amigable en WhatsApp
+2. NO expliques el proceso técnico, SQL, validaciones, o detalles de implementación
+3. Si ejecutaste funciones exitosamente, solo comunica el RESULTADO FINAL
+4. Ejemplo CORRECTO para "¿cuánto le debo a Caty?": "Le debes $99,000 a Caty"
+5. Ejemplo INCORRECTO: "La consulta actual para calcular el total que debes arrojó..."
+6. Si hay error, solo di "No pude procesar eso. ¿Puedes reformular?" SIN detalles técnicos
+7. Tu audiencia son usuarios finales, NO desarrolladores
+```
+
+#### 2. Modificada sección "RESPUESTAS" (línea 503)
+
+**Antes**:
+```
+- Si hay error, explica qué pasó y cómo solucionarlo
+```
+
+**Después**:
+```
+- Si hay error, di simplemente "No pude completar eso" sin explicar detalles técnicos
+```
+
+### 📦 Cambios Aplicados
+
+```bash
+supabase/functions/_shared/openai-client.ts
+  - Línea 406-413: Nueva sección crítica de estilo de respuesta
+  - Línea 503: Simplificada instrucción de manejo de errores
+```
+
+### ✅ Resultado Esperado
+
+**Después del fix**:
+```
+Usuario: "¿cuánto le debo a Caty?"
+Bot: "Le debes $99,000 a Caty"
+```
+
+**Principios aplicados**:
+- ✅ Respuestas directas y concisas
+- ✅ Sin jerga técnica (SQL, validaciones, estructura de BD)
+- ✅ Tono conversacional apropiado para WhatsApp
+- ✅ Errores comunicados de forma simple
+
+---
+
+## [2025-10-28] - v2.4.1 - 🐛 Fix crítico: Deduplicación de mensajes WhatsApp
+
+### 🎯 Problema Identificado
+
+**Bug en deduplicación**: La lógica de deduplicación de webhooks de WhatsApp bloqueaba TODOS los mensajes del mismo usuario enviados dentro de 2 minutos, en lugar de solo bloquear reintentos duplicados del mismo mensaje.
+
+**Impacto**:
+- Usuarios no podían enviar 2 mensajes seguidos en menos de 2 minutos
+- Mensajes legítimos eran silenciosamente descartados sin explicación
+- El AI Agent nunca recibía el mensaje → sin logs, sin respuesta
+
+**Síntomas observados**:
+- Usuario envía "¿cuánto le debo a Caty?" → sin respuesta
+- Logs muestran: `[Dedup] Skipping duplicate message` sin comparar wa_message_id
+- Logs de `ai-agent` vacíos (nunca fue invocado)
+
+### 🐛 Causa Raíz
+
+Código en `wa_webhook/index.ts` línea 180 (antes del fix):
+
+```typescript
+for (const recent of recentMessages) {
+  const recentAge = Date.now() - new Date(recent.created_at).getTime();
+
+  // ❌ BLOQUEABA cualquier mensaje reciente del mismo usuario
+  if (recentAge < 2 * 60 * 1000) { // 2 minutos
+    return { success: true, skipped: true, reason: 'duplicate_retry' };
+  }
+}
+```
+
+**Problema**: El código calculaba `messageContent` para comparar (línea 168) pero NUNCA lo usaba. Solo comparaba el tiempo.
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/wa_webhook/index.ts` (línea 181)
+
+```typescript
+// ✅ Ahora solo bloquea si es EL MISMO wa_message_id
+if (recentAge < 2 * 60 * 1000 && recent.wa_message_id === message.id) {
+  console.log('[Dedup] Found exact duplicate message (same wa_message_id)');
+  return { success: true, skipped: true, reason: 'duplicate_retry' };
+}
+```
+
+**Cambio clave**: Agregada comparación `&& recent.wa_message_id === message.id` para verificar que sea el MISMO mensaje (verdadero reintento de WhatsApp).
+
+### 📦 Archivos Modificados
+
+```bash
+supabase/functions/wa_webhook/index.ts
+  - Línea 181: Agregada comparación de wa_message_id
+  - Línea 182: Actualizado mensaje de log para claridad
+```
+
+### ✅ Resultado
+
+- ✅ Usuarios pueden enviar múltiples mensajes seguidos sin restricción
+- ✅ Reintentos legítimos de WhatsApp (mismo wa_message_id) siguen siendo bloqueados
+- ✅ AI Agent recibe todos los mensajes únicos correctamente
+
+### 🧪 Testing
+
+**Antes del fix:**
+```
+Usuario: "cuanto le debo a caty?"
+Webhook: [Dedup] Skipping duplicate (mensaje anterior hace 30s)
+AI Agent: (sin logs, nunca invocado)
+Resultado: Sin respuesta
+```
+
+**Después del fix:**
+```
+Usuario: "cuanto le debo a caty?"
+Webhook: Procesando mensaje (wa_message_id diferente)
+AI Agent: Procesando pregunta → Generando respuesta
+Resultado: Respuesta exitosa
+```
+
+---
+
+## [2025-01-27] - v2.0.13 - 🔧 Maintenance: Actualización completa de schema-provider.ts
+
+### 🎯 Objetivo
+
+Sincronizar el schema hardcoded en `schema-provider.ts` con el schema real de la base de datos para asegurar que el AI Agent genere SQL correcto y pueda aprovechar todas las columnas y features disponibles.
+
+### 🐛 Problema Identificado
+
+**Schema Drift**: El schema hardcoded en `supabase/functions/_shared/schema-provider.ts` estaba desactualizado respecto al schema real de PostgreSQL, causando que el AI Agent:
+- No conociera columnas importantes como `borrower_confirmed`, `item_description`, `bank_accounts`
+- Tuviera información incompleta de enum values (solo 3 de 9 status values)
+- No pudiera generar queries que utilicen features existentes en la DB
+
+**Ejemplo de discrepancia crítica:**
+
+```typescript
+// ❌ Schema hardcoded ANTES (incompleto)
+{
+  name: 'status',
+  description: 'Estado: "active", "completed", "cancelled"'
+}
+
+// ✅ Schema real en PostgreSQL
+enum agreement_status {
+  'active', 'completed', 'cancelled',
+  'overdue', 'returned', 'due_soon',
+  'paused', 'pending_confirmation', 'rejected'
+}
+```
+
+**Impacto**: El AI Agent no podía:
+- Filtrar préstamos vencidos (`status = 'overdue'`)
+- Detectar préstamos pendientes de confirmación
+- Acceder a información bancaria para respuestas sobre pagos
+- Usar campos como `borrower_confirmed` para validar estado de confirmación
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/_shared/schema-provider.ts`
+
+#### 1. Tabla `agreements` - Agregadas 13 columnas faltantes
+
+```typescript
+// Columnas agregadas:
+- contact_id (UUID, nullable) - LEGACY borrower
+- lender_contact_id (UUID, nullable) - LEGACY lender
+- created_by (UUID) - Usuario que creó el registro
+- title (VARCHAR) - Título del acuerdo
+- item_description (TEXT) - Descripción de objeto prestado
+- currency (VARCHAR) - Moneda del préstamo
+- start_date (DATE) - Fecha de inicio
+- borrower_confirmed (BOOLEAN) - Si borrower confirmó
+- borrower_confirmed_at (TIMESTAMPTZ) - Timestamp de confirmación
+- borrower_rejection_reason (VARCHAR) - Razón de rechazo
+- borrower_rejection_details (TEXT) - Detalles del rechazo
+- updated_at (TIMESTAMPTZ) - Última actualización
+- completed_at (TIMESTAMPTZ) - Timestamp de completado
+
+// Status enum actualizado:
+description: 'Estado: "active" (activo sin devolver), "completed" (devuelto/pagado),
+"cancelled", "overdue" (vencido), "returned", "due_soon" (próximo a vencer),
+"paused", "pending_confirmation" (esperando confirmación del borrower),
+"rejected" (rechazado por borrower)'
+```
+
+#### 2. Tabla `tenant_contacts` - Agregadas 9 columnas faltantes
+
+```typescript
+// Columnas agregadas:
+- preferred_channel (VARCHAR) - Canal preferido: whatsapp/telegram/auto
+- whatsapp_id (VARCHAR) - ID de WhatsApp
+- opt_in_date (TIMESTAMPTZ) - Fecha de opt-in WhatsApp
+- opt_out_date (TIMESTAMPTZ) - Fecha de opt-out WhatsApp
+- telegram_opt_in_status (opt_in_status) - Estado opt-in Telegram
+- timezone (VARCHAR) - Zona horaria
+- preferred_language (VARCHAR) - Idioma preferido
+- metadata (JSONB) - Metadata adicional
+- updated_at (TIMESTAMPTZ) - Última actualización
+```
+
+#### 3. Tabla `contact_profiles` - Agregadas 8 columnas faltantes
+
+```typescript
+// Columnas agregadas:
+- telegram_username (VARCHAR) - Username de Telegram
+- telegram_first_name (VARCHAR) - Nombre en Telegram
+- telegram_last_name (VARCHAR) - Apellido en Telegram
+- first_name (VARCHAR) - Nombre del contacto
+- last_name (VARCHAR) - Apellido del contacto
+- email (VARCHAR) - Email del contacto
+- bank_accounts (JSONB) - Array de cuentas bancarias (rut, bank_name, account_type, etc)
+- verified (BOOLEAN) - Si el perfil está verificado
+- updated_at (TIMESTAMPTZ) - Última actualización
+```
+
+### 📦 Cambios Aplicados
+
+- ✅ `schema-provider.ts` actualizado con 30+ columnas faltantes
+- ✅ Enum values documentados completamente (9 status values en lugar de 3)
+- ✅ Descripciones semánticas agregadas para todas las columnas nuevas
+- ✅ Regla agregada en `.claude/CLAUDE.md` para prevenir schema drift futuro
+
+### 📋 Nueva Regla de Mantenimiento
+
+**Agregada en `.claude/CLAUDE.md` (Regla #4):**
+
+> **CRÍTICO - Schema Awareness**: Cada vez que modifiques las tablas `agreements`, `tenant_contacts` o `contact_profiles` (agregar/eliminar columnas, cambiar tipos, modificar enums), DEBES actualizar inmediatamente `supabase/functions/_shared/schema-provider.ts` para reflejar los cambios. El AI Agent depende de este archivo para generar SQL correcto. Schema desactualizado = queries incorrectos.
+
+### 🎯 Resultado Esperado
+
+**Antes de la actualización:**
+```
+Usuario: "muéstrame préstamos vencidos"
+AI Agent: ❌ Genera SQL sin filtro 'overdue' (no conoce el enum value)
+→ Query incorrecto o incompleto
+```
+
+**Después de la actualización:**
+```
+Usuario: "muéstrame préstamos vencidos"
+AI Agent: ✅ Genera SQL con WHERE status = 'overdue'
+→ Query correcto utilizando enum value existente
+```
+
+**Queries ahora posibles:**
+- "préstamos pendientes de confirmación" → `status = 'pending_confirmation'`
+- "mostrar cuenta bancaria de contacto X" → acceso a `contact_profiles.bank_accounts`
+- "préstamos de objetos sin monto" → filtro `amount IS NULL` + `item_description IS NOT NULL`
+- "préstamos que Caty no ha confirmado" → `borrower_confirmed IS NULL` + lender filter
+
+### 🔍 Notas Técnicas
+
+**Por qué schema hardcoded en lugar de dinámico:**
+
+1. **Semántica de negocio**: PostgreSQL `information_schema` solo da tipos y nombres, NO significado. El LLM necesita saber que `tenant_contact_id = contactId` significa "yo recibí el préstamo" vs `lender_tenant_contact_id = contactId` significa "yo presté".
+
+2. **Few-shot learning**: Los ejemplos en el schema son tan importantes como las columnas. Le enseñan al LLM patrones específicos del dominio.
+
+3. **Performance**: Leer `information_schema` en cada request agrega latencia. Schema hardcoded es instantáneo.
+
+**Trade-off aceptado:**
+- **Pro**: Control total de semántica, ejemplos contextuales, zero latency
+- **Contra**: Requiere disciplina para mantener sincronizado con migraciones
+
+**Mitigación**: Regla #4 en CLAUDE.md obliga a actualizar schema-provider.ts cada vez que se toca la DB.
+
+### 📊 Impacto
+
+- **30+ columnas** ahora disponibles para el AI Agent
+- **9 status values** correctamente documentados (vs 3 anteriores)
+- **Queries más precisos**: AI puede usar campos de confirmación, rechazo, banking info
+- **Prevención futura**: Regla en CLAUDE.md previene drift en próximas migraciones
+
+---
+
+## [2025-01-27] - v2.0.12 - 🐛 Bugfix: Semicolon en SQL generado causa syntax error
+
+### 🐛 Problema Identificado
+
+**Síntoma**: Después de aplicar fixes v2.0.9 (async webhook), v2.0.10 (multi-turn) y v2.0.11 (regex LIKE), el AI Agent aún falla al ejecutar SQL con error:
+
+```
+[SQL Agent] Generated SQL: SELECT SUM(a.amount) AS total_owed_to_caty FROM agreements a WHERE a.tenant_id = '...' AND a.type = 'loan' AND a.status = 'active' AND a.tenant_contact_id = '...' AND a.lender_tenant_contact_id = '...';
+
+[SQL Agent] Execution error: {
+  code: "P0001",
+  message: 'SQL syntax error: syntax error at or near ";"'
+}
+```
+
+**Queries rechazados**: SQL válido generado por `sql-generator.ts` que termina con `;` (semicolon) - una práctica estándar en SQL.
+
+**Causa Raíz**: En `safe_execute_query()`, envolvemos el query del usuario en una subquery para aplicar el LIMIT:
+
+```sql
+-- Línea 100 de safe_execute_query (migraciones 029, 035)
+EXECUTE format(
+  'SELECT COALESCE(json_agg(row_to_json(t)), ''[]''::json) FROM (%s LIMIT %s) t',
+  sql_query,
+  max_rows
+) INTO result;
+```
+
+**El bug**: Si `sql_query` termina con `;`, el formato resultante es:
+
+```sql
+SELECT ... FROM (
+  SELECT SUM(...) FROM agreements WHERE ...;  -- ❌ semicolon dentro de subquery
+  LIMIT 100
+) t
+```
+
+PostgreSQL **no permite semicolons dentro de subqueries**. El `;` es un **statement terminator** válido solo al final de un statement completo, no dentro de expresiones.
+
+**Por qué falla**:
+1. SQL Generator produce: `"SELECT SUM(...) FROM agreements WHERE ...;"`
+2. `safe_execute_query()` envuelve en subquery: `SELECT ... FROM (...; LIMIT 100) t`
+3. PostgreSQL parser encuentra `;` dentro de subquery → **syntax error**
+4. Exception lanzada → Attempt 1/3 falla → retry loop
+5. AI Agent retorna error al usuario
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/migrations/036_safe_execute_query_strip_semicolon.sql`
+
+Agregamos paso de limpieza que elimina el semicolon del final antes de ejecutar (líneas 107-112):
+
+```sql
+-- =====================================================
+-- FIX v2.0.12: Eliminar semicolon del final antes de ejecutar
+-- =====================================================
+-- Esto evita errores cuando envolvemos el query en una subquery
+-- Ejemplo: SELECT ... FROM (SELECT ... ; LIMIT 100) t
+--                                      ↑ causa syntax error
+cleaned_query := rtrim(sql_query, ';');
+
+-- =====================================================
+-- EJECUTAR QUERY CON LÍMITE DE FILAS
+-- =====================================================
+BEGIN
+  -- Ejecutar query limpio (sin semicolon)
+  EXECUTE format(
+    'SELECT COALESCE(json_agg(row_to_json(t)), ''[]''::json) FROM (%s LIMIT %s) t',
+    cleaned_query,  -- ✅ Ahora sin semicolon
+    max_rows
+  ) INTO result;
+```
+
+**Por qué esta solución es correcta**:
+1. **Preserva validación de seguridad**: El semicolon se elimina DESPUÉS de todas las validaciones de seguridad (líneas 67-70 detectan múltiples statements)
+2. **Compatible con ambos estilos**: Acepta queries con o sin semicolon final
+3. **Simple y segura**: Usa `rtrim(sql_query, ';')` - función built-in de PostgreSQL
+4. **No rompe lógica existente**: Solo afecta la ejecución, no las validaciones
+
+### 📦 Cambios Aplicados
+
+- ✅ Migración 036 aplicada a base de datos
+- ✅ Función `safe_execute_query()` actualizada con strip de semicolon
+- ✅ Comentario de función actualizado con versión v2.0.12
+- ✅ Variable `cleaned_query` agregada a DECLARE block
+
+### 🎯 Resultado Esperado
+
+**Antes del fix**:
+```
+SQL Agent genera: "SELECT SUM(a.amount) FROM agreements WHERE tenant_id = '...';"
+→ safe_execute_query valida: ✅ PASS (LIKE 'select%', no keywords peligrosos)
+→ safe_execute_query ejecuta: SELECT ... FROM (...; LIMIT 100) t
+→ PostgreSQL error: "syntax error at or near ;"
+→ Attempt 1/3 falla → retry → falla → falla
+→ AI Agent retorna error al usuario
+```
+
+**Después del fix**:
+```
+SQL Agent genera: "SELECT SUM(a.amount) FROM agreements WHERE tenant_id = '...';"
+→ safe_execute_query valida: ✅ PASS (todas las validaciones)
+→ safe_execute_query limpia: rtrim(..., ';') → "SELECT SUM(...) WHERE ..."
+→ safe_execute_query ejecuta: SELECT ... FROM (...) LIMIT 100) t
+→ PostgreSQL ejecuta exitosamente
+→ Retorna resultados: [{"total_owed_to_caty": 5000}]
+→ AI Agent genera respuesta: "Le debes $5,000 a Caty"
+```
+
+### 🔍 Notas Técnicas
+
+**PostgreSQL Semicolon Semantics**:
+- `;` es un **statement terminator** usado por clientes SQL (psql, pgAdmin)
+- El **parser de PostgreSQL** NO requiere `;` para ejecutar queries
+- `;` **no puede aparecer** dentro de expresiones, subqueries, o CTEs
+- Solo es válido al **final de un statement completo**
+
+**Por qué SQL Generator produce queries con semicolon**:
+- GPT-5-nano aprende de código SQL estándar que incluye `;`
+- Es una práctica común en ejemplos de SQL y documentación
+- No es un error del generador - es SQL válido en contexto normal
+
+**Alternativas consideradas**:
+1. ❌ Modificar prompt del SQL Generator para no generar `;`
+   - Frágil: LLM puede incluir `;` de todas formas
+   - Requiere re-engineering del prompt
+2. ❌ Usar `string_agg` en lugar de subquery con LIMIT
+   - Más complejo y menos legible
+   - No maneja correctamente casos edge (0 resultados)
+3. ✅ Strip semicolon en `safe_execute_query()` antes de ejecutar
+   - Simple, robusto, no afecta otras capas
+   - Maneja ambos casos: con y sin semicolon
+
+### 📋 Testing Recomendado
+
+1. **Test básico de suma**:
+   ```
+   Usuario: "cuanto le debo a caty?"
+   Esperado: "Le debes $X en Y préstamos" (respuesta específica con números)
+   ```
+
+2. **Test multi-turn completo**:
+   - Verificar logs de AI Agent muestran múltiples iterations
+   - Verificar `search_contacts` ejecuta correctamente
+   - Verificar `query_loans_dynamic` ejecuta correctamente
+   - Verificar respuesta final es útil y específica
+
+3. **Test async webhook**:
+   - Verificar tiempo de respuesta del webhook < 2 segundos
+   - Verificar no hay mensajes duplicados enviados a WhatsApp
+   - Verificar deduplicación funciona en ventana de 2 minutos
+
+### 🎓 Fixes Acumulados (v2.0.9 → v2.0.12)
+
+Este fix completa una serie de 4 correcciones críticas:
+
+1. **v2.0.9**: WhatsApp retry loop → Async fire-and-forget + deduplicación
+2. **v2.0.10**: AI Agent one-shot limitation → Multi-turn tool calling loop
+3. **v2.0.11**: PostgreSQL POSIX regex bug → LIKE pattern matching
+4. **v2.0.12**: Semicolon in subquery → Strip antes de ejecutar
+
+**Estado actual**: Sistema completo de AI Agent con SQL dinámico FUNCIONAL ✅
+
+---
+
+## [2025-01-27] - v2.0.11 - 🐛 Bugfix: Regex en safe_execute_query rechazando SELECTs válidos
+
+### 🐛 Problema Identificado
+
+**Síntoma**: AI Agent ejecutaba `query_loans_dynamic` correctamente (multi-turn funcionando), pero **todos los intentos de ejecutar SQL fallaban** con error:
+
+```
+[SQL Agent] Execution error: {
+  code: "P0001",
+  message: "Only SELECT queries are allowed. Query starts with: SELECT SUM(a.amount)..."
+}
+```
+
+**Queries rechazados**: Queries SELECT válidos como `"SELECT SUM(a.amount) FROM agreements WHERE..."` eran incorrectamente marcados como no-SELECT.
+
+**Causa Raíz**: Bug en el regex de validación de `safe_execute_query()` (migración 029, línea 43):
+
+```sql
+-- ❌ BUGGY (migración 029)
+normalized_sql := lower(trim(sql_query));
+
+IF normalized_sql !~ '^\s*select' THEN
+  RAISE EXCEPTION 'Only SELECT queries are allowed...';
+END IF;
+```
+
+**El bug**: PostgreSQL **NO soporta `\s` como shorthand para whitespace** en POSIX regex. El patrón `'^\s*select'` busca literalmente el carácter backslash seguido de 's' (`\s`), NO "cero o más espacios".
+
+**Por qué falla**:
+1. Input: `"SELECT SUM(a.amount)..."`
+2. Después de `lower(trim())`: `"select sum(a.amount)..."`
+3. El regex `'^\s*select'` NO coincide porque busca el string literal `"\s"`
+4. La validación falla → Exception lanzada → Query rechazado
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/migrations/035_fix_safe_execute_query_regex.sql`
+
+Reemplazado regex con patrón `LIKE` más simple y rápido (línea 37):
+
+```sql
+-- ✅ FIX (migración 035)
+normalized_sql := lower(trim(sql_query));
+
+-- Usar LIKE en lugar de regex (más simple y rápido)
+IF NOT (normalized_sql LIKE 'select%') THEN
+  RAISE EXCEPTION 'Only SELECT queries are allowed...';
+END IF;
+```
+
+**Por qué esta solución es mejor**:
+1. **Correcta**: Después de `lower(trim())`, el query DEBE empezar con `"select"`
+2. **Más simple**: No requiere regex engine
+3. **Más rápida**: `LIKE` es más eficiente que regex matching
+4. **Más legible**: Patrón `'select%'` es más claro que `'^\s*select'`
+
+**Mejoras adicionales** en la migración 035:
+- Cambiado `\b` (word boundary, no soportado en POSIX) a `\y` (word boundary de PostgreSQL) en todos los regex
+- Validaciones 2, 3, 7 ahora usan `\y` para correctitud en PostgreSQL
+
+### 📦 Cambios Aplicados
+
+- ✅ Migración 035 aplicada a base de datos
+- ✅ Función `safe_execute_query()` actualizada con fix de regex
+- ✅ Comentario de función actualizado con versión v2.0.11
+
+### 🎯 Resultado Esperado
+
+**Antes del fix**:
+```
+SQL Agent genera: "SELECT SUM(a.amount) FROM agreements WHERE..."
+→ safe_execute_query rechaza: "Only SELECT queries are allowed"
+→ Attempt 1/3 falla
+→ Attempt 2/3 falla
+→ Attempt 3/3 falla
+→ AI Agent retorna error genérico al usuario
+```
+
+**Después del fix**:
+```
+SQL Agent genera: "SELECT SUM(a.amount) FROM agreements WHERE..."
+→ safe_execute_query valida: normalized_sql LIKE 'select%' → ✅ PASS
+→ Ejecuta query exitosamente
+→ Retorna resultados
+→ AI Agent genera respuesta útil: "Le debes $5,000 a Caty en 2 préstamos"
+```
+
+### 🔍 Notas Técnicas
+
+**PostgreSQL POSIX Regex vs Perl Regex**:
+- `\s` (whitespace): NO soportado en POSIX regex
+- `\b` (word boundary): NO soportado en POSIX regex
+- `\y` (word boundary): Extensión de PostgreSQL para word boundaries
+- `[[:space:]]`: Clase POSIX para whitespace (alternativa a `\s`)
+
+**Por qué no usar `[[:space:]]`**:
+Después de `lower(trim(sql_query))`, el query NO tiene espacios al inicio, entonces:
+- `'^\s*select'` busca: inicio + cero o más espacios + "select"
+- `'select%'` busca: inicio con "select" + cualquier cosa
+
+Como `trim()` elimina espacios al inicio, `LIKE 'select%'` es equivalente y más simple.
+
+**Seguridad**: El fix NO compromete la seguridad. La validación sigue siendo estricta:
+- Solo permite queries que empiecen con "select" (lowercase)
+- Todas las demás validaciones (keywords destructivos, funciones peligrosas, tenant_id, etc.) permanecen intactas
+
+### 📋 Testing Recomendado
+
+1. **Probar query_loans_dynamic**:
+   - "cuanto le debo a caty?"
+   - Verificar que NO falle con error de "Only SELECT queries allowed"
+
+2. **Verificar en logs**:
+   - ✅ `[SQL Agent] Generated SQL: SELECT SUM...`
+   - ✅ `[SQL Agent] Syntax validation PASSED`
+   - ✅ `[SQL Agent] LLM validation PASSED`
+   - ✅ `[SQL Agent] Executing SQL via safe_execute_query()...`
+   - ✅ Sin errores de "Only SELECT queries allowed"
+   - ✅ Query ejecuta exitosamente
+
+3. **Verificar respuesta final**:
+   - AI Agent debe generar respuesta útil con datos de préstamos
+   - No debe retornar mensaje genérico de error
+
+---
+
+## [2025-01-27] - v2.0.10 - 🚀 Feature: Multi-Turn Tool Calling en AI Agent
+
+### 🐛 Problema Identificado
+
+**Síntoma**: AI Agent ejecutaba `search_contacts("Caty")` pero no continuaba con `query_loans_dynamic` para obtener los préstamos. Guardaba mensaje con `contentLength: 0` y no generaba respuesta útil.
+
+**Causa Raíz**: La arquitectura del AI Agent solo permitía **UNA ronda de tool calling**. Después de ejecutar funciones, retornaba inmediatamente sin dar oportunidad a OpenAI de:
+1. Procesar los resultados de las funciones
+2. Decidir ejecutar funciones adicionales (encadenamiento)
+3. Generar respuesta final en lenguaje natural
+
+**Flujo antiguo (One-shot)**:
+```
+Usuario: "cuanto le debo a caty?"
+→ OpenAI: tool_calls=[search_contacts('Caty')]
+→ Ejecutar search_contacts → {id: abc-123, name: "Caty"}
+→ ❌ RETORNAR INMEDIATAMENTE (sin respuesta útil)
+→ contentLength: 0
+```
+
+**Evidencia del problema**:
+- Logs mostraban `[AI-Agent] Executing function: search_contacts`
+- Logs mostraban `[ContactFuzzySearch] Found matches: 1`
+- Pero mensaje final tenía `contentLength: 0`
+- No se ejecutaba `query_loans_dynamic` después
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/ai-agent/index.ts`
+
+Implementado **loop multi-turn de tool calling** que permite múltiples rondas de interacción con OpenAI (líneas 149-294):
+
+#### Arquitectura Multi-Turn
+
+```typescript
+let currentMessages = messages;
+let allToolResults: any[] = [];
+let maxIterations = 5; // Límite de seguridad
+
+while (iteration < maxIterations) {
+  // 1. Llamar a OpenAI
+  const response = await openai.chatCompletion({
+    messages: currentMessages,
+    tools,
+    tool_choice: 'auto'
+  });
+
+  const finishReason = choice.finish_reason;
+
+  // 2. Caso: OpenAI quiere ejecutar funciones
+  if (finishReason === 'tool_calls') {
+    // Agregar mensaje del assistant con tool_calls
+    currentMessages.push({
+      role: 'assistant',
+      tool_calls: assistantMessage.tool_calls
+    });
+
+    // Ejecutar funciones y agregar resultados
+    for (const toolCall of assistantMessage.tool_calls) {
+      const result = await executeFunction(...);
+
+      // Agregar resultado como mensaje "tool"
+      currentMessages.push({
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        content: JSON.stringify(result)
+      });
+    }
+
+    // Continuar al siguiente iteration
+    continue;
+  }
+
+  // 3. Caso: OpenAI generó respuesta final
+  if (finishReason === 'stop') {
+    finalResponse = assistantMessage.content;
+    break; // Salir del loop
+  }
+}
+```
+
+#### Flujo Nuevo (Multi-turn)
+
+**Ejemplo: "cuanto le debo a caty?"**
+
+```
+RONDA 1:
+→ OpenAI: tool_calls=[search_contacts('Caty')]
+→ Ejecutar search_contacts → {id: abc-123, name: "Caty"}
+→ Agregar resultado al historial como mensaje "tool"
+→ finish_reason: "tool_calls" → CONTINUAR
+
+RONDA 2:
+→ OpenAI (con contexto de búsqueda): tool_calls=[query_loans_dynamic({
+    contact_id: 'abc-123',
+    direction: 'yo_debo'
+  })]
+→ Ejecutar query_loans_dynamic → {loans: [...], total: 5000}
+→ Agregar resultado al historial
+→ finish_reason: "tool_calls" → CONTINUAR
+
+RONDA 3:
+→ OpenAI (con contexto completo): "Le debes $5,000 a Caty en 2 préstamos activos"
+→ finish_reason: "stop" → TERMINAR
+→ Guardar respuesta y retornar
+```
+
+#### Características Clave
+
+1. **Loop con límite de seguridad**: Máximo 5 iteraciones para evitar loops infinitos
+
+2. **Manejo de finish_reason**:
+   - `"tool_calls"`: Continuar loop, ejecutar funciones
+   - `"stop"`: Salir del loop, retornar respuesta final
+   - Otros: Salir con mensaje de fallback
+
+3. **Tracking completo**:
+   - `allToolResults[]`: Lista de todas las funciones ejecutadas
+   - `totalTokensUsed`: Suma de tokens de todas las rondas
+   - `iterations`: Número de rondas realizadas
+
+4. **Logs detallados**:
+   ```
+   [AI-Agent] Tool calling iteration 1/5
+   [AI-Agent] Finish reason: tool_calls
+   [AI-Agent] Tool calls detected: 1
+   [AI-Agent] Executing function: search_contacts
+   [AI-Agent] Tool calling iteration 2/5
+   [AI-Agent] Finish reason: tool_calls
+   [AI-Agent] Executing function: query_loans_dynamic
+   [AI-Agent] Tool calling iteration 3/5
+   [AI-Agent] Finish reason: stop
+   [AI-Agent] Final response generated (length: 87)
+   ```
+
+### 📦 Edge Functions Desplegadas
+
+- ✅ `ai-agent` (nueva versión) - Loop multi-turn implementado
+
+### 🎯 Resultado Esperado
+
+**Antes del fix**:
+```
+Usuario: "cuanto le debo a caty?"
+Bot: [Sin respuesta o respuesta genérica]
+```
+
+**Después del fix**:
+```
+Usuario: "cuanto le debo a caty?"
+Bot: "Le debes $5,000 a Caty en 2 préstamos activos"
+```
+
+### 🔍 Notas Técnicas
+
+**OpenAI Tool Calling Protocol**:
+- Cuando `finish_reason === "tool_calls"`, el modelo NO genera texto final
+- El campo `message.content` suele ser `null` o `""`
+- Se espera que agregues resultados al historial y hagas una nueva llamada
+- El modelo usa los resultados para decidir próximas acciones
+
+**Formato de mensajes con role "tool"**:
+```typescript
+{
+  role: 'tool',
+  tool_call_id: 'call_abc123', // ID del tool call original
+  content: JSON.stringify(result) // Resultado como JSON string
+}
+```
+
+**Performance**:
+- Cada ronda agrega ~1-3 segundos de latencia
+- Típicamente 2-3 rondas para tareas complejas
+- Con async architecture (v2.0.9), no bloquea webhook
+
+### 📋 Testing Recomendado
+
+Probar preguntas que requieren múltiples tool calls:
+
+1. **Búsqueda + Query**:
+   - "cuanto le debo a caty?"
+   - "cuanto me debe juan?"
+   - "que prestamos tengo con maria?"
+
+2. **Verificar en logs**:
+   - ✅ `[AI-Agent] Tool calling iteration 1/5`
+   - ✅ `[AI-Agent] Tool calling iteration 2/5`
+   - ✅ `[AI-Agent] Final response generated (length: >0)`
+   - ✅ Respuesta tiene contenido útil
+
+3. **Verificar en response**:
+   ```json
+   {
+     "success": true,
+     "response": "Le debes $5,000 a Caty...",
+     "actions": [
+       {"function_name": "search_contacts", ...},
+       {"function_name": "query_loans_dynamic", ...}
+     ],
+     "iterations": 3
+   }
+   ```
+
+---
+
+## [2025-01-27] - v2.0.9 - 🐛 Bugfix Crítico: Loop de Reintentos de WhatsApp por Timeout
+
+### 🐛 Problema Identificado
+
+**Síntoma**: Usuario envía 1 mensaje, bot responde múltiples veces (5+ mensajes) sin interacción adicional del usuario.
+
+**Causa Raíz**: WhatsApp Business API reintenta webhooks si no recibe `200 OK` en <20 segundos, pero el AI Agent tarda 60-80 segundos en procesar. Cada reintento también sufre timeout, creando un **loop infinito de reintentos**.
+
+**Evidencia del problema**:
+```
+ai-agent execution_time_ms: 64722ms (~64 segundos)
+wa_webhook execution_time_ms: 11176ms (esperando con await fetch)
+→ WhatsApp NO recibe 200 OK en <20s
+→ WhatsApp reintenta con NUEVO wa_message_id
+→ Webhook procesa reintento como mensaje nuevo
+→ Loop infinito
+```
+
+**Datos observados**:
+- 1 mensaje de usuario a las 13:55
+- 4+ mensajes inbound con diferentes `wa_message_id` (13:40, 13:55, 16:46, 16:54)
+- Múltiples respuestas del bot (14:08, 16:16, 16:46, 17:30, 18:55)
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/wa_webhook/index.ts`
+
+#### 1. **Deduplicación de Mensajes** (líneas 155-192)
+
+Detecta reintentos de WhatsApp verificando mensajes recientes del mismo remitente:
+
+```typescript
+// WhatsApp reintenta con NUEVO wa_message_id, así que no podemos usar ese campo
+// Verificamos mensajes recientes del mismo remitente en ventana de 2 minutos
+const { data: recentMessages } = await supabase
+  .from('whatsapp_messages')
+  .select('id, created_at, wa_message_id')
+  .eq('direction', 'inbound')
+  .gte('created_at', new Date(Date.now() - 5 * 60 * 1000).toISOString())
+  .order('created_at', { ascending: false })
+  .limit(50);
+
+for (const recent of recentMessages) {
+  const recentAge = Date.now() - new Date(recent.created_at).getTime();
+  if (recentAge < 2 * 60 * 1000) { // 2 minutos
+    console.log('[Dedup] Skipping duplicate message (WhatsApp retry)');
+    return { success: true, skipped: true, reason: 'duplicate_retry' };
+  }
+}
+```
+
+#### 2. **Arquitectura Asíncrona - Fire-and-Forget** (3 ubicaciones)
+
+Convertidas **3 llamadas a AI Agent** de síncronas (`await fetch`) a asíncronas (`fetch().then()`):
+
+**a) Mensajes de texto** (líneas 433-523):
+```typescript
+// ✅ ANTES: await fetch() bloqueaba webhook 60-80s
+// ✅ AHORA: fetch().then() permite retornar 200 OK inmediatamente
+
+fetch(`${SUPABASE_URL}/functions/v1/ai-agent`, { /* ... */ })
+  .then(async (aiResponse) => {
+    const aiResult = await aiResponse.json();
+
+    // Enviar respuesta al usuario DESPUÉS de procesar
+    const windowManager = new WhatsAppWindowManager(/* ... */);
+    await windowManager.sendMessage(tenant.id, contact.id, finalMessage);
+
+    console.log('[AI-AGENT] Response sent to user (async)');
+  })
+  .catch(error => {
+    // Manejar errores y notificar al usuario
+    console.error('[AI-AGENT] Error:', error);
+  });
+
+// ✅ Webhook retorna 200 OK inmediatamente
+console.log('[AI-AGENT] Message queued for async processing');
+```
+
+**b) Audio transcription** (líneas 1775-1856):
+- Mismo patrón fire-and-forget
+- WhatsAppWindowManager envía respuesta cuando transcripción está lista
+
+**c) Image analysis** (líneas 1936-2015):
+- GPT Vision analiza imagen en background
+- Respuesta enviada al usuario cuando análisis completa
+
+### 📦 Edge Functions Desplegadas
+
+- ✅ `wa_webhook` (nueva versión) - Deduplicación + AI Agent asíncrono
+
+### 🎯 Resultado Esperado
+
+**Antes del fix**:
+```
+Usuario envía mensaje → Webhook espera 60-80s → Timeout WhatsApp
+→ WhatsApp reintenta → Webhook espera 60-80s → Timeout WhatsApp
+→ Loop infinito → 5+ respuestas del bot
+```
+
+**Después del fix**:
+```
+Usuario envía mensaje → Webhook retorna 200 OK en <2s
+→ AI Agent procesa en background (60-80s)
+→ Bot responde UNA VEZ cuando AI Agent termina
+→ Si WhatsApp reintenta → Deduplicación detecta y skips
+```
+
+### 🔍 Notas Técnicas
+
+**WhatsApp Business API Timeout**: 20 segundos máximo para responder al webhook
+
+**Fire-and-Forget Pattern**:
+- `fetch()` sin `await` permite continuar ejecución
+- `.then()` maneja respuesta en callback asíncrono
+- Webhook retorna `200 OK` inmediatamente
+
+**WhatsAppWindowManager**: Utilizado en callbacks `.then()` para enviar respuestas desde background processing, evitando depender del ciclo de vida del webhook.
+
+**Ventana de Deduplicación**: 2 minutos (120 segundos) - suficiente para cubrir reintentos típicos de WhatsApp.
+
+### 📋 Testing Recomendado
+
+1. Enviar mensaje que requiera AI Agent (ej: "cuanto le debo a caty?")
+2. Verificar en logs:
+   - ✅ `[AI-AGENT] Message queued for async processing`
+   - ✅ `[AI-AGENT] Response sent to user (async)`
+   - ✅ webhook execution_time < 5 segundos
+   - ✅ ai-agent execution_time ~60-80 segundos (sin bloquear webhook)
+3. Verificar que bot responde **UNA SOLA VEZ**
+4. Verificar en `whatsapp_messages`: solo 1 mensaje inbound por mensaje de usuario
+
+---
+
+## [2025-01-27] - v2.0.8 - 🤖 Hotfix: AI Agent - Schema de DB en System Prompt
+
+### 🐛 Problema Identificado
+
+El AI Agent NO ejecutaba `query_loans_dynamic` correctamente porque el **system prompt** carecía del schema de base de datos. Sin conocer las tablas y columnas disponibles, el Agent no podía:
+- Decidir cuándo usar `query_loans_dynamic` vs queries pre-definidas
+- Entender qué información estaba disponible en la DB
+- Interpretar correctamente preguntas sobre préstamos y contactos
+
+**Síntoma observado**:
+```
+Usuario: "cuanto le debo a caty?"
+AI Agent:
+  1. ✅ Ejecuta search_contacts("Caty") → Encuentra contacto
+  2. ❌ NO ejecuta query_loans_dynamic
+  3. ❌ Respuesta vacía (contentLength: 0)
+```
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/_shared/openai-client.ts`
+
+Agregada nueva sección "ESTRUCTURA DE BASE DE DATOS" al system prompt (`createSystemMessage()`) que incluye:
+
+1. **Tablas principales** con columnas clave:
+   - `agreements` (préstamos): tenant_id, tenant_contact_id, lender_tenant_contact_id, amount, due_date, status, type
+   - `tenant_contacts` (contactos): id, name, contact_profile_id, whatsapp_id
+   - `contact_profiles` (perfiles globales): phone_e164, first_name, last_name, email, bank_accounts
+
+2. **Relaciones clave** (Foreign Keys):
+   - agreements.tenant_contact_id → tenant_contacts.id (borrower)
+   - agreements.lender_tenant_contact_id → tenant_contacts.id (lender)
+   - tenant_contacts.contact_profile_id → contact_profiles.id
+
+3. **Direcciones de préstamo** (CRÍTICO para correctitud):
+   - "Yo presté" / "Me deben" → WHERE lender_tenant_contact_id = mi_contact_id
+   - "Yo recibí" / "Debo" → WHERE tenant_contact_id = mi_contact_id
+
+### 📦 Edge Functions Desplegadas
+
+- ✅ `ai-agent` (v161) - System prompt actualizado con schema de DB
+
+### 🎯 Resultado Esperado
+
+Con el schema en el system prompt, el AI Agent ahora puede:
+- ✅ Entender qué tablas y columnas existen
+- ✅ Decidir correctamente cuándo usar `query_loans_dynamic`
+- ✅ Interpretar correctamente la dirección de préstamos (yo presto vs yo recibo)
+- ✅ Generar respuestas completas para preguntas como "cuánto le debo a X"
+
+### 🔍 Notas Técnicas
+
+**Diferencia con Schema Provider**:
+- **System Prompt** (este fix): Schema básico para que AI Agent DECIDA qué función llamar
+- **Schema Provider** (`schema-provider.ts`): Schema detallado para que SQL Agent GENERE SQL
+
+Ambos son necesarios:
+1. System prompt → AI Agent decide: "necesito usar query_loans_dynamic"
+2. Schema Provider → SQL Agent genera: "SELECT SUM(amount) FROM agreements WHERE..."
+
+### 📋 Testing Recomendado
+
+Probar las siguientes preguntas para validar el fix:
+- "cuanto le debo a caty?" → Debe ejecutar query_loans_dynamic con dirección correcta
+- "cuanto me debe juan?" → Debe ejecutar query_loans_dynamic con dirección inversa
+- "que prestamos tengo vencidos?" → Debe ejecutar query_loans_dynamic con filtro de fecha
+
+---
+
 ## [2025-01-27] - v2.4.0 - 🏗️ Arquitectura: Deprecación de Sistema Legacy de Contactos
 
 ### 🎯 Objetivo
