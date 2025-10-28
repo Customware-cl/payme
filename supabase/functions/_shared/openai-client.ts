@@ -521,7 +521,17 @@ Tablas principales:
    - lender_tenant_contact_id: UUID → Prestamista (lender - quien PRESTA el dinero)
    - amount: NUMERIC → Monto del préstamo
    - due_date: DATE → Fecha de vencimiento
-   - status: TEXT → 'active', 'completed', 'cancelled', 'overdue'
+   - status: TEXT → Estados del préstamo:
+     * 'active': Activo, sin devolver, no vencido, confirmado
+     * 'overdue': Vencido, sin devolver (actualizado automáticamente por función de BD)
+     * 'due_soon': Vence en menos de 24 horas (actualizado automáticamente)
+     * 'pending_confirmation': Esperando confirmación del borrower
+     * 'rejected': Rechazado por borrower (mostrar SOLO si se pregunta específicamente)
+     * 'completed': Devuelto/pagado completamente
+     * 'returned': Alias de completed
+     * 'cancelled': Cancelado por acuerdo mutuo
+     * 'paused': Pausado temporalmente
+   - borrower_confirmed: BOOLEAN → true (confirmado), false (rechazado), null (pendiente)
    - type: TEXT → 'loan' (préstamos) o 'service' (servicios)
    - created_at: TIMESTAMP
    - completed_at: TIMESTAMP
@@ -607,7 +617,11 @@ Día de la semana: ${new Date().toLocaleDateString('es-CL', { weekday: 'long' })
                 type: 'string',
                 enum: ['all', 'pending', 'balance'],
                 description: `Tipo de consulta GENERAL (sin contactos específicos):
-- "balance": Resumen GENERAL de totales sin especificar personas (ej: "cuánto me deben EN TOTAL", "balance global", "resumen general")
+- "balance": Balance DETALLADO categorizado por vencimiento y confirmación:
+  * ME DEBEN (prestado): vencidos, por vencer (24h), sin confirmar, al día + total
+  * DEBO (recibido): vencidos, por vencer (24h), al día + total
+  * Balance neto (diferencia entre ambos)
+  Usar para: "mi balance", "balance general", "cuánto me deben en total", "resumen de préstamos"
 - "pending": Lista de vencidos/próximos a vencer SIN filtrar por contacto (ej: "qué está vencido", "alertas generales")
 - "all": Lista completa de todos los préstamos activos (ej: "todos mis préstamos")
 

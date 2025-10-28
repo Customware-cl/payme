@@ -2,6 +2,192 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-28] - v2.5.0 - 🎯 Balance Detallado: Categorización por Status y Vencimiento
+
+### 🎯 Objetivo
+
+Expandir el AI Agent para manejar todos los **9 status de préstamos** (anteriormente solo 4) y generar balances detallados categorizados por vencimiento y confirmación.
+
+### 🐛 Problema Identificado
+
+**Schema Drift**: El AI Agent solo conocía 4 de los 9 status disponibles en la base de datos:
+- **Conocidos**: `active`, `completed`, `cancelled`, `overdue`
+- **Ignorados**: `due_soon`, `pending_confirmation`, `rejected`, `returned`, `paused`
+
+**Balance Simple**: La función `queryLoansBalance()` solo mostraba totales agregados sin desglose:
+```
+Me deben: $50.000
+Debo: $30.000
+Balance neto: +$20.000
+```
+
+**Consecuencias**:
+- ❌ No se podía identificar préstamos vencidos específicamente
+- ❌ No se veían préstamos sin confirmar (pending_confirmation)
+- ❌ No se distinguía entre préstamos al día vs por vencer
+- ❌ Usuarios no tenían visibilidad de urgencia de pagos
+
+### ✅ Solución Implementada
+
+#### 1. **Balance Detallado con Categorización** (`ai-agent/index.ts`)
+
+**Nueva función `queryLoansBalance()`** (líneas 681-861):
+- Query con **todos los status relevantes**: `active`, `overdue`, `due_soon`, `pending_confirmation`
+- **Categorización automática** por status
+- **Bidireccional**: ME DEBEN (prestado) + DEBO (recibido)
+- **Formato chileno** integrado: $99.000 (punto para miles)
+
+**Categorías para ME DEBEN (prestado)**:
+- 🔴 Vencidos (`status = 'overdue'`)
+- ⚠️ Por vencer (24h) (`status = 'due_soon'`)
+- ⏳ Sin confirmar (`status = 'pending_confirmation'`)
+- ✅ Al día (`status = 'active'`)
+
+**Categorías para DEBO (recibido)**:
+- 🔴 Vencidos (`status = 'overdue'`)
+- ⚠️ Por vencer (24h) (`status = 'due_soon'`)
+- ✅ Al día (`status = 'active'`)
+
+**Helper function**: `formatChileanNumber()` para formato consistente con v2.4.3
+
+---
+
+#### 2. **Expansión de Documentación de Status** (`openai-client.ts`)
+
+**Línea 524-534**: Documentación completa de los 9 status:
+```typescript
+- status: TEXT → Estados del préstamo:
+  * 'active': Activo, sin devolver, no vencido, confirmado
+  * 'overdue': Vencido, sin devolver (automático por función de BD)
+  * 'due_soon': Vence en < 24h (automático)
+  * 'pending_confirmation': Esperando confirmación del borrower
+  * 'rejected': Rechazado por borrower (mostrar SOLO si se pregunta)
+  * 'completed': Devuelto/pagado completamente
+  * 'returned', 'cancelled', 'paused'
+- borrower_confirmed: BOOLEAN → true (confirmado), false (rechazado), null
+```
+
+**Línea 620-624**: Actualizada tool description de `query_type='balance'`:
+```typescript
+- "balance": Balance DETALLADO categorizado por vencimiento y confirmación:
+  * ME DEBEN: vencidos, por vencer (24h), sin confirmar, al día + total
+  * DEBO: vencidos, por vencer (24h), al día + total
+  * Balance neto (diferencia entre ambos)
+```
+
+---
+
+#### 3. **RLS Policies y Ejemplos SQL** (`schema-provider.ts`)
+
+**Líneas 445-455**: Nuevas RLS policies sobre status:
+```typescript
+`STATUS de préstamos - IMPORTANTE:`,
+`  - 'active': Préstamo activo, sin devolver, no vencido, confirmado`,
+`  - 'overdue': Vencido sin devolver (automático)`,
+`  - 'due_soon': Vence en < 24h (automático)`,
+`  - 'pending_confirmation': Esperando confirmación del borrower`,
+`  - 'rejected': Rechazado (mostrar SOLO si se pregunta)`,
+`Para balance: filtrar por IN ('active', 'overdue', 'due_soon', 'pending_confirmation')`,
+`Para vencidos: usar status = 'overdue' (NO due_date < CURRENT_DATE)`
+```
+
+**Líneas 513-575**: Nuevos ejemplos SQL:
+1. **Balance detallado con CTE** - Categorización por status usando CASE + GROUP BY
+2. **Préstamos pendientes de confirmación** - Filtro por `status = 'pending_confirmation'`
+
+---
+
+### 📦 Archivos Modificados
+
+```bash
+supabase/functions/ai-agent/index.ts
+  - Línea 681-861: Reescrita queryLoansBalance() con categorización
+  - +180 líneas de código
+
+supabase/functions/_shared/openai-client.ts
+  - Línea 524-534: Expandida documentación de 9 status
+  - Línea 620-624: Actualizada tool description
+
+supabase/functions/_shared/schema-provider.ts
+  - Línea 445-455: Agregadas RLS policies sobre status
+  - Línea 513-575: Agregados 2 ejemplos SQL
+```
+
+### ✅ Resultado
+
+**Antes de v2.5.0**:
+```
+Usuario: "mi balance"
+Bot:
+💰 Resumen de préstamos activos
+
+📤 Prestado (me deben): $50.000
+📥 Recibido (debo): $30.000
+
+✅ Balance neto: +$20.000 a tu favor
+```
+
+**Después de v2.5.0**:
+```
+Usuario: "mi balance"
+Bot:
+💰 Balance Detallado
+
+📤 ME DEBEN (Prestado)
+  🔴 Vencidos: $15.000 (3 préstamos)
+  ⚠️  Por vencer (24h): $5.000 (1 préstamo)
+  ⏳ Sin confirmar: $10.000 (2 préstamos)
+  ✅ Al día: $20.000 (4 préstamos)
+  ──────────────────────
+  💰 Total: $50.000
+
+📥 DEBO (Recibido)
+  🔴 Vencidos: $8.000 (2 préstamos)
+  ⚠️  Por vencer (24h): $2.000 (1 préstamo)
+  ✅ Al día: $20.000 (3 préstamos)
+  ──────────────────────
+  💵 Total: $30.000
+
+💵 Balance Neto: +$20.000 a tu favor ✅
+```
+
+### 🎯 Beneficios
+
+- ✅ **Visibilidad completa** de préstamos vencidos separados
+- ✅ **Alertas tempranas** de préstamos por vencer (24h)
+- ✅ **Control de confirmaciones** (pending_confirmation)
+- ✅ **Bidireccional** (me deben + debo) con mismas categorías
+- ✅ **Formato chileno** consistente ($99.000)
+- ✅ **Emojis contextuales** (🔴 vencidos, ⚠️ urgente, ✅ al día)
+- ✅ **Backward compatible** - queries antiguas siguen funcionando
+
+### 📊 Casos de Uso Nuevos
+
+**Balance sin préstamos**:
+```
+📤 ME DEBEN (Prestado)
+  _No hay préstamos otorgados_
+
+📥 DEBO (Recibido)
+  _No hay préstamos recibidos_
+```
+
+**Solo vencidos**:
+```
+📤 ME DEBEN (Prestado)
+  🔴 Vencidos: $25.000 (5 préstamos)
+  ──────────────────────
+  💰 Total: $25.000
+```
+
+**Préstamos sin confirmar (query_loans_dynamic)**:
+```
+Usuario: "muéstrame préstamos sin confirmar"
+Bot: [Lista de préstamos con status = 'pending_confirmation']
+```
+
+---
+
 ## [2025-10-28] - v2.4.3 - ✨ Mejoras de UX: Emojis y formato de números chileno
 
 ### 🎯 Mejoras Solicitadas

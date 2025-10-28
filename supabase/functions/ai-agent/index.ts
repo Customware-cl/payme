@@ -146,109 +146,149 @@ serve(async (req: Request) => {
     // Obtener herramientas (functions)
     const tools = OpenAIClient.createTools();
 
-    // Llamar a OpenAI con function calling
-    const completionResult = await openai.chatCompletion({
-      model: 'gpt-5-nano', // gpt-5-nano es 12x más barato que gpt-4o-mini
-      messages,
-      tools,
-      tool_choice: 'auto',
-      // temperature: 0.7, // GPT-5 nano solo acepta temperature=1 (default)
-      max_completion_tokens: 1000, // GPT-5 usa max_completion_tokens
-      verbosity: 'medium', // GPT-5: respuestas balanceadas (no muy largas ni muy cortas)
-      reasoning_effort: 'low' // GPT-5: razonamiento ligero para respuestas rápidas
-    });
+    // ========================================
+    // MULTI-TURN TOOL CALLING LOOP
+    // ========================================
+    // OpenAI puede requerir múltiples rondas de tool calling para completar una tarea.
+    // Por ejemplo: "cuanto le debo a caty?" requiere:
+    //   RONDA 1: search_contacts("Caty") → {id: abc-123}
+    //   RONDA 2: query_loans_dynamic(contact_id=abc-123) → {total: 5000}
+    //   RONDA 3: Generar respuesta final en lenguaje natural
 
-    if (!completionResult.success || !completionResult.data) {
-      throw new Error(completionResult.error || 'Error en OpenAI completion');
-    }
+    let currentMessages = messages;
+    let allToolResults: any[] = [];
+    let totalTokensUsed = 0;
+    let maxIterations = 5; // Límite de seguridad para evitar loops infinitos
+    let iteration = 0;
+    let finalResponse = '';
 
-    const response = completionResult.data;
-    const choice = response.choices[0];
-    const assistantMessage = choice.message;
+    while (iteration < maxIterations) {
+      iteration++;
+      console.log(`[AI-Agent] Tool calling iteration ${iteration}/${maxIterations}`);
 
-    // Verificar si hay tool calls
-    if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-      console.log('[AI-Agent] Tool calls detected:', assistantMessage.tool_calls.length);
+      // Llamar a OpenAI
+      const completionResult = await openai.chatCompletion({
+        model: 'gpt-5-nano', // gpt-5-nano es 12x más barato que gpt-4o-mini
+        messages: currentMessages,
+        tools,
+        tool_choice: 'auto',
+        // temperature: 0.7, // GPT-5 nano solo acepta temperature=1 (default)
+        max_completion_tokens: 1000, // GPT-5 usa max_completion_tokens
+        verbosity: 'medium', // GPT-5: respuestas balanceadas (no muy largas ni muy cortas)
+        reasoning_effort: 'low' // GPT-5: razonamiento ligero para respuestas rápidas
+      });
 
-      // Procesar cada tool call
-      const toolResults = [];
+      if (!completionResult.success || !completionResult.data) {
+        throw new Error(completionResult.error || 'Error en OpenAI completion');
+      }
 
-      for (const toolCall of assistantMessage.tool_calls) {
-        const functionName = toolCall.function.name;
-        const functionArgs = JSON.parse(toolCall.function.arguments);
+      const response = completionResult.data;
+      const choice = response.choices[0];
+      const assistantMessage = choice.message;
+      const finishReason = choice.finish_reason;
 
-        console.log('[AI-Agent] Executing function:', functionName, functionArgs);
+      totalTokensUsed += response.usage?.total_tokens || 0;
 
-        // Ejecutar la función correspondiente
-        const result = await executeFunction(
-          supabase,
-          openai,
+      console.log(`[AI-Agent] Finish reason: ${finishReason}`);
+
+      // Caso 1: Assistant quiere ejecutar funciones
+      if (finishReason === 'tool_calls' && assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+        console.log(`[AI-Agent] Tool calls detected: ${assistantMessage.tool_calls.length}`);
+
+        // Agregar mensaje del assistant al historial
+        currentMessages.push({
+          role: 'assistant',
+          content: assistantMessage.content || null,
+          tool_calls: assistantMessage.tool_calls
+        });
+
+        // Ejecutar cada tool call y agregar resultados
+        for (const toolCall of assistantMessage.tool_calls) {
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+
+          console.log(`[AI-Agent] Executing function: ${functionName}`, functionArgs);
+
+          // Ejecutar la función
+          const result = await executeFunction(
+            supabase,
+            openai,
+            tenant_id,
+            contact_id,
+            functionName,
+            functionArgs
+          );
+
+          // Agregar resultado a la lista completa
+          allToolResults.push({
+            tool_call_id: toolCall.id,
+            function_name: functionName,
+            result
+          });
+
+          // Agregar resultado como mensaje "tool" para OpenAI
+          currentMessages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result)
+          });
+
+          console.log(`[AI-Agent] Function ${functionName} executed successfully`);
+        }
+
+        // Continuar al siguiente iteration (OpenAI procesará los resultados)
+        continue;
+      }
+
+      // Caso 2: Assistant generó respuesta final (finish_reason: "stop")
+      if (finishReason === 'stop') {
+        finalResponse = assistantMessage.content || '';
+        console.log(`[AI-Agent] Final response generated (length: ${finalResponse.length})`);
+
+        // Guardar mensaje final del asistente
+        await memory.saveMessage(
           tenant_id,
           contact_id,
-          functionName,
-          functionArgs
+          'assistant',
+          finalResponse,
+          {
+            tool_calls_count: allToolResults.length,
+            iterations: iteration
+          }
         );
 
-        toolResults.push({
-          tool_call_id: toolCall.id,
-          function_name: functionName,
-          result
-        });
+        // Si no hay respuesta de texto pero hay tool results, generar mensaje de fallback
+        if (!finalResponse && allToolResults.length > 0) {
+          const firstMessageResult = allToolResults.find(r => r.result.message);
+          if (firstMessageResult) {
+            finalResponse = firstMessageResult.result.message;
+          }
+        }
+
+        break; // Salir del loop
       }
 
-      // Guardar respuesta del asistente con tool calls
-      await memory.saveMessage(
-        tenant_id,
-        contact_id,
-        'assistant',
-        assistantMessage.content || '',
-        {
-          tool_calls: assistantMessage.tool_calls,
-          tool_results: toolResults
-        }
-      );
-
-      // Construir mensaje de respuesta
-      // Si el asistente no generó texto, usar el mensaje del primer tool result
-      let responseMessage = assistantMessage.content || '';
-
-      if (!responseMessage && toolResults.length > 0) {
-        const firstMessageResult = toolResults.find(r => r.result.message);
-        if (firstMessageResult) {
-          responseMessage = firstMessageResult.result.message;
-        }
-      }
-
-      // Retornar resultado con acciones ejecutadas
-      return new Response(
-        JSON.stringify({
-          success: true,
-          response: responseMessage || 'Procesando...',
-          actions: toolResults,
-          needs_confirmation: toolResults.some(r => r.result.needs_confirmation),
-          tokens_used: response.usage.total_tokens
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      // Caso 3: Otros finish_reason (length, content_filter, etc.)
+      console.log(`[AI-Agent] Unexpected finish_reason: ${finishReason}`);
+      finalResponse = assistantMessage.content || 'No pude completar la solicitud.';
+      break;
     }
 
-    // Sin tool calls, solo respuesta de texto
-    const responseText = assistantMessage.content || '';
+    // Verificar si llegamos al límite de iteraciones
+    if (iteration >= maxIterations) {
+      console.warn(`[AI-Agent] Reached max iterations (${maxIterations}), stopping loop`);
+      finalResponse = finalResponse || 'La solicitud tomó demasiado tiempo. Por favor intenta de nuevo.';
+    }
 
-    // Guardar respuesta del asistente
-    await memory.saveMessage(
-      tenant_id,
-      contact_id,
-      'assistant',
-      responseText
-    );
-
+    // Retornar resultado final
     return new Response(
       JSON.stringify({
         success: true,
-        response: responseText,
-        actions: [],
-        tokens_used: response.usage.total_tokens
+        response: finalResponse || 'Procesado correctamente',
+        actions: allToolResults,
+        needs_confirmation: allToolResults.some(r => r.result?.needs_confirmation),
+        tokens_used: totalTokensUsed,
+        iterations: iteration
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
@@ -639,29 +679,37 @@ async function queryLoans(
 }
 
 /**
- * Query tipo 'balance': Resumen de totales prestados vs recibidos
+ * Query tipo 'balance': Balance detallado categorizado por vencimiento y confirmación
+ * Version 2.5.0 - Maneja los 9 status de préstamos (overdue, due_soon, pending_confirmation, active)
  */
 async function queryLoansBalance(
   supabase: any,
   tenantId: string,
   userTenantContactId: string
 ) {
-  // Préstamos otorgados (soy lender)
+  // Helper: Formatear número con punto para miles y coma para decimales (formato chileno)
+  const formatChileanNumber = (num: number): string => {
+    const parts = num.toFixed(0).split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return parts.join(',');
+  };
+
+  // 1. Query préstamos otorgados (soy lender) - TODOS LOS STATUS RELEVANTES
   const { data: lentLoans, error: lentError } = await supabase
     .from('agreements')
-    .select('amount')
+    .select('id, amount, status, due_date')
     .eq('tenant_id', tenantId)
     .eq('type', 'loan')
-    .eq('status', 'active')
+    .in('status', ['active', 'overdue', 'due_soon', 'pending_confirmation'])
     .eq('lender_tenant_contact_id', userTenantContactId);
 
-  // Préstamos recibidos (soy borrower)
+  // 2. Query préstamos recibidos (soy borrower)
   const { data: borrowedLoans, error: borrowedError } = await supabase
     .from('agreements')
-    .select('amount')
+    .select('id, amount, status, due_date')
     .eq('tenant_id', tenantId)
     .eq('type', 'loan')
-    .eq('status', 'active')
+    .in('status', ['active', 'overdue', 'due_soon'])
     .eq('tenant_contact_id', userTenantContactId);
 
   if (lentError || borrowedError) {
@@ -673,22 +721,120 @@ async function queryLoansBalance(
     };
   }
 
-  // Calcular totales
-  const totalLent = (lentLoans || []).reduce((sum, loan) => sum + Number(loan.amount), 0);
-  const totalBorrowed = (borrowedLoans || []).reduce((sum, loan) => sum + Number(loan.amount), 0);
+  // 3. Categorizar préstamos otorgados (me deben)
+  const lentCategorized = {
+    overdue: [] as any[],
+    due_soon: [] as any[],
+    pending_confirmation: [] as any[],
+    active: [] as any[]
+  };
+
+  (lentLoans || []).forEach((loan: any) => {
+    if (loan.status === 'overdue') {
+      lentCategorized.overdue.push(loan);
+    } else if (loan.status === 'due_soon') {
+      lentCategorized.due_soon.push(loan);
+    } else if (loan.status === 'pending_confirmation') {
+      lentCategorized.pending_confirmation.push(loan);
+    } else {
+      lentCategorized.active.push(loan);
+    }
+  });
+
+  // 4. Categorizar préstamos recibidos (debo)
+  const borrowedCategorized = {
+    overdue: [] as any[],
+    due_soon: [] as any[],
+    active: [] as any[]
+  };
+
+  (borrowedLoans || []).forEach((loan: any) => {
+    if (loan.status === 'overdue') {
+      borrowedCategorized.overdue.push(loan);
+    } else if (loan.status === 'due_soon') {
+      borrowedCategorized.due_soon.push(loan);
+    } else {
+      borrowedCategorized.active.push(loan);
+    }
+  });
+
+  // 5. Calcular totales por categoría
+  const sumAmounts = (loans: any[]) => loans.reduce((sum, loan) => sum + Number(loan.amount || 0), 0);
+
+  const lentTotals = {
+    overdue: sumAmounts(lentCategorized.overdue),
+    due_soon: sumAmounts(lentCategorized.due_soon),
+    pending_confirmation: sumAmounts(lentCategorized.pending_confirmation),
+    active: sumAmounts(lentCategorized.active)
+  };
+
+  const borrowedTotals = {
+    overdue: sumAmounts(borrowedCategorized.overdue),
+    due_soon: sumAmounts(borrowedCategorized.due_soon),
+    active: sumAmounts(borrowedCategorized.active)
+  };
+
+  const totalLent = lentTotals.overdue + lentTotals.due_soon + lentTotals.pending_confirmation + lentTotals.active;
+  const totalBorrowed = borrowedTotals.overdue + borrowedTotals.due_soon + borrowedTotals.active;
   const netBalance = totalLent - totalBorrowed;
 
-  // Formatear respuesta
-  let message = '💰 *Resumen de préstamos activos*\n\n';
-  message += `📤 Prestado (me deben): $${totalLent.toLocaleString('es-CL')}\n`;
-  message += `📥 Recibido (debo): $${totalBorrowed.toLocaleString('es-CL')}\n\n`;
+  // 6. Formatear mensaje con categorías
+  let message = '💰 *Balance Detallado*\n\n';
 
-  if (netBalance > 0) {
-    message += `✅ Balance neto: +$${netBalance.toLocaleString('es-CL')} a tu favor`;
-  } else if (netBalance < 0) {
-    message += `⚠️ Balance neto: -$${Math.abs(netBalance).toLocaleString('es-CL')} en tu contra`;
+  // ME DEBEN (Prestado)
+  message += '📤 *ME DEBEN (Prestado)*\n';
+
+  if (lentTotals.overdue > 0) {
+    message += `  🔴 Vencidos: $${formatChileanNumber(lentTotals.overdue)} (${lentCategorized.overdue.length} préstamos)\n`;
+  }
+  if (lentTotals.due_soon > 0) {
+    message += `  ⚠️  Por vencer (24h): $${formatChileanNumber(lentTotals.due_soon)} (${lentCategorized.due_soon.length} préstamos)\n`;
+  }
+  if (lentTotals.pending_confirmation > 0) {
+    message += `  ⏳ Sin confirmar: $${formatChileanNumber(lentTotals.pending_confirmation)} (${lentCategorized.pending_confirmation.length} préstamos)\n`;
+  }
+  if (lentTotals.active > 0) {
+    message += `  ✅ Al día: $${formatChileanNumber(lentTotals.active)} (${lentCategorized.active.length} préstamos)\n`;
+  }
+
+  if (totalLent === 0) {
+    message += '  _No hay préstamos otorgados_\n';
   } else {
-    message += `⚖️ Balance neto: $0 (equilibrado)`;
+    message += `  ──────────────────────\n`;
+    message += `  💰 *Total: $${formatChileanNumber(totalLent)}*\n`;
+  }
+
+  message += '\n';
+
+  // DEBO (Recibido)
+  message += '📥 *DEBO (Recibido)*\n';
+
+  if (borrowedTotals.overdue > 0) {
+    message += `  🔴 Vencidos: $${formatChileanNumber(borrowedTotals.overdue)} (${borrowedCategorized.overdue.length} préstamos)\n`;
+  }
+  if (borrowedTotals.due_soon > 0) {
+    message += `  ⚠️  Por vencer (24h): $${formatChileanNumber(borrowedTotals.due_soon)} (${borrowedCategorized.due_soon.length} préstamos)\n`;
+  }
+  if (borrowedTotals.active > 0) {
+    message += `  ✅ Al día: $${formatChileanNumber(borrowedTotals.active)} (${borrowedCategorized.active.length} préstamos)\n`;
+  }
+
+  if (totalBorrowed === 0) {
+    message += '  _No hay préstamos recibidos_\n';
+  } else {
+    message += `  ──────────────────────\n`;
+    message += `  💵 *Total: $${formatChileanNumber(totalBorrowed)}*\n`;
+  }
+
+  message += '\n';
+
+  // Balance neto
+  if (netBalance > 0) {
+    message += `💵 *Balance Neto: +$${formatChileanNumber(netBalance)} a tu favor* ✅`;
+  } else if (netBalance < 0) {
+    message += `💵 *Balance Neto: -$${formatChileanNumber(Math.abs(netBalance))} en tu contra* ⚠️`;
+  } else {
+    message += `⚖️ *Balance Neto: $0 (equilibrado)*`;
   }
 
   return {
@@ -696,11 +842,17 @@ async function queryLoansBalance(
     message,
     needs_confirmation: false,
     data: {
-      total_lent: totalLent,
-      total_borrowed: totalBorrowed,
-      net_balance: netBalance,
-      lent_count: lentLoans?.length || 0,
-      borrowed_count: borrowedLoans?.length || 0
+      lent: {
+        categorized: lentCategorized,
+        totals: lentTotals,
+        total: totalLent
+      },
+      borrowed: {
+        categorized: borrowedCategorized,
+        totals: borrowedTotals,
+        total: totalBorrowed
+      },
+      net_balance: netBalance
     }
   };
 }
