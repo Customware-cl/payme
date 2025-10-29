@@ -280,6 +280,11 @@ serve(async (req: Request) => {
       finalResponse = finalResponse || 'La solicitud tomó demasiado tiempo. Por favor intenta de nuevo.';
     }
 
+    // Agregar indicador 🎤 para mensajes de audio
+    if (message_type === 'audio_transcription' && finalResponse) {
+      finalResponse = '🎤 ' + finalResponse;
+    }
+
     // Retornar resultado final
     return new Response(
       JSON.stringify({
@@ -402,7 +407,12 @@ async function executeFunction(
         break;
 
       case 'search_contacts':
-        result = await searchContacts(supabase, tenantId, args);
+        result = await searchContacts(
+          supabase,
+          tenantId,
+          args,
+          message_type === 'audio_transcription' ? 'audio' : 'text'
+        );
         break;
 
       case 'create_contact':
@@ -1461,17 +1471,44 @@ async function rescheduleLoan(
 /**
  * Buscar contactos
  */
+/**
+ * Buscar contactos con búsqueda fuzzy y fonética adaptativa
+ * v2.6.0: Agregado threshold adaptativo y búsqueda fonética para audio
+ */
 async function searchContacts(
   supabase: any,
   tenantId: string,
   args: {
     search_term: string;
-  }
+  },
+  messageSource: 'audio' | 'text' = 'text'  // ← NUEVO: Indicar origen del mensaje
 ) {
-  console.log('[searchContacts] Buscando:', args.search_term);
+  const isAudio = messageSource === 'audio';
 
-  // Búsqueda con threshold bajo (0.5) para capturar variantes
-  const result = await findContactByName(supabase, tenantId, args.search_term, 0.5);
+  console.log('[searchContacts] Buscando:', {
+    term: args.search_term,
+    source: messageSource,
+    isAudio
+  });
+
+  // THRESHOLD ADAPTATIVO según origen
+  // Audio: 0.4 base (más permisivo porque puede haber errores de transcripción)
+  // Texto: 0.5 base (threshold normal)
+  const threshold = isAudio ? 0.4 : 0.5;
+
+  // BÚSQUEDA FONÉTICA activada solo para audio
+  const usePhonetic = isAudio;
+
+  console.log('[searchContacts] Config:', { threshold, usePhonetic });
+
+  // Búsqueda con threshold y fonética según origen
+  const result = await findContactByName(
+    supabase,
+    tenantId,
+    args.search_term,
+    threshold,
+    usePhonetic  // ← NUEVO PARÁMETRO
+  );
 
   if (!result.success) {
     return {
@@ -1496,11 +1533,38 @@ async function searchContacts(
     };
   }
 
+  // LÓGICA ESPECIAL PARA AUDIO: Si hay múltiples matches pero uno tiene >85%, usar automáticamente
+  if (isAudio && matches.length > 1) {
+    // Ordenar por similitud descendente (ya está ordenado, pero por seguridad)
+    matches.sort((a, b) => b.similarity - a.similarity);
+
+    const best = matches[0];
+    const secondBest = matches[1];
+
+    // Si el mejor tiene ≥85% de similitud, usar automáticamente (evitar fricción)
+    if (best.similarity >= 0.85) {
+      console.log(`[searchContacts] Audio mode: Auto-selecting best match "${best.name}" (${(best.similarity * 100).toFixed(0)}%) over "${secondBest.name}" (${(secondBest.similarity * 100).toFixed(0)}%)`);
+
+      return {
+        success: true,
+        message: `✅ Encontrado: ${best.name}`,
+        needs_confirmation: false,
+        data: {
+          matches: [best],
+          best_match: best,
+          confidence: 'high',
+          auto_selected: true,
+          reason: 'high_similarity_audio'
+        }
+      };
+    }
+  }
+
   // Coincidencia exacta o muy alta (>0.95) → Confirmación automática
   if (matches.length === 1 && matches[0].similarity >= 0.95) {
     return {
       success: true,
-      message: `✅ Encontrado: ${matches[0].name} (similaridad: ${(matches[0].similarity * 100).toFixed(0)}%)`,
+      message: `✅ Encontrado: ${matches[0].name}`,
       needs_confirmation: false,
       data: {
         matches: [matches[0]],
@@ -1510,19 +1574,34 @@ async function searchContacts(
     };
   }
 
-  // Coincidencia parcial (0.8-0.95) → Pedir confirmación
-  if (matches.length === 1 && matches[0].similarity >= 0.8) {
-    return {
-      success: true,
-      message: `🤔 ¿Te refieres a "${matches[0].name}"? (similaridad: ${(matches[0].similarity * 100).toFixed(0)}%)`,
-      needs_confirmation: false,
-      data: {
-        matches: [matches[0]],
-        best_match: matches[0],
-        confidence: 'medium',
-        suggestion: 'confirm_or_create'
-      }
-    };
+  // Coincidencia parcial (0.8-0.95) → Para audio con >85% usamos directamente, para texto pedimos confirmación
+  if (matches.length === 1) {
+    if (isAudio && matches[0].similarity >= 0.85) {
+      // Audio con alta similitud → Usar directamente
+      return {
+        success: true,
+        message: `✅ Encontrado: ${matches[0].name}`,
+        needs_confirmation: false,
+        data: {
+          matches: [matches[0]],
+          best_match: matches[0],
+          confidence: 'high'
+        }
+      };
+    } else if (matches[0].similarity >= 0.8) {
+      // Texto o audio con similitud media → Pedir confirmación
+      return {
+        success: true,
+        message: `🤔 ¿Te refieres a "${matches[0].name}"? (similaridad: ${(matches[0].similarity * 100).toFixed(0)}%)`,
+        needs_confirmation: false,
+        data: {
+          matches: [matches[0]],
+          best_match: matches[0],
+          confidence: 'medium',
+          suggestion: 'confirm_or_create'
+        }
+      };
+    }
   }
 
   // Múltiples coincidencias → Mostrar candidatos

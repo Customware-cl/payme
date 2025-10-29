@@ -682,7 +682,7 @@ Día de la semana: ${new Date().toLocaleDateString('es-CL', { weekday: 'long' })
         type: 'function',
         function: {
           name: 'search_contacts',
-          description: '🔍 VERIFICACIÓN DE CONTACTOS (USA SIEMPRE ANTES DE create_loan/query_loans_dynamic con nombres). Busca contactos usando fuzzy matching para manejar apodos, variantes y errores de tipeo. Retorna candidatos con nivel de similaridad. OBLIGATORIO usar cuando el usuario menciona un nombre que no está exacto en CONTACTOS DISPONIBLES.',
+          description: '🔍 VERIFICACIÓN DE CONTACTOS (USA SIEMPRE ANTES DE create_loan/query_loans_dynamic con nombres). Busca contactos usando fuzzy matching para manejar apodos, variantes y errores de tipeo. Para mensajes de AUDIO 🎤 usa búsqueda fonética automática (Katy≈Caty, José≈Hosé) con threshold más permisivo (85%+ auto-selección). Retorna candidatos con nivel de similaridad. OBLIGATORIO usar cuando el usuario menciona un nombre que no está exacto en CONTACTOS DISPONIBLES.',
           parameters: {
             type: 'object',
             properties: {

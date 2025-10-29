@@ -1,9 +1,12 @@
 /**
  * Búsqueda fuzzy de contactos
  * Permite encontrar contactos aunque el nombre esté escrito de forma aproximada
+ *
+ * v2.6.0: Agregado soporte para búsqueda fonética en transcripciones de audio
  */
 
 import { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7';
+import { generatePhoneticVariants } from './phonetic-variants.ts';
 
 export interface ContactMatch {
   id: string;
@@ -87,12 +90,14 @@ function normalizeText(text: string): string {
 
 /**
  * Buscar contactos por nombre (fuzzy search)
+ * v2.6.0: Agregado soporte para búsqueda fonética adaptativa
  */
 export async function findContactByName(
   supabase: SupabaseClient,
   tenantId: string,
   searchName: string,
-  minSimilarity: number = 0.6
+  minSimilarity: number = 0.6,
+  usePhoneticVariants: boolean = false  // ← NUEVO: Activar búsqueda fonética
 ): Promise<{
   success: boolean;
   matches?: ContactMatch[];
@@ -102,7 +107,8 @@ export async function findContactByName(
     console.log('[ContactFuzzySearch] Searching for:', {
       tenantId,
       searchName,
-      minSimilarity
+      minSimilarity,
+      usePhoneticVariants
     });
 
     // Obtener todos los contactos del tenant (con JOIN a contact_profiles)
@@ -126,7 +132,16 @@ export async function findContactByName(
       };
     }
 
+    // Generar variantes fonéticas si está habilitado
     const normalizedSearch = normalizeText(searchName);
+    const searchVariants = usePhoneticVariants
+      ? generatePhoneticVariants(searchName)
+      : [normalizedSearch];
+
+    if (usePhoneticVariants) {
+      console.log('[ContactFuzzySearch] Generated phonetic variants:', searchVariants.slice(0, 10));
+    }
+
     const matches: ContactMatch[] = [];
 
     // Calcular similaridad para cada contacto
@@ -134,25 +149,40 @@ export async function findContactByName(
       if (!contact.name) continue;
 
       const normalizedContactName = normalizeText(contact.name);
-      const similarity = calculateSimilarity(normalizedSearch, normalizedContactName);
+
+      // Buscar mejor match entre todas las variantes fonéticas
+      let bestSimilarity = 0;
+      let matchedVariant = normalizedSearch;
+
+      for (const variant of searchVariants) {
+        const similarity = calculateSimilarity(variant, normalizedContactName);
+        if (similarity > bestSimilarity) {
+          bestSimilarity = similarity;
+          matchedVariant = variant;
+        }
+      }
 
       // Determinar tipo de match
       let matchType: 'exact' | 'fuzzy' | 'partial' = 'fuzzy';
-      if (similarity === 1.0) {
+      if (bestSimilarity === 1.0) {
         matchType = 'exact';
-      } else if (similarity >= 0.8) {
+      } else if (bestSimilarity >= 0.8) {
         matchType = 'partial';
       }
 
       // Solo incluir si supera el threshold
-      if (similarity >= minSimilarity) {
+      if (bestSimilarity >= minSimilarity) {
         matches.push({
           id: contact.id,
           name: contact.name,
           phone_e164: (contact as any).contact_profiles?.phone_e164 || '',
-          similarity,
+          similarity: bestSimilarity,
           match_type: matchType
         });
+
+        if (usePhoneticVariants && matchedVariant !== normalizedSearch) {
+          console.log(`[ContactFuzzySearch] Phonetic match: "${searchName}" → "${contact.name}" via variant "${matchedVariant}" (${(bestSimilarity * 100).toFixed(0)}%)`);
+        }
       }
     }
 

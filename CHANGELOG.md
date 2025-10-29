@@ -2,6 +2,235 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [2025-10-29] - v2.6.0 - 🎤 Búsqueda Fonética para Transcripciones de Audio
+
+### 🎯 Objetivo
+
+Mejorar la precisión de búsqueda de contactos cuando el usuario envía **mensajes de voz**, donde Whisper puede transcribir nombres con ortografía incorrecta pero fonéticamente correcta (ej: "Katy" → "Caty", "José" → "Hosé").
+
+### 🐛 Problema Identificado
+
+**Fricción innecesaria en búsquedas de audio**:
+
+Escenario actual:
+1. Usuario envía audio: *"¿Cuánta plata le debo a Katy?"*
+2. Whisper transcribe: "Katy" (con K)
+3. Base de datos tiene: "Caty" (con C)
+4. Bot encuentra 75% de similitud → **Pregunta confirmación**: "¿Te refieres a Caty?"
+5. Usuario debe responder manualmente (fricción innecesaria)
+
+**Problema raíz**: Whisper no puede determinar la ortografía correcta de nombres propios, solo transcribe fonéticamente. El sistema actual no diferencia entre errores de transcripción (audio) y errores de tipeo (texto).
+
+**Consecuencias**:
+- ❌ Confirmaciones innecesarias para nombres fonéticamente obvios
+- ❌ Experiencia de usuario degradada en mensajes de voz
+- ❌ No se aprovecha que "Katy" y "Caty" suenan idéntico en español
+
+### ✅ Solución Implementada
+
+#### 1. **Generador de Variantes Fonéticas** (`phonetic-variants.ts`)
+
+**Nuevo archivo**: `supabase/functions/_shared/phonetic-variants.ts` (~240 líneas)
+
+**Transformaciones fonéticas implementadas**:
+- **K/C/Qu**: Katy ↔ Caty ↔ Quaty, Carlos ↔ Karlos, Quique ↔ Kike
+- **Y/LL/I**: Yenny ↔ Jenny, Willy ↔ Wili ↔ Willi
+- **H silenciosa**: José ↔ Hosé, Elena ↔ Helena, Hernán ↔ Ernán
+- **Acentos**: María ↔ Maria, José ↔ Jose, Ramón ↔ Ramon
+- **S/Z (seseo)**: Susana ↔ Zuzana, González ↔ Gonzales
+- **B/V (betacismo)**: Victoria ↔ Bictoria, Víctor ↔ Bictor
+
+**Funciones principales**:
+```typescript
+// Genera hasta 20 variantes fonéticas ordenadas por probabilidad
+generatePhoneticVariants(name: string): string[]
+
+// Verifica si dos nombres son fonéticamente similares
+arePhoneticallySimilar(name1: string, name2: string): boolean
+```
+
+**Ejemplo de uso**:
+```typescript
+generatePhoneticVariants("Katy")
+// → ["katy", "caty", "kathi", "cathi", "kathy", "cathy", ...]
+```
+
+---
+
+#### 2. **Búsqueda Fonética en Contact Search** (`contact-fuzzy-search.ts`)
+
+**Modificación**: Función `findContactByName()` (líneas 95-206)
+
+**Nuevo parámetro**:
+```typescript
+usePhoneticVariants: boolean = false  // Activar búsqueda fonética
+```
+
+**Lógica implementada**:
+1. Si `usePhoneticVariants = true` → genera variantes fonéticas con `generatePhoneticVariants()`
+2. Compara **todas las variantes** contra nombres de contactos
+3. Retorna el match con **mayor similitud** entre todas las variantes
+4. Logs detallados: `"Phonetic match: 'Katy' → 'Caty' via variant 'caty' (95%)"`
+
+**Ejemplo**:
+```typescript
+// Audio: Usuario dice "Katy"
+findContactByName(supabase, tenantId, "Katy", 0.4, true)
+// Genera: ["katy", "caty", "kathi", ...]
+// Contacto en DB: "Caty"
+// Match: "caty" vs "caty" = 100% ✅
+```
+
+---
+
+#### 3. **Threshold Adaptativo según Origen** (`ai-agent/index.ts`)
+
+**Modificación**: Función `searchContacts()` (líneas 1464-1612)
+
+**Nuevo parámetro**:
+```typescript
+messageSource: 'audio' | 'text' = 'text'
+```
+
+**Threshold adaptativo** (líneas 1484-1492):
+```typescript
+// Audio: threshold más permisivo (errores de transcripción esperados)
+const threshold = isAudio ? 0.4 : 0.5;
+
+// Búsqueda fonética solo para audio
+const usePhonetic = isAudio;
+```
+
+**Lógica especial para audio con múltiples matches** (líneas 1526-1551):
+```typescript
+if (isAudio && matches.length > 1) {
+  const best = matches[0];  // Ordenados por similitud
+
+  // Si el mejor tiene ≥85% → auto-seleccionar (sin preguntar)
+  if (best.similarity >= 0.85) {
+    console.log(`Auto-selecting "${best.name}" (${best.similarity * 100}%)`);
+    return {
+      success: true,
+      message: `✅ Encontrado: ${best.name}`,
+      needs_confirmation: false,
+      auto_selected: true
+    };
+  }
+}
+```
+
+**Integración con message_type** (líneas 404-411):
+```typescript
+case 'search_contacts':
+  result = await searchContacts(
+    supabase,
+    tenantId,
+    args,
+    message_type === 'audio_transcription' ? 'audio' : 'text'  // ← Detecta origen
+  );
+  break;
+```
+
+---
+
+#### 4. **Indicador Visual para Audio** (`ai-agent/index.ts`)
+
+**Líneas 283-286**: Agrega emoji 🎤 al inicio de respuestas de audio
+
+```typescript
+// Agregar indicador 🎤 para mensajes de audio
+if (message_type === 'audio_transcription' && finalResponse) {
+  finalResponse = '🎤 ' + finalResponse;
+}
+```
+
+**Ejemplo**:
+```
+Usuario (audio): "¿Cuánto me debe Katy?"
+Bot: "🎤 Katy te debe $15.000 CLP (préstamo activo desde 2025-10-20)"
+```
+
+---
+
+#### 5. **Tool Description Actualizado** (`openai-client.ts`)
+
+**Línea 685**: Tool `search_contacts` ahora documenta búsqueda fonética:
+
+```typescript
+description: '🔍 VERIFICACIÓN DE CONTACTOS [...] Para mensajes de AUDIO 🎤 usa búsqueda fonética automática (Katy≈Caty, José≈Hosé) con threshold más permisivo (85%+ auto-selección). [...]'
+```
+
+---
+
+### 📊 Comparación Before/After
+
+#### Escenario: Usuario envía audio "¿Cuánto le debo a Katy?"
+
+**ANTES (v2.5.0)**:
+```
+1. Whisper transcribe: "Katy"
+2. DB tiene: "Caty"
+3. Fuzzy match: 75% de similitud
+4. Bot: "Encontré a 'Caty'. ¿Te refieres a ella?"
+5. Usuario: "Sí" (fricción innecesaria)
+```
+
+**DESPUÉS (v2.6.0)**:
+```
+1. Whisper transcribe: "Katy"
+2. Sistema detecta: message_type = 'audio_transcription'
+3. Genera variantes: ["katy", "caty", "kathi", ...]
+4. Match fonético: "caty" = "caty" = 100%
+5. Auto-selección: similitud ≥85%
+6. Bot: "🎤 Le debes $20.000 a Caty (vence 2025-11-05)"
+   (sin confirmación, respuesta directa)
+```
+
+---
+
+### 🔧 Archivos Modificados
+
+**Nuevos**:
+- `supabase/functions/_shared/phonetic-variants.ts` (240 líneas)
+
+**Modificados**:
+- `supabase/functions/_shared/contact-fuzzy-search.ts` (+50 líneas)
+  - Import de `generatePhoneticVariants()`
+  - Parámetro `usePhoneticVariants` en `findContactByName()`
+  - Loop de comparación de variantes (líneas 154-163)
+  - Logging de matches fonéticos (línea 184)
+
+- `supabase/functions/ai-agent/index.ts` (+20 líneas)
+  - Parámetro `messageSource` en `searchContacts()` (línea 1474)
+  - Threshold adaptativo (líneas 1484-1492)
+  - Lógica de auto-selección para audio ≥85% (líneas 1526-1551)
+  - Detección de `audio_transcription` en call site (líneas 404-411)
+  - Indicador 🎤 para respuestas de audio (líneas 283-286)
+
+- `supabase/functions/_shared/openai-client.ts` (+15 caracteres)
+  - Tool description de `search_contacts` (línea 685)
+
+---
+
+### 🎯 Resultados Esperados
+
+✅ **Menos fricción**: Auto-selección de contactos fonéticamente obvios (≥85%)
+✅ **Mejor UX en audio**: Respuestas directas sin confirmaciones innecesarias
+✅ **Manejo de variantes**: Katy/Caty, José/Hosé, Yenny/Jenny reconocidos automáticamente
+✅ **Indicador visual**: Emoji 🎤 identifica respuestas procesadas desde audio
+✅ **Backward compatible**: Búsqueda normal (threshold 0.5) para mensajes de texto
+
+---
+
+### 📝 Notas Técnicas
+
+- **Threshold conservador**: 85% para auto-selección (evita falsos positivos)
+- **Límite de variantes**: Máximo 20 variantes generadas (evita explosión combinatoria)
+- **Performance**: Variantes se generan una vez por búsqueda, todas comparadas en paralelo
+- **Logging**: Logs detallados en producción para debugging (`[ContactFuzzySearch] Phonetic match: ...`)
+
+---
+
 ## [2025-10-28] - v2.5.0 - 🎯 Balance Detallado: Categorización por Status y Vencimiento
 
 ### 🎯 Objetivo
