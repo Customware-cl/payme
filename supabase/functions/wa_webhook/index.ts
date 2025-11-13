@@ -376,23 +376,23 @@ async function processInboundMessage(
             interactiveResponse = {
               type: 'cta_url',
               body: {
-                text: '¡Hola! 👋 Soy tu asistente de préstamos.\n\nRegistra préstamos, ve su estado y gestiona tu información.\n\n⏱️ Válido por 30 días.'
+                text: '¡Hola! 👋 Te damos la bienvenida a Payme, tu asistente de préstamos.\n\nAquí puedes:\n✅ Registrar préstamos que hiciste o te hicieron\n✅ Ver el estado de tus préstamos\n✅ Recibir recordatorios de pago automáticos\n\nTodo lo controlas desde el siguiente enlace 👇\n\n⏱️ Válido por 30 días\n\n💡 Comandos útiles:\n• Escribe "estado" para ver tus préstamos activos\n• Escribe "menu" para obtener nuevamente este enlace'
               },
               action: {
                 name: 'cta_url',
                 parameters: {
-                  display_text: 'Ingresar al menú',
+                  display_text: 'Acceder a Payme',
                   url: menuUrl
                 }
               }
             };
           } else {
             console.error('[MENU_ACCESS] Error generating menu token:', tokenData);
-            responseMessage = '¡Hola! 👋 Soy tu asistente de préstamos.\n\nHubo un error generando tu acceso. Por favor intenta de nuevo.';
+            responseMessage = '¡Hola! 👋 Te damos la bienvenida a Payme.\n\nHubo un error generando tu acceso. Por favor intenta de nuevo escribiendo "menu".';
           }
         } catch (error) {
           console.error('[MENU_ACCESS] Exception generating menu access:', error);
-          responseMessage = '¡Hola! 👋 Soy tu asistente de préstamos.\n\nHubo un error generando tu acceso. Por favor intenta de nuevo.';
+          responseMessage = '¡Hola! 👋 Te damos la bienvenida a Payme.\n\nHubo un error generando tu acceso. Por favor intenta de nuevo escribiendo "menu".';
         }
       }
 

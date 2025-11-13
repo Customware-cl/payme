@@ -2,6 +2,49 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v2.7.1] - 2025-11-12 - 💬 Mejora de Mensaje de Bienvenida
+
+### 🎯 Cambios
+
+**Mensaje de bienvenida mejorado:**
+- Tono más amigable e invitador
+- Beneficios claros y específicos (registrar, ver estado, recordatorios)
+- Incluye comandos útiles para el usuario ("estado", "menu")
+- Botón renombrado de "Ingresar al menú" a "Acceder a Payme"
+
+**Texto anterior:**
+```
+¡Hola! 👋 Soy tu asistente de préstamos.
+Registra préstamos, ve su estado y gestiona tu información.
+⏱️ Válido por 30 días.
+```
+
+**Texto nuevo:**
+```
+¡Hola! 👋 Te damos la bienvenida a Payme, tu asistente de préstamos.
+
+Aquí puedes:
+✅ Registrar préstamos que hiciste o te hicieron
+✅ Ver el estado de tus préstamos
+✅ Recibir recordatorios de pago automáticos
+
+Todo lo controlas desde el siguiente enlace 👇
+
+⏱️ Válido por 30 días
+
+💡 Comandos útiles:
+• Escribe "estado" para ver tus préstamos activos
+• Escribe "menu" para obtener nuevamente este enlace
+```
+
+### 📝 Impacto
+
+- Mejor experiencia para nuevos usuarios (onboarding más claro)
+- Educación sobre comandos disponibles
+- Tono más profesional y acogedor
+
+---
+
 ## [v2.7.0] - 2025-11-12 - 🚧 Modo Simplificado: Desactivación Temporal de IA y Flujos
 
 ### 🎯 Objetivo
