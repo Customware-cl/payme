@@ -830,11 +830,9 @@ async function processInboundMessage(
         if (!isButtonAllowed) {
           console.log(`[BUTTON] Button "${buttonId}" is disabled`);
           responseMessage = 'Esta funcionalidad está temporalmente desactivada. 🚧\n\nPuedes:\n📊 Escribir "estado" para ver tus préstamos\n🌐 Escribir "menu" para acceder al portal web';
-          break; // Salir sin procesar el botón
-        }
-
-        // Procesar según botón
-        switch (buttonId) {
+        } else {
+          // Procesar según botón
+          switch (buttonId) {
         case 'loan_money':
         case 'loan_object':
         case 'loan_other':
@@ -1463,7 +1461,8 @@ async function processInboundMessage(
           }
 
           responseMessage = 'No reconozco esa opción. Por favor usa los botones disponibles.';
-      }
+        }
+        } // Cierre del else que verifica isButtonAllowed
       } // Cierre del else que maneja botones tradicionales
     } else if (message.type === 'contacts') {
       // Procesar contactos compartidos
