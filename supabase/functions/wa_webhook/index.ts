@@ -1,6 +1,6 @@
 // Edge Function: WhatsApp Webhook Handler
-// Versión con flujos conversacionales integrados
-// v2.0.5 - Fix getWindowStatus query field name 2025-10-24
+// v2.7.0 - Modo Simplificado (Desactivación temporal de IA y flujos)
+// 2025-11-12
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -9,6 +9,21 @@ import { FlowHandlers } from "../_shared/flow-handlers.ts";
 import { IntentDetector } from "../_shared/intent-detector.ts";
 import { WhatsAppWindowManager } from "../_shared/whatsapp-window-manager.ts";
 import { FlowDataProvider } from "../_shared/flow-data-provider.ts";
+
+// ============================================================================
+// 🚧 FEATURE FLAGS - Modo Simplificado
+// ============================================================================
+// Cambiar a `true` para reactivar funcionalidades
+const FEATURES = {
+  AI_PROCESSING: false,           // IA para texto, audio, imágenes
+  CONVERSATIONAL_FLOWS: false,    // Flujos de nuevo préstamo por WhatsApp
+  INTERACTIVE_BUTTONS: false,     // Botones: new_loan, help, reschedule, etc.
+  // Siempre activos:
+  CHECK_STATUS: true,             // Ver estado de préstamos
+  MARK_RETURNED: true,            // Marcar como devuelto
+  MENU_ACCESS: true               // Acceso al portal web
+};
+// ============================================================================
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -391,8 +406,8 @@ async function processInboundMessage(
           let flowType = null;
           let aiProcessed = false;  // Flag para indicar si AI Agent ya procesó
 
-          // Si NO hay flujo activo, delegar a AI Agent
-          if (!currentState) {
+          // Si NO hay flujo activo, delegar a AI Agent (si está habilitado)
+          if (!currentState && FEATURES.AI_PROCESSING) {
             console.log('[AI-AGENT] No active flow, delegating to AI agent');
 
             try {
@@ -460,10 +475,15 @@ async function processInboundMessage(
                 responseMessage = `No estoy seguro de lo que necesitas. ¿Te refieres a alguno de estos?\n\n${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n\nO escribe "ayuda" para ver todas las opciones.`;
               }
             }
+          } else if (!currentState && !FEATURES.AI_PROCESSING) {
+            // IA desactivada - enviar mensaje alternativo
+            console.log('[AI-AGENT] AI processing disabled, sending fallback message');
+            responseMessage = 'Por el momento solo puedo ayudarte con acceso al menú web. 🌐\n\nEscribe "hola" o "menu" para obtener tu enlace de acceso.\n\n📊 También puedes escribir "estado" para ver tus préstamos activos.';
+            aiProcessed = true; // Marcar como procesado para no entrar al flujo
           }
 
-          // ✅ Solo llamar a conversationManager si AI NO procesó
-          if (!responseMessage && !aiProcessed) {
+          // ✅ Solo llamar a conversationManager si AI NO procesó y flujos están activos
+          if (!responseMessage && !aiProcessed && FEATURES.CONVERSATIONAL_FLOWS) {
             // Procesar entrada en el flujo
             const result = await conversationManager.processInput(tenant.id, contact.id, text, flowType);
 
@@ -794,6 +814,24 @@ async function processInboundMessage(
             payload: { button_id: buttonId, message_id: message.id },
             whatsapp_message_id: message.id
           });
+
+        // Filtro de botones según feature flags
+        const allowedButtons = ['check_status']; // Siempre permitidos
+        const isDynamicMarkReturned = buttonId.startsWith('loan_') && buttonId.endsWith('_mark_returned');
+        const isInteractiveButton = ['new_loan', 'new_loan_chat', 'new_loan_web', 'help', 'reschedule', 'new_service', 'web_menu', 'user_profile', 'opt_in_yes', 'opt_in_no', 'loan_returned'].includes(buttonId);
+        const isFlowButton = ['loan_money', 'loan_object', 'loan_other', 'date_tomorrow', 'date_end_of_month', 'date_custom'].includes(buttonId);
+
+        // Verificar si el botón está permitido según los feature flags
+        const isButtonAllowed = allowedButtons.includes(buttonId) ||
+                                isDynamicMarkReturned ||
+                                (FEATURES.INTERACTIVE_BUTTONS && isInteractiveButton) ||
+                                (FEATURES.CONVERSATIONAL_FLOWS && isFlowButton);
+
+        if (!isButtonAllowed) {
+          console.log(`[BUTTON] Button "${buttonId}" is disabled`);
+          responseMessage = 'Esta funcionalidad está temporalmente desactivada. 🚧\n\nPuedes:\n📊 Escribir "estado" para ver tus préstamos\n🌐 Escribir "menu" para acceder al portal web';
+          break; // Salir sin procesar el botón
+        }
 
         // Procesar según botón
         switch (buttonId) {
@@ -1674,7 +1712,7 @@ async function processInboundMessage(
       } else {
         responseMessage = 'No recibí información del contacto. Por favor intenta de nuevo.';
       }
-    } else if (message.type === 'audio') {
+    } else if (message.type === 'audio' && FEATURES.AI_PROCESSING) {
       // Procesar mensajes de audio con Whisper (transcripción)
       console.log('====== PROCESSING AUDIO MESSAGE ======');
       console.log('Audio object:', JSON.stringify(message.audio, null, 2));
@@ -1766,7 +1804,7 @@ async function processInboundMessage(
         console.error('[Audio] Processing error:', error);
         responseMessage = 'Hubo un error procesando el audio. Por favor intenta de nuevo.';
       }
-    } else if (message.type === 'image') {
+    } else if (message.type === 'image' && FEATURES.AI_PROCESSING) {
       // Procesar mensajes de imagen con GPT-4 Vision
       console.log('====== PROCESSING IMAGE MESSAGE ======');
       console.log('Image object:', JSON.stringify(message.image, null, 2));
@@ -1889,6 +1927,14 @@ Responde en español chileno de forma concisa.`;
         console.error('[Image] Processing error:', error);
         responseMessage = 'Hubo un error procesando la imagen. Por favor intenta de nuevo.';
       }
+    } else if (message.type === 'audio' && !FEATURES.AI_PROCESSING) {
+      // Audio recibido pero IA desactivada
+      console.log('[Audio] AI processing disabled');
+      responseMessage = 'Por el momento no puedo procesar mensajes de audio. 🚧\n\nPor favor escribe un mensaje de texto o:\n📊 Escribe "estado" para ver tus préstamos\n🌐 Escribe "menu" para acceder al portal web';
+    } else if (message.type === 'image' && !FEATURES.AI_PROCESSING) {
+      // Imagen recibida pero IA desactivada
+      console.log('[Image] AI processing disabled');
+      responseMessage = 'Por el momento no puedo procesar imágenes. 🚧\n\nPor favor escribe un mensaje de texto o:\n📊 Escribe "estado" para ver tus préstamos\n🌐 Escribe "menu" para acceder al portal web';
     }
 
     // 5. Enviar respuesta

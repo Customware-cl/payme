@@ -2,6 +2,202 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v2.7.0] - 2025-11-12 - 🚧 Modo Simplificado: Desactivación Temporal de IA y Flujos
+
+### 🎯 Objetivo
+
+Simplificar temporalmente el bot de WhatsApp para mantener solo las funcionalidades esenciales mientras se evalúa el uso y se optimizan recursos. **Implementación mediante feature flags** para fácil activación/desactivación sin errores de sintaxis.
+
+### ✅ Funcionalidades ACTIVAS
+
+**Comandos básicos:**
+- ✅ `hola`, `hi`, `menu`, `inicio`, `ayuda` → Genera URL del portal web (válida 30 días)
+- ✅ `estado`, `status` → Muestra préstamos activos
+
+**Botones interactivos:**
+- ✅ `check_status` → Ver estado de préstamos (activos y pendientes de confirmación)
+- ✅ `loan_{id}_mark_returned` → Marcar préstamo como devuelto (desde recordatorios)
+- ✅ Botones de confirmación del template `loan_confirmation_request_v1` (confirm/reject)
+
+**Edge functions activas:**
+- ✅ `generate-menu-token` → Genera tokens de acceso al portal
+- ✅ `loan-actions` → Procesa confirmaciones y devoluciones desde web
+
+### ❌ Funcionalidades DESACTIVADAS (vía Feature Flags)
+
+**Sistema de IA:**
+- ❌ AI Agent para procesamiento de texto genérico
+- ❌ Transcripción de audio con Whisper
+- ❌ Análisis de imágenes con GPT-4 Vision
+
+**Flujos conversacionales:**
+- ❌ `new_loan_chat` → Crear préstamo por WhatsApp conversacional
+- ❌ Listas interactivas de selección de contactos
+- ❌ Botones de flujo: `loan_money`, `loan_object`, `loan_other`
+- ❌ Botones de fecha: `date_tomorrow`, `date_end_of_month`, `date_custom`
+
+**Botones de funcionalidades:**
+- ❌ `new_loan`, `new_loan_web` → Solo desde portal web
+- ❌ `help` → Menú de ayuda
+- ❌ `reschedule` → Reprogramación de fechas
+- ❌ `new_service` → Servicios mensuales
+- ❌ `web_menu` → Plantilla de menú web
+- ❌ `user_profile` → WhatsApp Flow de perfil
+- ❌ `opt_in_yes`, `opt_in_no` → Opt-in de recordatorios
+- ❌ `loan_returned` → Marcar devuelto genérico
+
+**Procesamiento multimedia:**
+- ❌ Contactos compartidos (message.type === 'contacts')
+- ❌ Mensajes de audio (message.type === 'audio')
+- ❌ Mensajes con imágenes (message.type === 'image')
+
+### 📝 Cambios Técnicos
+
+**Archivo: `supabase/functions/wa_webhook/index.ts`**
+
+1. **Feature Flags agregados (líneas 13-26)**
+   ```typescript
+   const FEATURES = {
+     AI_PROCESSING: false,           // IA para texto, audio, imágenes
+     CONVERSATIONAL_FLOWS: false,    // Flujos de nuevo préstamo por WhatsApp
+     INTERACTIVE_BUTTONS: false,     // Botones: new_loan, help, reschedule, etc.
+     // Siempre activos:
+     CHECK_STATUS: true,             // Ver estado de préstamos
+     MARK_RETURNED: true,            // Marcar como devuelto
+     MENU_ACCESS: true               // Acceso al portal web
+   };
+   ```
+
+2. **Check condicional IA para texto (línea 409)**
+   - Condición: `if (!currentState && FEATURES.AI_PROCESSING)`
+   - Mensaje fallback cuando IA desactivada (líneas 478-483)
+
+3. **Check condicional flujos conversacionales (línea 486)**
+   - Condición: `if (!responseMessage && !aiProcessed && FEATURES.CONVERSATIONAL_FLOWS)`
+   - Solo procesa conversationManager si flag activo
+
+4. **Filtro de botones implementado (líneas 818-834)**
+   - Whitelist: `['check_status']`
+   - Dinámicos permitidos: `loan_{id}_mark_returned`
+   - Condicional para interactive buttons y flow buttons
+   - Mensaje de desactivación para botones no permitidos
+
+5. **Check condicional audio (línea 1715)**
+   - Condición: `} else if (message.type === 'audio' && FEATURES.AI_PROCESSING) {`
+   - Mensaje fallback (líneas 1930-1933)
+
+6. **Check condicional imagen (línea 1807)**
+   - Condición: `} else if (message.type === 'image' && FEATURES.AI_PROCESSING) {`
+   - Mensaje fallback (líneas 1934-1937)
+
+### 🔄 Para Reactivar Funcionalidades
+
+Simplemente cambiar los feature flags de `false` a `true` en las líneas 13-26:
+
+```typescript
+const FEATURES = {
+  AI_PROCESSING: true,           // ✅ Reactivar IA
+  CONVERSATIONAL_FLOWS: true,    // ✅ Reactivar flujos
+  INTERACTIVE_BUTTONS: true,     // ✅ Reactivar botones
+  // ...
+};
+```
+
+Luego desplegar: `npx supabase functions deploy wa_webhook --no-verify-jwt`
+
+### 📊 Impacto
+
+**Usuarios verán:**
+- ✅ Acceso normal al portal web
+- ✅ Ver estado de préstamos
+- ✅ Confirmación/rechazo de préstamos (desde template)
+- ✅ Marcar préstamos como devueltos (desde recordatorios)
+- ⚠️ Crear préstamos SOLO desde portal web
+- ⚠️ Sin procesamiento de IA para preguntas generales
+- ⚠️ Sin análisis de audio/imágenes
+
+**Recursos optimizados:**
+- ⬇️ Llamadas a OpenAI API (GPT-4, Whisper)
+- ⬇️ Procesamiento de estados conversacionales
+- ⬇️ Uso de tokens de contexto
+
+---
+
+## [2025-11-10] - 🔄 Migración de WhatsApp Business: Customware → Somos Payme
+
+### 🎯 Objetivo
+
+Migrar las credenciales de WhatsApp Business API desde la cuenta de "Customware" a la nueva cuenta dedicada "Somos Payme", alineando la identidad de marca del producto.
+
+### 📋 Cambios Realizados
+
+**Actualización de credenciales en base de datos**:
+
+Se actualizaron **3 tenants** con las nuevas credenciales de WhatsApp Business de Somos Payme:
+
+1. **PrestaBot Chile** (`d4c43ab8-426f-4bb9-8736-dfe301459590`)
+2. **Felipe Abarca** (`1f000059-0008-4b6d-96a4-eea08b8a0f94`)
+3. **Catherine Pereira** (`85625504-3553-464b-8d68-2f508a163ac2`)
+
+**Valores actualizados**:
+- `whatsapp_phone_number_id`: `778143428720890` → `926278350558118`
+- `whatsapp_business_account_id`: `773972555504544` → `1558540088893371`
+- `whatsapp_access_token`: Actualizado con token temporal de Somos Payme
+
+### ✅ Token Permanente Actualizado
+
+**COMPLETADO**: Token permanente generado y actualizado exitosamente.
+
+**Acciones realizadas**:
+1. ✅ Generado token permanente en Meta Business Manager (Somos Payme)
+2. ✅ Token actualizado en base de datos para los 3 tenants
+3. ✅ Timestamp: 2025-11-11 00:48:51 UTC
+4. ✅ Token configurado como **permanente** (no expira)
+
+**Token anterior (temporal):** `EAALZCmIM023IBP1nawh...` (ELIMINADO)
+**Token actual (permanente):** `EAALZCmIM023IBP2M4wM...` (ACTIVO)
+
+### 📋 Plantillas de WhatsApp a Migrar
+
+Las siguientes plantillas deben crearse en la cuenta de Somos Payme (Meta Business Manager):
+
+1. **`menu_web_access`** - Acceso al menú web personalizado
+   - Documentación: `docs/PLANTILLA_MENU_WEB.md`
+   - Categoría: UTILITY
+   - Variables: 1 (URL dinámica)
+
+2. **`loan_invitation`** - Invitación viral para nuevos usuarios
+   - Documentación: `docs/VIRAL_INVITATIONS.md`
+   - Categoría: UTILITY
+   - Variables: 3 (nombre lender, nombre borrower, monto) + 1 URL dinámica
+
+3. **`due_date_money_v1`** - Recordatorio de vencimiento (préstamos de dinero)
+   - Documentación: `docs/PLANTILLAS_RECORDATORIO_VENCIMIENTO.md`
+   - Categoría: UTILITY
+   - Variables: 11 + 1 URL dinámica
+
+4. **`due_date_object_v1`** - Recordatorio de vencimiento (préstamos de objetos)
+   - Documentación: `docs/PLANTILLAS_RECORDATORIO_VENCIMIENTO.md`
+   - Categoría: UTILITY
+   - Variables: 5 + 1 URL dinámica
+
+### ✅ Verificación Post-Migración
+
+Para verificar que todo funciona correctamente:
+
+```bash
+# Test de envío de plantilla
+deno run --allow-net supabase/functions/test-reminder/index.ts
+```
+
+### 🔍 Referencias
+
+- Credenciales actualizadas: 2025-11-11 00:20:28 UTC
+- Documentación de plantillas: `/docs/PLANTILLA_*.md`
+- Meta Business Manager: https://business.facebook.com/
+
+---
+
 ## [2025-10-29] - v2.6.0 - 🎤 Búsqueda Fonética para Transcripciones de Audio
 
 ### 🎯 Objetivo
