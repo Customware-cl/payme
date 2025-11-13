@@ -44,16 +44,21 @@ Botones:
 **Variables:**
 1. {{1}} = Nombre del receptor/borrower
 2. {{2}} = Nombre del prestamista/lender
-3. {{3}} = Monto formateado (ej. "$45.000")
+3. {{3}} = Monto con concepto O descripción de objeto
+   - Dinero: `"$45.000 bajo el concepto 'Préstamo en efectivo'"`
+   - Objeto: `"una bicicleta"`, `"un HP Pavilion"`, etc.
 4. {{4}} = Fecha de devolución (ej. "31/10/25")
 
 ### 🔧 Cambios Aplicados
 
-**flow-handlers.ts (líneas 801-817):**
-- Corregido parámetro {{3}} para enviar **solo monto** (antes enviaba texto largo)
-- Antes: `"$45.000 bajo el concepto 'Préstamo en efectivo'"`
-- Ahora: `"$45.000"`
-- Se alinea con la plantilla aprobada en Meta
+**flow-handlers.ts (líneas 801-840):**
+- Variable {{3}} es **flexible** para soportar ambos casos:
+  - **Préstamos de dinero:** Incluye monto + concepto
+  - **Préstamos de objetos:** Descripción del item
+- La plantilla dice "por *{{3}}*" que funciona gramaticalmente con ambos
+- Ejemplos de mensajes resultantes:
+  - "Felipe registró un préstamo a tu nombre por *$45.000 bajo el concepto 'Préstamo en efectivo'*."
+  - "Felipe registró un préstamo a tu nombre por *una bicicleta*."
 
 **Base de datos:**
 - Plantilla registrada en tabla `templates`
