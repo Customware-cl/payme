@@ -2,6 +2,73 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.5] - 2025-11-13 - 🐛 Hotfix: Corrección de Registro de Eventos en Formulario Web
+
+### 🎯 Problema Detectado
+
+Al enviar un préstamo desde el formulario web, el sistema fallaba silenciosamente al intentar registrar el evento de completado. Los préstamos NO se creaban y no se enviaba la confirmación al borrower.
+
+**Errores en logs de Postgres:**
+```
+ERROR: invalid input value for enum event_type: "web_form_completed"
+ERROR: insert or update on table "events" violates foreign key constraint "events_contact_id_fkey"
+```
+
+### 🔍 Causa Raíz
+
+**Archivo:** `supabase/functions/loan-web-form/index.ts` (líneas 420-433)
+
+El código intentaba registrar un evento con dos problemas:
+
+1. **Enum inválido:** Usaba `event_type: 'web_form_completed'` que NO existe en el enum
+   - Valores válidos: opt_in_sent, opt_in_received, reminder_sent, confirmed_returned, confirmed_paid, rescheduled, button_clicked, flow_started, **flow_completed**, intent_detected, date_rescheduled
+
+2. **Foreign key violation:** Intentaba insertar `contact_id: lenderContactId`
+   - `lenderContactId` es un `contact_profile_id` (UUID del perfil global)
+   - La columna `events.contact_id` espera un `tenant_contact_id` (UUID del contacto local)
+
+### 🔧 Solución Aplicada
+
+**loan-web-form/index.ts (líneas 420-435):**
+
+```typescript
+// ANTES (❌ Incorrecto):
+await supabase
+  .from('events')
+  .insert({
+    tenant_id: tenantId,
+    contact_id: lenderContactId,  // ❌ Tipo incorrecto
+    agreement_id: result.agreementId,
+    event_type: 'web_form_completed',  // ❌ No existe en enum
+    payload: { ... }
+  });
+
+// DESPUÉS (✅ Correcto):
+await supabase
+  .from('events')
+  .insert({
+    tenant_id: tenantId,
+    // contact_id removido (no necesario, agreement_id ya vincula todo)
+    agreement_id: result.agreementId,
+    event_type: 'flow_completed',  // ✅ Valor válido del enum
+    payload: {
+      form_type: 'loan_web',
+      loan_type: body.loan_type,
+      new_contact: body.new_contact,
+      source: 'web_form'  // ✅ Diferenciador
+    }
+  });
+```
+
+### ✨ Resultado
+
+- ✅ Préstamos desde formulario web ahora se crean correctamente
+- ✅ Evento se registra sin errores con tipo `flow_completed`
+- ✅ Confirmación se envía al borrower vía WhatsApp
+- ✅ Payload incluye `source: 'web_form'` para analytics
+
+---
+
 ## [v3.0.4] - 2025-11-13 - 📱 Nueva Plantilla WhatsApp: Confirmación de Préstamo
 
 ### 🎯 Contexto
