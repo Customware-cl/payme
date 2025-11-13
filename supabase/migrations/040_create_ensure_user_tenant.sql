@@ -17,6 +17,8 @@ DECLARE
   v_first_name VARCHAR;
   v_last_name VARCHAR;
   v_tenant_name VARCHAR;
+  v_whatsapp_phone_id VARCHAR;
+  v_whatsapp_token TEXT;
 BEGIN
   -- 1. Buscar tenant existente del usuario
   SELECT id INTO v_tenant_id
@@ -29,7 +31,15 @@ BEGIN
     RETURN v_tenant_id;
   END IF;
 
-  -- 2. Obtener datos del contact_profile para nombrar el tenant
+  -- 2. Obtener credenciales de WhatsApp del tenant maestro (con token más antiguo)
+  SELECT whatsapp_phone_number_id, whatsapp_access_token
+  INTO v_whatsapp_phone_id, v_whatsapp_token
+  FROM tenants
+  WHERE whatsapp_access_token IS NOT NULL
+  ORDER BY created_at ASC
+  LIMIT 1;
+
+  -- 3. Obtener datos del contact_profile para nombrar el tenant
   SELECT phone_e164, first_name, last_name
   INTO v_phone, v_first_name, v_last_name
   FROM contact_profiles
@@ -44,23 +54,25 @@ BEGIN
     v_tenant_name := 'Usuario ' || substring(p_contact_profile_id::text from 1 for 8);
   END IF;
 
-  -- 3. Crear tenant nuevo
+  -- 4. Crear tenant nuevo con credenciales compartidas
   INSERT INTO tenants (
     name,
     owner_contact_profile_id,
     whatsapp_phone_number_id,
+    whatsapp_access_token,
     timezone
   ) VALUES (
     v_tenant_name,
     p_contact_profile_id,
-    '926278350558118', -- Bot compartido de Payme
+    v_whatsapp_phone_id,
+    v_whatsapp_token,
     'America/Santiago'
   )
   RETURNING id INTO v_tenant_id;
 
   RAISE NOTICE '[ensure_user_tenant] Tenant creado: % - %', v_tenant_id, v_tenant_name;
 
-  -- 4. Crear self-contact "Yo (Mi cuenta)"
+  -- 5. Crear self-contact "Yo (Mi cuenta)"
   INSERT INTO tenant_contacts (
     tenant_id,
     contact_profile_id,
@@ -75,7 +87,7 @@ BEGIN
 
   RAISE NOTICE '[ensure_user_tenant] Self-contact creado para tenant %', v_tenant_id;
 
-  -- 5. Registrar evento de tenant creado
+  -- 6. Registrar evento de tenant creado
   INSERT INTO events (
     tenant_id,
     event_type,
