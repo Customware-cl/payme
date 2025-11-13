@@ -197,8 +197,11 @@ async function processInboundMessage(
     }
 
     // 1.2. Auto-crear tenant si no existe (arquitectura multi-tenant P2P)
+    let isNewUser = false; // Flag para detectar si es usuario nuevo
+
     if (!tenant && !senderProfile) {
       console.log('[ROUTING] Número nuevo detectado, auto-creando contact_profile y tenant');
+      isNewUser = true; // Usuario completamente nuevo
 
       // Crear contact_profile para el número nuevo
       const { data: newProfile, error: profileError } = await supabase
@@ -236,6 +239,7 @@ async function processInboundMessage(
     } else if (!tenant && senderProfile) {
       // El usuario ya tiene contact_profile pero no tenant, crear tenant
       console.log('[ROUTING] Contact profile existe pero sin tenant, auto-creando tenant');
+      isNewUser = true; // Usuario semi-nuevo (tiene profile pero no tenant)
 
       const { data: newTenantId, error: tenantError } = await supabase
         .rpc('ensure_user_tenant', { p_contact_profile_id: senderProfile.id });
@@ -419,10 +423,15 @@ async function processInboundMessage(
             console.log('[MENU_ACCESS] Menu URL generated:', menuUrl);
 
             // 2. Enviar mensaje interactivo con botón CTA URL
+            // Diferenciar mensaje según si es usuario nuevo o existente
+            const welcomeMessage = isNewUser
+              ? '¡Hola! 👋 Te damos la bienvenida a Payme, tu asistente de préstamos.\n\nAquí puedes:\n✅ Registrar préstamos que hiciste o te hicieron\n✅ Ver el estado de tus préstamos\n✅ Recibir recordatorios de pago automáticos\n\nTodo lo controlas desde el siguiente enlace 👇\n\n⏱️ Válido por 30 días\n\n💡 Comandos útiles:\n• Escribe "estado" para ver tus préstamos activos\n• Escribe "menu" para obtener nuevamente este enlace'
+              : '¡Hola! 👋 Soy tu asistente de préstamos.\n\nRegistra préstamos, ve su estado y gestiona tu información.\n\n⏱️ Válido por 30 días.';
+
             interactiveResponse = {
               type: 'cta_url',
               body: {
-                text: '¡Hola! 👋 Te damos la bienvenida a Payme, tu asistente de préstamos.\n\nAquí puedes:\n✅ Registrar préstamos que hiciste o te hicieron\n✅ Ver el estado de tus préstamos\n✅ Recibir recordatorios de pago automáticos\n\nTodo lo controlas desde el siguiente enlace 👇\n\n⏱️ Válido por 30 días\n\n💡 Comandos útiles:\n• Escribe "estado" para ver tus préstamos activos\n• Escribe "menu" para obtener nuevamente este enlace'
+                text: welcomeMessage
               },
               action: {
                 name: 'cta_url',

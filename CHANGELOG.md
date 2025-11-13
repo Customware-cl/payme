@@ -2,6 +2,55 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.3] - 2025-11-13 - 💬 Mensajes Diferenciados para Nuevos vs Existentes
+
+### 🎯 Problema Detectado
+
+Tanto usuarios nuevos como existentes recibían el mismo mensaje largo de bienvenida al escribir "hola", lo cual era redundante para usuarios que ya conocen la plataforma.
+
+### 🔧 Solución Aplicada
+
+**wa_webhook/index.ts:**
+- Agregado flag `isNewUser` en routing (líneas 200-261)
+- Se establece `isNewUser = true` solo cuando se auto-crea el tenant
+- Mensaje diferenciado según tipo de usuario:
+
+**Usuario NUEVO** (recién registrado):
+```
+¡Hola! 👋 Te damos la bienvenida a Payme, tu asistente de préstamos.
+
+Aquí puedes:
+✅ Registrar préstamos que hiciste o te hicieron
+✅ Ver el estado de tus préstamos
+✅ Recibir recordatorios de pago automáticos
+
+Todo lo controlas desde el siguiente enlace 👇
+
+⏱️ Válido por 30 días
+
+💡 Comandos útiles:
+• Escribe "estado" para ver tus préstamos activos
+• Escribe "menu" para obtener nuevamente este enlace
+```
+
+**Usuario EXISTENTE** (ya tiene cuenta):
+```
+¡Hola! 👋 Soy tu asistente de préstamos.
+
+Registra préstamos, ve su estado y gestiona tu información.
+
+⏱️ Válido por 30 días.
+```
+
+### ✨ Beneficios
+
+- ✅ Mejor experiencia para usuarios recurrentes (mensaje conciso)
+- ✅ Onboarding completo para nuevos usuarios (con instrucciones)
+- ✅ Reduce fricción en acceso rápido al menú
+- ✅ Mantiene información completa para quienes la necesitan
+
+---
+
 ## [v3.0.0] - 2025-11-13 - 🏗️ Arquitectura Multi-Tenant P2P con Sincronización
 
 ### 🎯 Cambios Arquitecturales Mayores
