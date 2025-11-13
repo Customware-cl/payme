@@ -1,0 +1,123 @@
+-- Migración 040: Crear función ensure_user_tenant()
+-- Auto-crea tenant para un usuario si no existe
+
+-- =====================================================
+-- FUNCIÓN: ensure_user_tenant
+-- =====================================================
+
+CREATE OR REPLACE FUNCTION ensure_user_tenant(
+  p_contact_profile_id UUID
+) RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_tenant_id UUID;
+  v_phone VARCHAR;
+  v_first_name VARCHAR;
+  v_last_name VARCHAR;
+  v_tenant_name VARCHAR;
+BEGIN
+  -- 1. Buscar tenant existente del usuario
+  SELECT id INTO v_tenant_id
+  FROM tenants
+  WHERE owner_contact_profile_id = p_contact_profile_id;
+
+  -- Si ya tiene tenant, retornarlo
+  IF v_tenant_id IS NOT NULL THEN
+    RAISE NOTICE '[ensure_user_tenant] Tenant existente encontrado: %', v_tenant_id;
+    RETURN v_tenant_id;
+  END IF;
+
+  -- 2. Obtener datos del contact_profile para nombrar el tenant
+  SELECT phone_e164, first_name, last_name
+  INTO v_phone, v_first_name, v_last_name
+  FROM contact_profiles
+  WHERE id = p_contact_profile_id;
+
+  -- Construir nombre del tenant
+  IF v_first_name IS NOT NULL AND v_last_name IS NOT NULL THEN
+    v_tenant_name := v_first_name || ' ' || v_last_name;
+  ELSIF v_phone IS NOT NULL THEN
+    v_tenant_name := 'Cuenta de ' || v_phone;
+  ELSE
+    v_tenant_name := 'Usuario ' || substring(p_contact_profile_id::text from 1 for 8);
+  END IF;
+
+  -- 3. Crear tenant nuevo
+  INSERT INTO tenants (
+    name,
+    owner_contact_profile_id,
+    whatsapp_phone_number_id,
+    timezone
+  ) VALUES (
+    v_tenant_name,
+    p_contact_profile_id,
+    '926278350558118', -- Bot compartido de Payme
+    'America/Santiago'
+  )
+  RETURNING id INTO v_tenant_id;
+
+  RAISE NOTICE '[ensure_user_tenant] Tenant creado: % - %', v_tenant_id, v_tenant_name;
+
+  -- 4. Crear self-contact "Yo (Mi cuenta)"
+  INSERT INTO tenant_contacts (
+    tenant_id,
+    contact_profile_id,
+    contact_tenant_id,
+    name
+  ) VALUES (
+    v_tenant_id,
+    p_contact_profile_id,
+    v_tenant_id, -- El self-contact apunta a sí mismo
+    'Yo (Mi cuenta)'
+  );
+
+  RAISE NOTICE '[ensure_user_tenant] Self-contact creado para tenant %', v_tenant_id;
+
+  -- 5. Registrar evento de tenant creado
+  INSERT INTO events (
+    tenant_id,
+    event_type,
+    payload
+  ) VALUES (
+    v_tenant_id,
+    'opt_in_sent', -- Reutilizamos tipo existente
+    jsonb_build_object(
+      'action', 'tenant_created',
+      'contact_profile_id', p_contact_profile_id,
+      'tenant_name', v_tenant_name,
+      'created_at', NOW()
+    )
+  );
+
+  RETURN v_tenant_id;
+
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE EXCEPTION '[ensure_user_tenant] Error creando tenant: %', SQLERRM;
+END;
+$$;
+
+-- =====================================================
+-- COMENTARIOS Y PERMISOS
+-- =====================================================
+
+COMMENT ON FUNCTION ensure_user_tenant(UUID) IS
+'Asegura que un contact_profile tenga su propio tenant. Si no existe, lo crea automáticamente con configuración por defecto.';
+
+-- Permitir que edge functions llamen a esta función
+GRANT EXECUTE ON FUNCTION ensure_user_tenant(UUID) TO service_role;
+
+-- =====================================================
+-- TESTS BÁSICOS
+-- =====================================================
+
+DO $$
+BEGIN
+  RAISE NOTICE 'Migración 040 completada:';
+  RAISE NOTICE '- Función ensure_user_tenant() creada';
+  RAISE NOTICE '- Permisos asignados a service_role';
+END $$;
+
+-- Fin de migración 040

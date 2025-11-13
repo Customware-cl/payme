@@ -89,13 +89,25 @@ export async function getSchemaForAI(
           name: 'tenant_contact_id',
           type: 'UUID',
           nullable: true,
-          description: 'ID del contacto que recibe el préstamo (borrower/prestatario)'
+          description: 'LEGACY: ID del contacto que recibe el préstamo (borrower/prestatario)'
+        },
+        {
+          name: 'lender_tenant_id',
+          type: 'UUID',
+          nullable: true,
+          description: 'P2P: Tenant ID del prestamista (quien presta). Usar en queries P2P'
+        },
+        {
+          name: 'borrower_tenant_id',
+          type: 'UUID',
+          nullable: true,
+          description: 'P2P: Tenant ID del prestatario (quien recibe). NULL si no está registrado'
         },
         {
           name: 'lender_tenant_contact_id',
           type: 'UUID',
           nullable: true,
-          description: 'ID del contacto que otorga el préstamo (lender/prestamista)'
+          description: 'LEGACY: ID del contacto que otorga el préstamo (lender/prestamista)'
         },
         {
           name: 'contact_id',
@@ -252,6 +264,12 @@ export async function getSchemaForAI(
           type: 'UUID',
           nullable: false,
           description: 'Referencia al perfil global del contacto'
+        },
+        {
+          name: 'contact_tenant_id',
+          type: 'UUID',
+          nullable: true,
+          description: 'P2P: Tenant ID del contacto (si tiene su propio tenant). NULL si no registrado'
         },
         {
           name: 'name',

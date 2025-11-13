@@ -196,22 +196,68 @@ async function processInboundMessage(
       }
     }
 
-    // 1.2. Fallback: buscar tenant por phone_number_id (legacy/compartido)
-    if (!tenant) {
-      const { data: legacyTenant } = await supabase
+    // 1.2. Auto-crear tenant si no existe (arquitectura multi-tenant P2P)
+    if (!tenant && !senderProfile) {
+      console.log('[ROUTING] Número nuevo detectado, auto-creando contact_profile y tenant');
+
+      // Crear contact_profile para el número nuevo
+      const { data: newProfile, error: profileError } = await supabase
+        .from('contact_profiles')
+        .insert({ phone_e164: formattedPhone })
+        .select()
+        .single();
+
+      if (profileError || !newProfile) {
+        console.error('[ROUTING] ✗ Error creando contact_profile:', profileError);
+        return { success: false, error: 'Failed to create profile' };
+      }
+
+      console.log('[ROUTING] ✓ Contact profile creado:', newProfile.id);
+
+      // Auto-crear tenant usando la función ensure_user_tenant
+      const { data: newTenantId, error: tenantError } = await supabase
+        .rpc('ensure_user_tenant', { p_contact_profile_id: newProfile.id });
+
+      if (tenantError || !newTenantId) {
+        console.error('[ROUTING] ✗ Error creando tenant:', tenantError);
+        return { success: false, error: 'Failed to create tenant' };
+      }
+
+      console.log('[ROUTING] ✓ Tenant auto-creado:', newTenantId);
+
+      // Obtener el tenant recién creado
+      const { data: newTenant } = await supabase
         .from('tenants')
         .select('*')
-        .eq('whatsapp_phone_number_id', phoneNumberId)
-        .maybeSingle();
+        .eq('id', newTenantId)
+        .single();
 
-      if (legacyTenant) {
-        tenant = legacyTenant;
-        console.log('[ROUTING] → Usando tenant legacy/compartido:', tenant.name);
+      tenant = newTenant;
+    } else if (!tenant && senderProfile) {
+      // El usuario ya tiene contact_profile pero no tenant, crear tenant
+      console.log('[ROUTING] Contact profile existe pero sin tenant, auto-creando tenant');
+
+      const { data: newTenantId, error: tenantError } = await supabase
+        .rpc('ensure_user_tenant', { p_contact_profile_id: senderProfile.id });
+
+      if (tenantError || !newTenantId) {
+        console.error('[ROUTING] ✗ Error creando tenant:', tenantError);
+        return { success: false, error: 'Failed to create tenant' };
       }
+
+      console.log('[ROUTING] ✓ Tenant auto-creado:', newTenantId);
+
+      const { data: newTenant } = await supabase
+        .from('tenants')
+        .select('*')
+        .eq('id', newTenantId)
+        .single();
+
+      tenant = newTenant;
     }
 
     if (!tenant) {
-      console.error('[ROUTING] ✗ No se encontró tenant para phone_number_id:', phoneNumberId);
+      console.error('[ROUTING] ✗ No se pudo determinar tenant para:', formattedPhone);
       return { success: false, error: 'Tenant not found' };
     }
 

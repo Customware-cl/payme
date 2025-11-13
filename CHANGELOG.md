@@ -2,6 +2,130 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.0] - 2025-11-13 - 🏗️ Arquitectura Multi-Tenant P2P con Sincronización
+
+### 🎯 Cambios Arquitecturales Mayores
+
+**Sistema multi-tenant con auto-creación de cuentas:**
+- Cada usuario de WhatsApp obtiene automáticamente su propio tenant al escribir por primera vez
+- Función `ensure_user_tenant()` crea tenant + contact_profile + self-contact automáticamente
+- Routing inteligente: busca tenant por owner, crea automáticamente si no existe
+- Elimina necesidad de onboarding manual para usuarios nuevos
+
+**Sincronización bidireccional de préstamos (P2P):**
+- Préstamos se sincronizan automáticamente entre lender y borrower
+- Función `create_p2p_loan()` maneja creación con contactos recíprocos
+- Tabla `tenant_contacts` ahora incluye `contact_tenant_id` (referencia cruzada)
+- Tabla `agreements` incluye `lender_tenant_id` y `borrower_tenant_id` (modelo P2P)
+
+**Modelo de aliases personalizados:**
+- Felipe registra a María como "María - compañera de trabajo"
+- María ve a Felipe con el nombre de su contact_profile o alias que ella le puso
+- Cada tenant mantiene su propia nomenclatura de contactos
+
+### 🗄️ Migraciones SQL
+
+**037_add_owner_to_tenants.sql:**
+- Agrega `owner_contact_profile_id` a `tenants`
+- Índice único: 1 contact_profile = máximo 1 tenant
+
+**038_add_contact_tenant_to_tenant_contacts.sql:**
+- Agrega `contact_tenant_id` a `tenant_contacts`
+- Permite identificar el tenant del contacto (si tiene uno)
+- Pobla automáticamente datos existentes
+
+**039_add_p2p_fields_to_agreements.sql:**
+- Agrega `lender_tenant_id` y `borrower_tenant_id` a `agreements`
+- Migra automáticamente 60 agreements existentes
+- Resultado: 40 P2P completos, 20 con borrower no registrado
+
+**040_create_ensure_user_tenant.sql:**
+- Función SQL para auto-crear tenant de usuario
+- Crea tenant + self-contact + evento
+- Usa whatsapp_phone_number_id compartido
+
+**041_create_p2p_loan_function.sql:**
+- Función SQL para crear préstamos con sincronización P2P
+- Auto-crea contactos recíprocos si es necesario
+- Mantiene compatibilidad con campos legacy
+
+### 💻 Cambios en Edge Functions
+
+**wa_webhook/index.ts:**
+- Routing actualizado (líneas 199-262)
+- Auto-crea contact_profile + tenant para números nuevos
+- Llama a `ensure_user_tenant()` automáticamente
+- Maneja 2 casos: sin profile y profile sin tenant
+
+**_shared/flow-handlers.ts:**
+- Reemplaza INSERT directo por llamada a `create_p2p_loan()`
+- Mantiene lógica de reminder config y metadata
+- Compatibilidad con status 'pending_confirmation'
+
+**_shared/schema-provider.ts:**
+- Actualizado con campos P2P: `lender_tenant_id`, `borrower_tenant_id`, `contact_tenant_id`
+- Documentación de campos legacy vs P2P
+
+### 📊 Estado de la Base de Datos
+
+**Tenants:**
+- Felipe Abarca: owner asignado (+56964943476), 43 agreements
+- Catherine Pereira: owner asignado (+56962081122), 6 agreements
+- PrestaBot Chile: legacy sin owner, 11 agreements
+
+**Tenant Contacts:**
+- 6 con tenant asignado (usuarios registrados)
+- 7 sin tenant (contactos no registrados aún)
+
+**Agreements:**
+- 40 P2P completo (ambos tenants registrados)
+- 20 solo lender (borrower no registrado)
+
+### ✨ Funcionalidades Nuevas
+
+**Auto-onboarding:**
+- Usuario escribe al bot → contact_profile + tenant creado automáticamente
+- Recibe mensaje de bienvenida inmediatamente
+- Puede completar perfil después desde web
+
+**Préstamos P2P sincronizados:**
+- Felipe presta a María → ambos ven el préstamo en sus cuentas
+- Felipe ve: "Préstamo a María - compañera de trabajo"
+- María ve: "Préstamo de Felipe"
+- Actualización de status sincronizada automáticamente
+
+**Burbujas privadas:**
+- Cada usuario solo ve sus propios contactos
+- No hay directorio global de usuarios
+- Contactos se crean al registrar primer préstamo
+
+### 🔧 Compatibilidad
+
+**Campos legacy mantenidos:**
+- `tenant_id`, `tenant_contact_id` en agreements
+- Permite transición gradual
+- Queries antiguos siguen funcionando
+
+**Migración sin downtime:**
+- Datos existentes migrados automáticamente
+- Sistema funciona durante toda la migración
+- 0 préstamos perdidos
+
+### 📝 Impacto
+
+**Mejoras:**
+- ✅ Nuevos usuarios pueden usar el bot inmediatamente
+- ✅ Préstamos bidireccionales sincronizados automáticamente
+- ✅ Cada usuario tiene su espacio privado
+- ✅ Aliases personalizados por usuario
+
+**Cambios de comportamiento:**
+- Nuevos números reciben respuesta automática (antes fallaban)
+- Préstamos crean contactos recíprocos automáticamente
+- No hay más tenant compartido global (arquitectura legacy)
+
+---
+
 ## [v2.7.1] - 2025-11-12 - 💬 Mejora de Mensaje de Bienvenida
 
 ### 🎯 Cambios

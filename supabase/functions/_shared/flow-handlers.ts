@@ -191,31 +191,38 @@ export class FlowHandlers {
 
       console.log('Final contact selected:', contact.id);
 
-      // 3. Crear el acuerdo de préstamo
+      // 3. Crear el acuerdo de préstamo usando create_p2p_loan (sincronización P2P)
       const dueDate = context.due_date;
-      const agreementId = generateUUID();
 
       // Preparar título y descripción según el tipo de préstamo
       const title = context.amount
         ? `Préstamo de $${formatMoney(context.amount)}`
         : `Préstamo: ${context.item_description}`;
 
+      const description = context.item_description || 'Dinero';
+
+      // Usar función create_p2p_loan para sincronización automática
+      const { data: agreementId, error: loanError } = await this.supabase
+        .rpc('create_p2p_loan', {
+          p_lender_tenant_id: tenantId,
+          p_borrower_contact_id: contact.id,
+          p_amount: context.amount || 0,
+          p_title: title,
+          p_description: description,
+          p_due_date: dueDate,
+          p_currency: 'CLP'
+        });
+
+      if (loanError || !agreementId) {
+        console.error('Error creating P2P loan:', loanError);
+        throw new Error(`Failed to create P2P loan: ${loanError?.message || 'Unknown error'}`);
+      }
+
+      // Actualizar el agreement con campos legacy adicionales
       const { data: agreement } = await this.supabase
         .from('agreements')
-        .insert({
-          id: agreementId,
-          tenant_id: tenantId,
-          tenant_contact_id: contact.id, // Borrower como tenant_contact_id
-          lender_tenant_contact_id: context.lender_contact_id || null, // Lender como tenant_contact_id
+        .update({
           created_by: ownerUser.id,
-          type: 'loan',
-          title: title,
-          description: `Préstamo creado mediante flujo conversacional`,
-          item_description: context.item_description || 'Dinero',
-          amount: context.amount || null, // Monto si es dinero
-          currency: 'MXN',
-          start_date: formatDateLocal(new Date()),
-          due_date: dueDate,
           status: 'pending_confirmation',
           reminder_config: {
             enabled: true,
@@ -231,11 +238,12 @@ export class FlowHandlers {
           exdates: [],
           reminder_count: 0
         })
+        .eq('id', agreementId)
         .select()
         .single();
 
       if (!agreement) {
-        throw new Error('Failed to create agreement');
+        throw new Error('Failed to update agreement metadata');
       }
 
       // 4. Configurar recordatorios automáticamente
