@@ -1,8 +1,9 @@
--- Migración 040: Crear función ensure_user_tenant()
--- Auto-crea tenant para un usuario si no existe
+-- Migración 042: Actualizar ensure_user_tenant() - Remover self-contact
+-- Elimina la creación automática del contacto "Yo (Mi cuenta)" ya que es innecesario
+-- con el modelo lender_tenant_id/borrower_tenant_id
 
 -- =====================================================
--- FUNCIÓN: ensure_user_tenant
+-- FUNCIÓN: ensure_user_tenant (v2 - sin self-contact)
 -- =====================================================
 
 CREATE OR REPLACE FUNCTION ensure_user_tenant(
@@ -88,6 +89,9 @@ BEGIN
     )
   );
 
+  -- NOTA: Ya NO creamos self-contact "Yo (Mi cuenta)"
+  -- Con lender_tenant_id/borrower_tenant_id no es necesario
+
   RETURN v_tenant_id;
 
 EXCEPTION
@@ -97,24 +101,22 @@ END;
 $$;
 
 -- =====================================================
--- COMENTARIOS Y PERMISOS
+-- COMENTARIOS
 -- =====================================================
 
 COMMENT ON FUNCTION ensure_user_tenant(UUID) IS
-'Asegura que un contact_profile tenga su propio tenant. Si no existe, lo crea automáticamente con configuración por defecto.';
-
--- Permitir que edge functions llamen a esta función
-GRANT EXECUTE ON FUNCTION ensure_user_tenant(UUID) TO service_role;
+'Asegura que un contact_profile tenga su propio tenant. Si no existe, lo crea automáticamente con configuración por defecto. Ya NO crea self-contact.';
 
 -- =====================================================
--- TESTS BÁSICOS
+-- LOG
 -- =====================================================
 
 DO $$
 BEGIN
-  RAISE NOTICE 'Migración 040 completada:';
-  RAISE NOTICE '- Función ensure_user_tenant() creada';
-  RAISE NOTICE '- Permisos asignados a service_role';
+  RAISE NOTICE 'Migración 042 completada:';
+  RAISE NOTICE '- Función ensure_user_tenant() actualizada';
+  RAISE NOTICE '- Self-contact "Yo (Mi cuenta)" ya NO se crea';
+  RAISE NOTICE '- Justificación: Con lender_tenant_id/borrower_tenant_id es innecesario';
 END $$;
 
--- Fin de migración 040
+-- Fin de migración 042

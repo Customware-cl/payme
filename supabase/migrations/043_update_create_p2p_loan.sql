@@ -1,8 +1,8 @@
--- Migración 041: Crear función create_p2p_loan()
--- Crea préstamos con sincronización automática entre tenants
+-- Migración 043: Actualizar create_p2p_loan() - Soporte bidireccional
+-- Agrega parámetro p_i_am_lender para soportar tanto "yo presto" como "me prestan"
 
 -- =====================================================
--- FUNCIÓN: create_p2p_loan
+-- FUNCIÓN: create_p2p_loan (v2 - bidireccional)
 -- =====================================================
 
 CREATE OR REPLACE FUNCTION create_p2p_loan(
@@ -171,10 +171,11 @@ GRANT EXECUTE ON FUNCTION create_p2p_loan(UUID, UUID, BOOLEAN, DECIMAL, VARCHAR,
 
 DO $$
 BEGIN
-  RAISE NOTICE 'Migración 041 completada:';
-  RAISE NOTICE '- Función create_p2p_loan() creada';
-  RAISE NOTICE '- Sincronización P2P habilitada';
-  RAISE NOTICE '- Permisos asignados a service_role';
+  RAISE NOTICE 'Migración 043 completada:';
+  RAISE NOTICE '- Función create_p2p_loan() actualizada';
+  RAISE NOTICE '- Soporte bidireccional: p_i_am_lender agregado';
+  RAISE NOTICE '- Ahora soporta "yo presto" y "me prestan"';
+  RAISE NOTICE '- Permisos actualizados';
 END $$;
 
--- Fin de migración 041
+-- Fin de migración 043

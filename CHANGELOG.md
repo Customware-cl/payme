@@ -126,6 +126,62 @@ Todos los cambios notables del proyecto serán documentados en este archivo.
 
 ---
 
+## [v3.0.2] - 2025-11-13 - 🧹 Corrección: Eliminar Self-Contact Innecesario
+
+### 🎯 Problema Detectado
+
+El usuario identificó que el contacto "Yo (Mi cuenta)" creado automáticamente en `ensure_user_tenant()` era innecesario y confuso:
+- Aparecía como "¡Hola Yo (Mi cuenta)!" en la interfaz web
+- Con `lender_tenant_id` y `borrower_tenant_id`, ya sabemos quién es quién
+- El self-contact no aportaba valor arquitectural
+
+### 🔧 Corrección Aplicada
+
+**Migración 042_update_ensure_user_tenant.sql:**
+- Elimina creación automática de self-contact en `ensure_user_tenant()`
+- Mantiene solo creación de tenant + evento
+- Documentación actualizada explicando la justificación
+
+**Migración 043_update_create_p2p_loan.sql:**
+- Actualiza firma de función con nuevo parámetro `p_i_am_lender: BOOLEAN`
+- Soporta ambas direcciones: "yo presto" (true) y "me prestan" (false)
+- Lógica determina automáticamente `lender_tenant_id` y `borrower_tenant_id`
+- Eventos registran la dirección para debugging
+
+**Limpieza de datos:**
+- Eliminados 3 self-contacts existentes:
+  - Felipe Abarca → "Yo (Mi cuenta)"
+  - Catherine Pereira → "Yo (Mi cuenta)"
+  - Cuenta de +56942356880 → "Yo (Mi cuenta)"
+
+### 💡 Lógica Correcta
+
+**Antes (incorrecto):**
+```
+María presta a Felipe:
+- agreement.tenant_id = maría_tenant
+- agreement.tenant_contact_id = felipe_contact (en tenant de María)
+- María tiene self-contact "Yo (Mi cuenta)" innecesario
+```
+
+**Después (correcto):**
+```
+María presta a Felipe:
+- agreement.lender_tenant_id = maría_tenant
+- agreement.borrower_tenant_id = felipe_tenant
+- NO hay self-contact
+- Visualización: JOIN tenant_contacts usando contact_tenant_id para obtener alias
+```
+
+### ✨ Beneficios
+
+- ✅ Interfaz más limpia (no más "Hola Yo (Mi cuenta)")
+- ✅ Arquitectura simplificada (un concepto menos)
+- ✅ `create_p2p_loan()` ahora soporta ambas direcciones con un solo flag
+- ✅ Modelo mental más claro: lender y borrower son suficientes
+
+---
+
 ## [v2.7.1] - 2025-11-12 - 💬 Mejora de Mensaje de Bienvenida
 
 ### 🎯 Cambios
