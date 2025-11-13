@@ -2,6 +2,76 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.4] - 2025-11-13 - 📱 Nueva Plantilla WhatsApp: Confirmación de Préstamo
+
+### 🎯 Contexto
+
+Al cambiar de app de Meta Business, fue necesario recrear y aprobar nuevamente las plantillas de WhatsApp. Se aprobó la primera plantilla: `loan_confirmation_request_v1`.
+
+### 📋 Plantilla Registrada
+
+**Nombre:** `loan_confirmation_request_v1`
+**Categoría:** UTILITY
+**Idioma:** Spanish (CHL)
+**Estado:** ✅ Aprobada
+
+**Estructura:**
+```
+Header: "Confirmación de Préstamo"
+
+Body:
+Hola {{1}} 👋
+
+{{2}} registró un préstamo a tu nombre por *{{3}}*.
+
+🗓️ Fecha de devolución: {{4}}
+
+*¿Confirmas haber recibido este préstamo?*
+
+Si confirmas:
+✅ Activaremos recordatorios automáticos
+✅ Quedará registrado en el sistema
+
+Si no reconoces este préstamo, recházalo de inmediato.
+
+Responde con los botones ⬇️
+
+Botones:
+- "Sí, confirmo"
+- "No, rechazar"
+```
+
+**Variables:**
+1. {{1}} = Nombre del receptor/borrower
+2. {{2}} = Nombre del prestamista/lender
+3. {{3}} = Monto formateado (ej. "$45.000")
+4. {{4}} = Fecha de devolución (ej. "31/10/25")
+
+### 🔧 Cambios Aplicados
+
+**flow-handlers.ts (líneas 801-817):**
+- Corregido parámetro {{3}} para enviar **solo monto** (antes enviaba texto largo)
+- Antes: `"$45.000 bajo el concepto 'Préstamo en efectivo'"`
+- Ahora: `"$45.000"`
+- Se alinea con la plantilla aprobada en Meta
+
+**Base de datos:**
+- Plantilla registrada en tabla `templates`
+- `meta_template_name`: `loan_confirmation_request_v1`
+- `approval_status`: `approved`
+- `has_buttons`: `true`
+- `variable_count`: `4`
+
+### ✨ Funcionalidad
+
+Cuando un usuario registra un préstamo a través del bot, el sistema:
+1. Crea el agreement con status `pending_confirmation`
+2. Envía plantilla al borrower solicitando confirmación
+3. Botones permiten confirmar o rechazar el préstamo
+4. Sistema activa recordatorios automáticos si se confirma
+
+---
+
 ## [v3.0.3] - 2025-11-13 - 💬 Mensajes Diferenciados para Nuevos vs Existentes
 
 ### 🎯 Problema Detectado
