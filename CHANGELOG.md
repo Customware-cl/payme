@@ -2,6 +2,82 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.21] - 2025-11-14 - 🔧 Fix: Tracking Correcto de Usuarios Invitados
+
+### 🐛 Problema Detectado
+
+Al crear un préstamo para un contacto nuevo desde la web app, el tenant del borrower se creaba con:
+- `acquisition_type: 'organic'` ❌ (debería ser 'invited')
+- `invited_by_tenant_id: NULL` ❌ (debería tener el ID del lender)
+
+**Ejemplo:**
+```json
+{
+  "name": "Cuenta de +56942356880",
+  "acquisition_type": "organic",        // ❌ Incorrecto
+  "invited_by_tenant_id": null          // ❌ Incorrecto
+}
+```
+
+### 🎯 Causa Raíz
+
+En `flow-handlers.ts:230`, al crear tenant del borrower, se llamaba a `ensure_user_tenant()` **sin pasar parámetros de invitación**:
+
+**ANTES:**
+```typescript
+const { data: newTenantId } = await this.supabase
+  .rpc('ensure_user_tenant', {
+    p_contact_profile_id: contactProfile.id
+    // ❌ Falta: p_invited_by_tenant_id
+    // ❌ Falta: p_acquisition_type
+  });
+```
+
+Esto hacía que la función usara los valores DEFAULT:
+- `p_invited_by_tenant_id = NULL`
+- `p_acquisition_type = 'organic'`
+
+### ✅ Solución Aplicada
+
+**DESPUÉS:**
+```typescript
+const { data: newTenantId } = await this.supabase
+  .rpc('ensure_user_tenant', {
+    p_contact_profile_id: contactProfile.id,
+    p_invited_by_tenant_id: tenantId,  // ✅ Tenant del lender
+    p_acquisition_type: 'invited'       // ✅ Usuario invitado
+  });
+```
+
+### 📊 Resultado Esperado
+
+Ahora cuando Felipe crea un préstamo para un contacto nuevo:
+
+```json
+{
+  "name": "Cuenta de +56942356880",
+  "acquisition_type": "invited",                    // ✅ Correcto
+  "invited_by_tenant_id": "felipe-tenant-id-uuid"   // ✅ Correcto
+}
+```
+
+### 🔍 Tipos de Acquisition
+
+| Tipo | Descripción | Cuándo se usa |
+|------|-------------|---------------|
+| `organic` | Usuario llegó por cuenta propia | Primera interacción por WhatsApp sin préstamo previo |
+| `invited` | Usuario invitado por otro | Recibió préstamo antes de contactar por WhatsApp |
+
+### 🧪 Verificación
+
+Para verificar el fix:
+1. Crear préstamo para contacto nuevo desde web app
+2. Verificar en DB que el tenant del borrower tenga:
+   - `acquisition_type = 'invited'`
+   - `invited_by_tenant_id = <tenant_id del lender>`
+
+---
+
 ## [v3.0.20] - 2025-11-14 - 🔧 Hotfix: Resolver Ambigüedad en ensure_user_tenant
 
 ### 🐛 Problema Detectado

@@ -225,10 +225,12 @@ export class FlowHandlers {
             contactTenantId = existingTenant.id;
             console.log(`Contact already has tenant: ${contactTenantId}`);
           } else {
-            // Caso 2: El contacto NO tiene tenant → usar ensure_user_tenant()
+            // Caso 2: El contacto NO tiene tenant → crear como usuario invitado
             const { data: newTenantId, error: tenantError } = await this.supabase
               .rpc('ensure_user_tenant', {
-                p_contact_profile_id: contactProfile.id
+                p_contact_profile_id: contactProfile.id,
+                p_invited_by_tenant_id: tenantId,  // Tenant del lender que crea el préstamo
+                p_acquisition_type: 'invited'       // Usuario invitado por préstamo
               });
 
             if (tenantError || !newTenantId) {
@@ -237,7 +239,7 @@ export class FlowHandlers {
             }
 
             contactTenantId = newTenantId;
-            console.log(`Created new tenant for contact using ensure_user_tenant: ${contactTenantId}`);
+            console.log(`Created new tenant for contact as INVITED user: ${contactTenantId}, invited by: ${tenantId}`);
           }
 
           // Crear tenant_contact CON contact_tenant_id
