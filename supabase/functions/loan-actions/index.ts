@@ -133,14 +133,10 @@ serve(async (req: Request) => {
       }
 
       if (action === 'get_detail') {
-        // Obtener préstamo con información completa
+        // Obtener préstamo con información completa (P2P multi-tenant)
         const { data: loan, error } = await supabase
           .from('agreements')
-          .select(`
-            *,
-            lender:tenant_contacts!lender_tenant_contact_id(id, name, contact_profiles(phone_e164)),
-            borrower:tenant_contacts!tenant_contact_id(id, name, contact_profiles(phone_e164))
-          `)
+          .select('*')
           .eq('id', loanId)
           .single();
 
@@ -151,11 +147,11 @@ serve(async (req: Request) => {
           });
         }
 
-        // Determinar rol del usuario
+        // Determinar rol del usuario en arquitectura P2P multi-tenant
         let userRole: 'lender' | 'borrower' | null = null;
-        if (loan.lender_tenant_contact_id === tokenData.contact_id) {
+        if (loan.lender_tenant_id === tokenData.tenant_id) {
           userRole = 'lender';
-        } else if (loan.tenant_contact_id === tokenData.contact_id) {
+        } else if (loan.borrower_tenant_id === tokenData.tenant_id) {
           userRole = 'borrower';
         }
 
@@ -166,9 +162,89 @@ serve(async (req: Request) => {
           });
         }
 
+        // Enriquecer con nombres de lender y borrower
+        let lenderInfo = { id: null, name: 'Desconocido', phone_e164: null };
+        let borrowerInfo = { id: null, name: 'Desconocido', phone_e164: null };
+
+        // Obtener info del lender
+        if (loan.lender_tenant_id) {
+          const { data: lenderTenant } = await supabase
+            .from('tenants')
+            .select('owner_contact_profile_id')
+            .eq('id', loan.lender_tenant_id)
+            .single();
+
+          if (lenderTenant?.owner_contact_profile_id) {
+            const { data: lenderProfile } = await supabase
+              .from('contact_profiles')
+              .select('id, first_name, last_name, phone_e164')
+              .eq('id', lenderTenant.owner_contact_profile_id)
+              .single();
+
+            if (lenderProfile) {
+              lenderInfo = {
+                id: lenderProfile.id,
+                name: lenderProfile.first_name
+                  ? `${lenderProfile.first_name} ${lenderProfile.last_name || ''}`.trim()
+                  : lenderProfile.phone_e164,
+                phone_e164: lenderProfile.phone_e164
+              };
+            }
+          }
+        }
+
+        // Obtener info del borrower
+        if (loan.borrower_tenant_id) {
+          const { data: borrowerTenant } = await supabase
+            .from('tenants')
+            .select('owner_contact_profile_id')
+            .eq('id', loan.borrower_tenant_id)
+            .single();
+
+          if (borrowerTenant?.owner_contact_profile_id) {
+            const { data: borrowerProfile } = await supabase
+              .from('contact_profiles')
+              .select('id, first_name, last_name, phone_e164')
+              .eq('id', borrowerTenant.owner_contact_profile_id)
+              .single();
+
+            if (borrowerProfile) {
+              borrowerInfo = {
+                id: borrowerProfile.id,
+                name: borrowerProfile.first_name
+                  ? `${borrowerProfile.first_name} ${borrowerProfile.last_name || ''}`.trim()
+                  : borrowerProfile.phone_e164,
+                phone_e164: borrowerProfile.phone_e164
+              };
+            }
+          }
+        } else if (loan.tenant_contact_id) {
+          // Fallback legacy: borrower sin tenant
+          const { data: borrowerContact } = await supabase
+            .from('tenant_contacts')
+            .select('id, name, contact_profiles(phone_e164)')
+            .eq('id', loan.tenant_contact_id)
+            .single();
+
+          if (borrowerContact) {
+            borrowerInfo = {
+              id: borrowerContact.id,
+              name: borrowerContact.name,
+              phone_e164: borrowerContact.contact_profiles?.phone_e164 || null
+            };
+          }
+        }
+
+        // Agregar info enriquecida al loan
+        const enrichedLoan = {
+          ...loan,
+          lender: lenderInfo,
+          borrower: borrowerInfo
+        };
+
         return new Response(JSON.stringify({
           success: true,
-          loan,
+          loan: enrichedLoan,
           userRole
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -211,14 +287,10 @@ serve(async (req: Request) => {
         });
       }
 
-      // Obtener préstamo
+      // Obtener préstamo (P2P multi-tenant)
       const { data: loan, error: loanError } = await supabase
         .from('agreements')
-        .select(`
-          *,
-          lender:tenant_contacts!lender_tenant_contact_id(id, name, contact_profiles(phone_e164)),
-          borrower:tenant_contacts!tenant_contact_id(id, name, contact_profiles(phone_e164))
-        `)
+        .select('*')
         .eq('id', loan_id)
         .single();
 
@@ -229,11 +301,11 @@ serve(async (req: Request) => {
         });
       }
 
-      // Determinar rol del usuario
+      // Determinar rol del usuario en arquitectura P2P multi-tenant
       let userRole: 'lender' | 'borrower' | null = null;
-      if (loan.lender_tenant_contact_id === tokenData.contact_id) {
+      if (loan.lender_tenant_id === tokenData.tenant_id) {
         userRole = 'lender';
-      } else if (loan.tenant_contact_id === tokenData.contact_id) {
+      } else if (loan.borrower_tenant_id === tokenData.tenant_id) {
         userRole = 'borrower';
       }
 

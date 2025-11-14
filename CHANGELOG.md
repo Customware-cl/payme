@@ -2,6 +2,102 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.13] - 2025-11-13 - 🔧 Fix: Permisos de detalle de préstamo (loan-actions)
+
+### 🎯 Problema Detectado
+
+Usuario reportó que al hacer clic en un préstamo para ver el detalle aparecía:
+"Error al cargar el préstamo, no tienes permiso para ver este préstamo"
+
+**Causa Raíz:**
+`loan-actions` validaba permisos usando campos legacy mono-tenant:
+
+```typescript
+// ❌ VALIDACIÓN LEGACY (GET y POST)
+if (loan.lender_tenant_contact_id === tokenData.contact_id) {
+  userRole = 'lender';
+} else if (loan.tenant_contact_id === tokenData.contact_id) {
+  userRole = 'borrower';
+}
+```
+
+Comparaba `contact_id` del usuario con `lender_tenant_contact_id` del préstamo,
+pero en P2P multi-tenant estos campos no coinciden porque:
+- Usuario tiene `contact_id` en SU tenant
+- Préstamo tiene `lender_tenant_id` y `borrower_tenant_id` (no contact_ids)
+
+### 🔧 Solución Aplicada
+
+**loan-actions/index.ts (líneas 137-156 y 291-310):** Actualizar validación de permisos
+
+```typescript
+// ✅ VALIDACIÓN P2P MULTI-TENANT
+// Para GET detail y POST actions:
+
+// Obtener préstamo sin JOINs legacy
+const { data: loan } = await supabase
+  .from('agreements')
+  .select('*')
+  .eq('id', loanId)
+  .single();
+
+// Determinar rol por tenant_id (no por contact_id)
+let userRole: 'lender' | 'borrower' | null = null;
+if (loan.lender_tenant_id === tokenData.tenant_id) {
+  userRole = 'lender';
+} else if (loan.borrower_tenant_id === tokenData.tenant_id) {
+  userRole = 'borrower';
+}
+```
+
+**loan-actions/index.ts (líneas 165-243):** Enriquecer con nombres
+
+Agregar lógica para resolver nombres de lender y borrower desde tenants:
+
+```typescript
+// Para lender
+if (loan.lender_tenant_id) {
+  const lenderTenant = await supabase
+    .from('tenants')
+    .select('owner_contact_profile_id')
+    .eq('id', loan.lender_tenant_id)
+    .single();
+
+  const lenderProfile = await supabase
+    .from('contact_profiles')
+    .select('id, first_name, last_name, phone_e164')
+    .eq('id', lenderTenant.owner_contact_profile_id)
+    .single();
+
+  lenderInfo = {
+    id: lenderProfile.id,
+    name: lenderProfile.first_name || lenderProfile.phone_e164,
+    phone_e164: lenderProfile.phone_e164
+  };
+}
+
+// Similar para borrower
+```
+
+**Cambios aplicados:**
+- GET `/loan-actions?action=get_detail`: Validación + enriquecimiento
+- POST `/loan-actions`: Validación para acciones (marcar devuelto, etc.)
+
+### ✅ Resultado
+
+Detalle de préstamos funciona correctamente en arquitectura P2P:
+
+1. ✅ Validación de permisos usa `lender_tenant_id` y `borrower_tenant_id`
+2. ✅ Usuario puede ver detalles de préstamos donde es lender O borrower
+3. ✅ Nombres de lender/borrower resueltos desde tenants
+4. ✅ Compatibilidad con préstamos legacy (fallback a tenant_contact_id)
+
+### 📦 Edge Functions Desplegadas
+
+- `loan-actions` (versión nueva)
+
+---
+
 ## [v3.0.12] - 2025-11-13 - 🔧 Fix: App web usar campos P2P (lender/borrower_tenant_id)
 
 ### 🎯 Problema Detectado
