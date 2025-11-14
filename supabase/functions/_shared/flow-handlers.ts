@@ -150,12 +150,52 @@ export class FlowHandlers {
           console.log('Created new contact_profile:', contactProfile.id);
         }
 
-        // Ahora crear tenant_contact
+        // Buscar o crear tenant para el contacto (P2P architecture)
+        let contactTenantId = null;
+
+        // Buscar si este contact_profile ya tiene un tenant registrado
+        const { data: existingTenant } = await this.supabase
+          .from('tenants')
+          .select('id')
+          .eq('owner_contact_profile_id', contactProfile.id)
+          .maybeSingle();
+
+        if (existingTenant) {
+          // Caso 1: El contacto ya tiene tenant (usuario registrado)
+          contactTenantId = existingTenant.id;
+          console.log(`Contact already has tenant: ${contactTenantId}`);
+        } else {
+          // Caso 2: El contacto NO tiene tenant → crear uno automáticamente
+          const tenantName = phoneNumber
+            ? `Cuenta de ${phoneNumber}`
+            : `Cuenta de ${contactName}`;
+
+          const { data: newTenant, error: tenantError } = await this.supabase
+            .from('tenants')
+            .insert({
+              name: tenantName,
+              owner_contact_profile_id: contactProfile.id,
+              settings: {}
+            })
+            .select()
+            .single();
+
+          if (tenantError) {
+            console.error('Error creating tenant for contact:', tenantError);
+            throw new Error(`Failed to create tenant: ${tenantError.message}`);
+          }
+
+          contactTenantId = newTenant.id;
+          console.log(`Created new tenant for contact: ${contactTenantId}`);
+        }
+
+        // Ahora crear tenant_contact CON contact_tenant_id
         const { data: newTenantContact, error: createError } = await this.supabase
           .from('tenant_contacts')
           .insert({
             tenant_id: tenantId,
             contact_profile_id: contactProfile.id,
+            contact_tenant_id: contactTenantId,  // ✅ SIEMPRE tiene valor
             name: contactName,
             preferred_channel: 'whatsapp',
             opt_in_status: 'pending',

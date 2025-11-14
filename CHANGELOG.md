@@ -2,6 +2,75 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.16] - 2025-11-14 - 🔧 Fix: contact_tenant_id siempre debe tener valor en arquitectura P2P
+
+### 🎯 Problema Detectado
+
+Cuando Felipe crea un préstamo a Juan, el campo `borrower_tenant_id` quedaba NULL, imposibilitando la correlación correcta en confirmaciones.
+
+**Causa Raíz:**
+
+Al agregar un contacto desde la webapp, el campo `contact_tenant_id` quedaba NULL en dos casos:
+1. Usuario ya registrado con tenant → NO se buscaba su tenant existente
+2. Usuario nuevo sin tenant → NO se creaba tenant automáticamente
+
+**Impacto:**
+- Préstamos creados con `borrower_tenant_id: NULL`
+- Handler de confirmación en wa_webhook no podía encontrar el préstamo correcto
+- Confirmaba préstamo equivocado (el más antiguo en lugar del específico)
+
+### ✅ Solución Aplicada
+
+**Archivo:** `supabase/functions/_shared/flow-handlers.ts` (líneas 153-190)
+
+Implementamos lógica de 2 pasos al crear contacto:
+
+1. **Buscar tenant existente:**
+   ```typescript
+   const { data: existingTenant } = await supabase
+     .from('tenants')
+     .select('id')
+     .eq('owner_contact_profile_id', contactProfile.id)
+     .maybeSingle();
+   ```
+
+2. **Si no existe, crear tenant automáticamente:**
+   ```typescript
+   const { data: newTenant } = await supabase
+     .from('tenants')
+     .insert({
+       name: `Cuenta de ${phoneNumber}`,
+       owner_contact_profile_id: contactProfile.id,
+       settings: {}
+     })
+     .select()
+     .single();
+   ```
+
+3. **Crear tenant_contact CON contact_tenant_id:**
+   ```typescript
+   .insert({
+     tenant_id: tenantId,
+     contact_profile_id: contactProfile.id,
+     contact_tenant_id: contactTenantId,  // ✅ SIEMPRE tiene valor
+     name: contactName,
+     ...
+   })
+   ```
+
+**Resultado:** `contact_tenant_id` NUNCA es NULL
+
+### 📁 Archivos Modificados
+- `supabase/functions/_shared/flow-handlers.ts` (líneas 153-210)
+
+### 🧪 Testing
+- ✅ Usuario nuevo sin tenant → crea tenant automáticamente
+- ✅ Usuario existente con tenant → usa tenant existente
+- ✅ Préstamos ahora tienen `borrower_tenant_id` correcto
+- ✅ Cuando usuario se registra luego → usa tenant pre-existente (no duplica)
+
+---
+
 ## [v3.0.15] - 2025-11-14 - 🔧 Fix: Usar campo 'description' en lugar de 'item_description'
 
 ### 🎯 Problema Detectado
