@@ -1,6 +1,6 @@
 // Edge Function: WhatsApp Webhook Handler
-// Versión con flujos conversacionales integrados
-// v2.0.5 - Fix getWindowStatus query field name 2025-10-24
+// v2.7.0 - Modo Simplificado (Desactivación temporal de IA y flujos)
+// 2025-11-12
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -9,6 +9,21 @@ import { FlowHandlers } from "../_shared/flow-handlers.ts";
 import { IntentDetector } from "../_shared/intent-detector.ts";
 import { WhatsAppWindowManager } from "../_shared/whatsapp-window-manager.ts";
 import { FlowDataProvider } from "../_shared/flow-data-provider.ts";
+
+// ============================================================================
+// 🚧 FEATURE FLAGS - Modo Simplificado
+// ============================================================================
+// Cambiar a `true` para reactivar funcionalidades
+const FEATURES = {
+  AI_PROCESSING: false,           // IA para texto, audio, imágenes
+  CONVERSATIONAL_FLOWS: false,    // Flujos de nuevo préstamo por WhatsApp
+  INTERACTIVE_BUTTONS: false,     // Botones: new_loan, help, reschedule, etc.
+  // Siempre activos:
+  CHECK_STATUS: true,             // Ver estado de préstamos
+  MARK_RETURNED: true,            // Marcar como devuelto
+  MENU_ACCESS: true               // Acceso al portal web
+};
+// ============================================================================
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -181,22 +196,72 @@ async function processInboundMessage(
       }
     }
 
-    // 1.2. Fallback: buscar tenant por phone_number_id (legacy/compartido)
-    if (!tenant) {
-      const { data: legacyTenant } = await supabase
+    // 1.2. Auto-crear tenant si no existe (arquitectura multi-tenant P2P)
+    let isNewUser = false; // Flag para detectar si es usuario nuevo
+
+    if (!tenant && !senderProfile) {
+      console.log('[ROUTING] Número nuevo detectado, auto-creando contact_profile y tenant');
+      isNewUser = true; // Usuario completamente nuevo
+
+      // Crear contact_profile para el número nuevo
+      const { data: newProfile, error: profileError } = await supabase
+        .from('contact_profiles')
+        .insert({ phone_e164: formattedPhone })
+        .select()
+        .single();
+
+      if (profileError || !newProfile) {
+        console.error('[ROUTING] ✗ Error creando contact_profile:', profileError);
+        return { success: false, error: 'Failed to create profile' };
+      }
+
+      console.log('[ROUTING] ✓ Contact profile creado:', newProfile.id);
+
+      // Auto-crear tenant usando la función ensure_user_tenant
+      const { data: newTenantId, error: tenantError } = await supabase
+        .rpc('ensure_user_tenant', { p_contact_profile_id: newProfile.id });
+
+      if (tenantError || !newTenantId) {
+        console.error('[ROUTING] ✗ Error creando tenant:', tenantError);
+        return { success: false, error: 'Failed to create tenant' };
+      }
+
+      console.log('[ROUTING] ✓ Tenant auto-creado:', newTenantId);
+
+      // Obtener el tenant recién creado
+      const { data: newTenant } = await supabase
         .from('tenants')
         .select('*')
-        .eq('whatsapp_phone_number_id', phoneNumberId)
-        .maybeSingle();
+        .eq('id', newTenantId)
+        .single();
 
-      if (legacyTenant) {
-        tenant = legacyTenant;
-        console.log('[ROUTING] → Usando tenant legacy/compartido:', tenant.name);
+      tenant = newTenant;
+    } else if (!tenant && senderProfile) {
+      // El usuario ya tiene contact_profile pero no tenant, crear tenant
+      console.log('[ROUTING] Contact profile existe pero sin tenant, auto-creando tenant');
+      isNewUser = true; // Usuario semi-nuevo (tiene profile pero no tenant)
+
+      const { data: newTenantId, error: tenantError } = await supabase
+        .rpc('ensure_user_tenant', { p_contact_profile_id: senderProfile.id });
+
+      if (tenantError || !newTenantId) {
+        console.error('[ROUTING] ✗ Error creando tenant:', tenantError);
+        return { success: false, error: 'Failed to create tenant' };
       }
+
+      console.log('[ROUTING] ✓ Tenant auto-creado:', newTenantId);
+
+      const { data: newTenant } = await supabase
+        .from('tenants')
+        .select('*')
+        .eq('id', newTenantId)
+        .single();
+
+      tenant = newTenant;
     }
 
     if (!tenant) {
-      console.error('[ROUTING] ✗ No se encontró tenant para phone_number_id:', phoneNumberId);
+      console.error('[ROUTING] ✗ No se pudo determinar tenant para:', formattedPhone);
       return { success: false, error: 'Tenant not found' };
     }
 
@@ -273,50 +338,17 @@ async function processInboundMessage(
       throw new Error('Failed to get or create tenant_contact');
     }
 
-    // 2.5. Crear o buscar contact legacy (para compatibilidad con whatsapp_messages)
-    let { data: legacyContact } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('tenant_id', tenant.id)
-      .eq('tenant_contact_id', tenantContact.id)
-      .maybeSingle();
-
-    if (!legacyContact) {
-      console.log('[Webhook] Creating legacy contact for tenant_contact:', tenantContact.id);
-      const { data: newLegacyContact, error: legacyError } = await supabase
-        .from('contacts')
-        .insert({
-          tenant_id: tenant.id,
-          contact_profile_id: contactProfile.id,
-          tenant_contact_id: tenantContact.id,
-          phone_e164: formattedPhone,
-          name: contactName,
-          whatsapp_id: message.from,
-          opt_in_status: 'pending',
-          preferred_language: 'es',
-          metadata: {}
-        })
-        .select()
-        .single();
-
-      if (legacyError || !newLegacyContact) {
-        console.error('[Webhook] Error creating legacy contact:', legacyError);
-        // No fallar por esto, continuar con tenant_contact
-      } else {
-        legacyContact = newLegacyContact;
-        console.log('[Webhook] Created legacy contact:', legacyContact.id);
-      }
-    }
-
-    // Usar legacy contact si existe, sino usar tenant_contact (fallback)
-    const contact = legacyContact || tenantContact;
+    // 2.5. Usar tenant_contact directamente (deprecación de contacts legacy)
+    const contact = tenantContact;
+    console.log('[Webhook] Using tenant_contact:', contact.id);
 
     // 3. Registrar mensaje entrante
     const { error: messageInsertError } = await supabase
       .from('whatsapp_messages')
       .insert({
         tenant_id: tenant.id,
-        contact_id: contact.id,
+        tenant_contact_id: contact.id,  // FASE 2: usar tenant_contact_id (modern)
+        contact_id: null,  // Legacy column, deprecated (será eliminada en FASE 4)
         wa_message_id: message.id,
         direction: 'inbound',
         message_type: message.type,
@@ -356,6 +388,111 @@ async function processInboundMessage(
         // Convertir a comando para iniciar flujo
         console.log('Detected button text for new_loan, converting to command');
         // Procesar como si fuera el comando directo - continuar con flujo conversacional
+      } else if (cleanText.includes('si, confirmo') || cleanText.includes('sí, confirmo') ||
+                 cleanText.includes('no, rechazar')) {
+        // Handler para botones de confirmación de préstamo
+        const isConfirm = cleanText.includes('si, confirmo') || cleanText.includes('sí, confirmo');
+        console.log(`[LOAN_CONFIRMATION] Processing ${isConfirm ? 'confirmation' : 'rejection'} from borrower`);
+
+        try {
+          // Buscar el agreement más reciente pendiente de confirmación donde el usuario es borrower
+          // En arquitectura P2P: buscar por borrower_tenant_id (mi tenant = tenant que recibe préstamo)
+          const { data: pendingLoan, error: fetchError } = await supabase
+            .from('agreements')
+            .select('*')
+            .eq('borrower_tenant_id', tenant.id) // MI tenant es el borrower
+            .eq('status', 'pending_confirmation')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (fetchError) {
+            console.error('[LOAN_CONFIRMATION] Error fetching pending loan:', fetchError);
+            responseMessage = 'Hubo un error al procesar tu respuesta. Por favor intenta de nuevo.';
+          } else if (!pendingLoan) {
+            console.log('[LOAN_CONFIRMATION] No pending loan found for borrower');
+            responseMessage = 'No encontré ningún préstamo pendiente de confirmación.\n\nSi necesitas ayuda, escribe "menu".';
+          } else {
+            // Procesar confirmación o rechazo
+            if (isConfirm) {
+              // CONFIRMAR: cambiar status a active y llenar borrower_tenant_id
+              const { error: updateError } = await supabase
+                .from('agreements')
+                .update({
+                  status: 'active',
+                  borrower_tenant_id: tenant.id, // Asociar tenant del borrower que confirma
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', pendingLoan.id);
+
+              if (updateError) {
+                console.error('[LOAN_CONFIRMATION] Error confirming loan:', updateError);
+                responseMessage = 'Hubo un error al confirmar el préstamo. Por favor intenta de nuevo.';
+              } else {
+                // Registrar evento
+                await supabase
+                  .from('events')
+                  .insert({
+                    tenant_id: tenant.id,
+                    tenant_contact_id: contact.id,
+                    agreement_id: pendingLoan.id,
+                    event_type: 'confirmed_returned', // Reutilizamos tipo existente
+                    payload: {
+                      action: 'loan_confirmed_by_borrower',
+                      contact_name: contact.name,
+                      agreement_title: pendingLoan.title,
+                      confirmed_at: new Date().toISOString()
+                    }
+                  });
+
+                const loanDescription = pendingLoan.amount
+                  ? `$${formatMoney(pendingLoan.amount)}`
+                  : (pendingLoan.description || pendingLoan.title);
+
+                responseMessage = `✅ *Préstamo confirmado*\n\nHas confirmado recibir: ${loanDescription}\n\n📅 Fecha de devolución: ${formatDate(pendingLoan.due_date)}\n\n💡 Escribe "estado" para ver tus préstamos activos.`;
+
+                console.log('[LOAN_CONFIRMATION] Loan confirmed successfully:', pendingLoan.id);
+              }
+            } else {
+              // RECHAZAR: cambiar status a rejected
+              const { error: updateError } = await supabase
+                .from('agreements')
+                .update({
+                  status: 'rejected',
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', pendingLoan.id);
+
+              if (updateError) {
+                console.error('[LOAN_CONFIRMATION] Error rejecting loan:', updateError);
+                responseMessage = 'Hubo un error al rechazar el préstamo. Por favor intenta de nuevo.';
+              } else {
+                // Registrar evento
+                await supabase
+                  .from('events')
+                  .insert({
+                    tenant_id: tenant.id,
+                    tenant_contact_id: contact.id,
+                    agreement_id: pendingLoan.id,
+                    event_type: 'button_clicked',
+                    payload: {
+                      action: 'loan_rejected_by_borrower',
+                      contact_name: contact.name,
+                      agreement_title: pendingLoan.title,
+                      rejected_at: new Date().toISOString()
+                    }
+                  });
+
+                responseMessage = `❌ *Préstamo rechazado*\n\nHas rechazado el préstamo. Se notificará al prestamista.\n\n💡 Si tienes alguna duda, escribe "menu" para acceder al portal.`;
+
+                console.log('[LOAN_CONFIRMATION] Loan rejected successfully:', pendingLoan.id);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('[LOAN_CONFIRMATION] Exception processing confirmation:', error);
+          responseMessage = 'Hubo un error al procesar tu respuesta. Por favor intenta de nuevo escribiendo "menu".';
+        }
       } else if (lowerText === 'hola' || lowerText === 'hi' || lowerText === 'menu' || lowerText === 'inicio' ||
                  lowerText === 'ayuda' || lowerText === 'help' ||
                  lowerText === 'estado' || lowerText === 'status' ||
@@ -391,26 +528,31 @@ async function processInboundMessage(
             console.log('[MENU_ACCESS] Menu URL generated:', menuUrl);
 
             // 2. Enviar mensaje interactivo con botón CTA URL
+            // Diferenciar mensaje según si es usuario nuevo o existente
+            const welcomeMessage = isNewUser
+              ? '¡Hola! 👋 Te damos la bienvenida a Payme, tu asistente de préstamos.\n\nAquí puedes:\n✅ Registrar préstamos que hiciste o te hicieron\n✅ Ver el estado de tus préstamos\n✅ Recibir recordatorios de pago automáticos\n\nTodo lo controlas desde el siguiente enlace 👇\n\n⏱️ Válido por 30 días\n\n💡 Comandos útiles:\n• Escribe "estado" para ver tus préstamos activos\n• Escribe "menu" para obtener nuevamente este enlace'
+              : '¡Hola! 👋 Soy tu asistente de préstamos.\n\nRegistra préstamos, ve su estado y gestiona tu información.\n\n⏱️ Válido por 30 días.';
+
             interactiveResponse = {
               type: 'cta_url',
               body: {
-                text: '¡Hola! 👋 Soy tu asistente de préstamos.\n\nRegistra préstamos, ve su estado y gestiona tu información.\n\n⏱️ Válido por 30 días.'
+                text: welcomeMessage
               },
               action: {
                 name: 'cta_url',
                 parameters: {
-                  display_text: 'Ingresar al menú',
+                  display_text: 'Acceder a Payme',
                   url: menuUrl
                 }
               }
             };
           } else {
             console.error('[MENU_ACCESS] Error generating menu token:', tokenData);
-            responseMessage = '¡Hola! 👋 Soy tu asistente de préstamos.\n\nHubo un error generando tu acceso. Por favor intenta de nuevo.';
+            responseMessage = '¡Hola! 👋 Te damos la bienvenida a Payme.\n\nHubo un error generando tu acceso. Por favor intenta de nuevo escribiendo "menu".';
           }
         } catch (error) {
           console.error('[MENU_ACCESS] Exception generating menu access:', error);
-          responseMessage = '¡Hola! 👋 Soy tu asistente de préstamos.\n\nHubo un error generando tu acceso. Por favor intenta de nuevo.';
+          responseMessage = '¡Hola! 👋 Te damos la bienvenida a Payme.\n\nHubo un error generando tu acceso. Por favor intenta de nuevo escribiendo "menu".';
         }
       }
 
@@ -424,8 +566,8 @@ async function processInboundMessage(
           let flowType = null;
           let aiProcessed = false;  // Flag para indicar si AI Agent ya procesó
 
-          // Si NO hay flujo activo, delegar a AI Agent
-          if (!currentState) {
+          // Si NO hay flujo activo, delegar a AI Agent (si está habilitado)
+          if (!currentState && FEATURES.AI_PROCESSING) {
             console.log('[AI-AGENT] No active flow, delegating to AI agent');
 
             try {
@@ -493,10 +635,15 @@ async function processInboundMessage(
                 responseMessage = `No estoy seguro de lo que necesitas. ¿Te refieres a alguno de estos?\n\n${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n\nO escribe "ayuda" para ver todas las opciones.`;
               }
             }
+          } else if (!currentState && !FEATURES.AI_PROCESSING) {
+            // IA desactivada - enviar mensaje alternativo
+            console.log('[AI-AGENT] AI processing disabled, sending fallback message');
+            responseMessage = 'Por el momento solo puedo ayudarte con acceso al menú web. 🌐\n\nEscribe "hola" o "menu" para obtener tu enlace de acceso.\n\n📊 También puedes escribir "estado" para ver tus préstamos activos.';
+            aiProcessed = true; // Marcar como procesado para no entrar al flujo
           }
 
-          // ✅ Solo llamar a conversationManager si AI NO procesó
-          if (!responseMessage && !aiProcessed) {
+          // ✅ Solo llamar a conversationManager si AI NO procesó y flujos están activos
+          if (!responseMessage && !aiProcessed && FEATURES.CONVERSATIONAL_FLOWS) {
             // Procesar entrada en el flujo
             const result = await conversationManager.processInput(tenant.id, contact.id, text, flowType);
 
@@ -667,7 +814,8 @@ async function processInboundMessage(
           .from('events')
           .insert({
             tenant_id: tenant.id,
-            contact_id: contact.id,
+            tenant_contact_id: contact.id,  // FASE 2: usar tenant_contact_id (modern)
+            contact_id: null,  // Legacy column, deprecated
             event_type: 'list_item_selected',
             payload: { list_item_id: selectedId, message_id: message.id },
             whatsapp_message_id: message.id
@@ -820,14 +968,38 @@ async function processInboundMessage(
           .from('events')
           .insert({
             tenant_id: tenant.id,
-            contact_id: contact.id,
+            tenant_contact_id: contact.id,  // FASE 2: usar tenant_contact_id (modern)
+            contact_id: null,  // Legacy column, deprecated
             event_type: 'button_clicked',
             payload: { button_id: buttonId, message_id: message.id },
             whatsapp_message_id: message.id
           });
 
-        // Procesar según botón
-        switch (buttonId) {
+        // Filtro de botones según feature flags
+        const allowedButtons = ['check_status']; // Siempre permitidos
+        const isDynamicMarkReturned = buttonId.startsWith('loan_') && buttonId.endsWith('_mark_returned');
+        const isInteractiveButton = ['new_loan', 'new_loan_chat', 'new_loan_web', 'help', 'reschedule', 'new_service', 'web_menu', 'user_profile', 'opt_in_yes', 'opt_in_no', 'loan_returned'].includes(buttonId);
+        const isFlowButton = ['loan_money', 'loan_object', 'loan_other', 'date_tomorrow', 'date_end_of_month', 'date_custom'].includes(buttonId);
+        // Botones de confirmación de préstamo (SIEMPRE permitidos - core business)
+        const isLoanConfirmationButton = buttonId.toLowerCase().includes('confirm') ||
+                                         buttonId.toLowerCase().includes('reject') ||
+                                         buttonId.toLowerCase().includes('rechazar') ||
+                                         buttonId.toLowerCase().includes('si_confirmo') ||
+                                         buttonId.toLowerCase().includes('no_rechazar');
+
+        // Verificar si el botón está permitido según los feature flags
+        const isButtonAllowed = allowedButtons.includes(buttonId) ||
+                                isDynamicMarkReturned ||
+                                isLoanConfirmationButton ||
+                                (FEATURES.INTERACTIVE_BUTTONS && isInteractiveButton) ||
+                                (FEATURES.CONVERSATIONAL_FLOWS && isFlowButton);
+
+        if (!isButtonAllowed) {
+          console.log(`[BUTTON] Button "${buttonId}" is disabled`);
+          responseMessage = 'Esta funcionalidad está temporalmente desactivada. 🚧\n\nPuedes:\n📊 Escribir "estado" para ver tus préstamos\n🌐 Escribir "menu" para acceder al portal web';
+        } else {
+          // Procesar según botón
+          switch (buttonId) {
         case 'loan_money':
         case 'loan_object':
         case 'loan_other':
@@ -1291,7 +1463,8 @@ async function processInboundMessage(
             .from('events')
             .insert({
               tenant_id: tenant.id,
-              contact_id: contact.id,
+              tenant_contact_id: contact.id,  // FASE 2: usar tenant_contact_id (modern)
+              contact_id: null,  // Legacy column, deprecated
               event_type: 'opt_in_received',
               payload: { opted_in: true, timestamp: new Date().toISOString() }
             });
@@ -1338,7 +1511,8 @@ async function processInboundMessage(
               .from('events')
               .insert({
                 tenant_id: tenant.id,
-                contact_id: contact.id,
+                tenant_contact_id: contact.id,  // FASE 2: usar tenant_contact_id (modern)
+                contact_id: null,  // Legacy column, deprecated
                 agreement_id: loanAgreement.id,
                 event_type: 'confirmed_returned',
                 payload: {
@@ -1366,7 +1540,112 @@ async function processInboundMessage(
           }
           break;
 
+        // Casos para botones de confirmación de préstamo (cuando vienen como tipo "button")
         default:
+          // Detectar botones de confirmación/rechazo por su ID
+          const isConfirmButton = buttonId.toLowerCase().includes('confirm') ||
+                                  buttonId.toLowerCase().includes('si_confirmo');
+          const isRejectButton = buttonId.toLowerCase().includes('reject') ||
+                                 buttonId.toLowerCase().includes('rechazar') ||
+                                 buttonId.toLowerCase().includes('no_rechazar');
+
+          if (isConfirmButton || isRejectButton) {
+            console.log(`[LOAN_CONFIRMATION_BUTTON] Processing ${isConfirmButton ? 'confirmation' : 'rejection'} button`);
+
+            try {
+              // Buscar el agreement más reciente pendiente de confirmación donde el usuario es borrower
+              // En arquitectura P2P: buscar por borrower_tenant_id (mi tenant = tenant que recibe préstamo)
+              const { data: pendingLoan, error: fetchError } = await supabase
+                .from('agreements')
+                .select('*')
+                .eq('borrower_tenant_id', tenant.id) // MI tenant es el borrower
+                .eq('status', 'pending_confirmation')
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+              if (fetchError) {
+                console.error('[LOAN_CONFIRMATION_BUTTON] Error fetching pending loan:', fetchError);
+                responseMessage = 'Hubo un error al procesar tu respuesta. Por favor intenta de nuevo.';
+              } else if (!pendingLoan) {
+                console.log('[LOAN_CONFIRMATION_BUTTON] No pending loan found');
+                responseMessage = 'No encontré ningún préstamo pendiente de confirmación.\n\nSi necesitas ayuda, escribe "menu".';
+              } else {
+                // Procesar confirmación o rechazo
+                if (isConfirmButton) {
+                  // CONFIRMAR: cambiar status a active y llenar borrower_tenant_id
+                  const { error: updateError } = await supabase
+                    .from('agreements')
+                    .update({
+                      status: 'active',
+                      borrower_tenant_id: tenant.id, // Asociar tenant del borrower que confirma
+                      updated_at: new Date().toISOString()
+                    })
+                    .eq('id', pendingLoan.id);
+
+                  if (updateError) {
+                    console.error('[LOAN_CONFIRMATION_BUTTON] Error confirming:', updateError);
+                    responseMessage = 'Hubo un error al confirmar el préstamo. Por favor intenta de nuevo.';
+                  } else {
+                    await supabase.from('events').insert({
+                      tenant_id: tenant.id,
+                      tenant_contact_id: contact.id,
+                      agreement_id: pendingLoan.id,
+                      event_type: 'confirmed_returned',
+                      payload: {
+                        action: 'loan_confirmed_by_borrower',
+                        contact_name: contact.name,
+                        agreement_title: pendingLoan.title,
+                        confirmed_at: new Date().toISOString()
+                      }
+                    });
+
+                    const loanDescription = pendingLoan.amount
+                      ? `$${formatMoney(pendingLoan.amount)}`
+                      : (pendingLoan.description || pendingLoan.title);
+
+                    responseMessage = `✅ *Préstamo confirmado*\n\nHas confirmado recibir: ${loanDescription}\n\n📅 Fecha de devolución: ${formatDate(pendingLoan.due_date)}\n\n💡 Escribe "estado" para ver tus préstamos activos.`;
+                    console.log('[LOAN_CONFIRMATION_BUTTON] Loan confirmed successfully:', pendingLoan.id);
+                  }
+                } else {
+                  // RECHAZAR
+                  const { error: updateError } = await supabase
+                    .from('agreements')
+                    .update({
+                      status: 'rejected',
+                      updated_at: new Date().toISOString()
+                    })
+                    .eq('id', pendingLoan.id);
+
+                  if (updateError) {
+                    console.error('[LOAN_CONFIRMATION_BUTTON] Error rejecting:', updateError);
+                    responseMessage = 'Hubo un error al rechazar el préstamo. Por favor intenta de nuevo.';
+                  } else {
+                    await supabase.from('events').insert({
+                      tenant_id: tenant.id,
+                      tenant_contact_id: contact.id,
+                      agreement_id: pendingLoan.id,
+                      event_type: 'button_clicked',
+                      payload: {
+                        action: 'loan_rejected_by_borrower',
+                        contact_name: contact.name,
+                        agreement_title: pendingLoan.title,
+                        rejected_at: new Date().toISOString()
+                      }
+                    });
+
+                    responseMessage = `❌ *Préstamo rechazado*\n\nHas rechazado el préstamo. Se notificará al prestamista.\n\n💡 Si tienes alguna duda, escribe "menu" para acceder al portal.`;
+                    console.log('[LOAN_CONFIRMATION_BUTTON] Loan rejected successfully:', pendingLoan.id);
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('[LOAN_CONFIRMATION_BUTTON] Exception:', error);
+              responseMessage = 'Hubo un error al procesar tu respuesta. Por favor intenta de nuevo escribiendo "menu".';
+            }
+            break;
+          }
+
           // Manejar payloads dinámicos de botones HSM (ej: loan_123_mark_returned)
           if (buttonId.startsWith('loan_') && buttonId.endsWith('_mark_returned')) {
             const agreementId = buttonId.split('_')[1];
@@ -1429,7 +1708,8 @@ async function processInboundMessage(
                 .from('events')
                 .insert({
                   tenant_id: tenant.id,
-                  contact_id: contact.id,
+                  tenant_contact_id: contact.id,  // FASE 2: usar tenant_contact_id (modern)
+                  contact_id: null,  // Legacy column, deprecated
                   agreement_id: agreementId,
                   event_type: 'loan_marked_returned_from_reminder',
                   payload: {
@@ -1453,7 +1733,8 @@ async function processInboundMessage(
           }
 
           responseMessage = 'No reconozco esa opción. Por favor usa los botones disponibles.';
-      }
+        }
+        } // Cierre del else que verifica isButtonAllowed
       } // Cierre del else que maneja botones tradicionales
     } else if (message.type === 'contacts') {
       // Procesar contactos compartidos
@@ -1702,7 +1983,7 @@ async function processInboundMessage(
       } else {
         responseMessage = 'No recibí información del contacto. Por favor intenta de nuevo.';
       }
-    } else if (message.type === 'audio') {
+    } else if (message.type === 'audio' && FEATURES.AI_PROCESSING) {
       // Procesar mensajes de audio con Whisper (transcripción)
       console.log('====== PROCESSING AUDIO MESSAGE ======');
       console.log('Audio object:', JSON.stringify(message.audio, null, 2));
@@ -1794,7 +2075,7 @@ async function processInboundMessage(
         console.error('[Audio] Processing error:', error);
         responseMessage = 'Hubo un error procesando el audio. Por favor intenta de nuevo.';
       }
-    } else if (message.type === 'image') {
+    } else if (message.type === 'image' && FEATURES.AI_PROCESSING) {
       // Procesar mensajes de imagen con GPT-4 Vision
       console.log('====== PROCESSING IMAGE MESSAGE ======');
       console.log('Image object:', JSON.stringify(message.image, null, 2));
@@ -1917,6 +2198,14 @@ Responde en español chileno de forma concisa.`;
         console.error('[Image] Processing error:', error);
         responseMessage = 'Hubo un error procesando la imagen. Por favor intenta de nuevo.';
       }
+    } else if (message.type === 'audio' && !FEATURES.AI_PROCESSING) {
+      // Audio recibido pero IA desactivada
+      console.log('[Audio] AI processing disabled');
+      responseMessage = 'Por el momento no puedo procesar mensajes de audio. 🚧\n\nPor favor escribe un mensaje de texto o:\n📊 Escribe "estado" para ver tus préstamos\n🌐 Escribe "menu" para acceder al portal web';
+    } else if (message.type === 'image' && !FEATURES.AI_PROCESSING) {
+      // Imagen recibida pero IA desactivada
+      console.log('[Image] AI processing disabled');
+      responseMessage = 'Por el momento no puedo procesar imágenes. 🚧\n\nPor favor escribe un mensaje de texto o:\n📊 Escribe "estado" para ver tus préstamos\n🌐 Escribe "menu" para acceder al portal web';
     }
 
     // 5. Enviar respuesta

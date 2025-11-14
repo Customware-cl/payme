@@ -2,6 +2,3721 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.18] - 2025-11-14 - 🔧 Fix: Campo "Concepto" en Detalle de Préstamos
+
+### 🎯 Problema Detectado
+
+En la app web, al ver el detalle de un préstamo, el campo "Concepto" no mostraba la descripción correcta del préstamo.
+
+**Causa Raíz:**
+- Frontend usaba incorrectamente `loan.title` para préstamos de dinero e `loan.item_description` para objetos
+- El campo correcto en la tabla `agreements` es `loan.description`
+- Backend ya usaba correctamente `loan.description` en los mensajes de WhatsApp
+
+### ✅ Solución Aplicada
+
+Unificado el uso del campo `description` en toda la app web.
+
+#### Archivos Modificados
+
+1. **`public/menu/loan-detail.js`** (línea 153)
+   - **ANTES:** `const concept = loan.amount !== null ? loan.title : loan.item_description;`
+   - **DESPUÉS:** `const concept = loan.description;`
+
+2. **`public/menu/loans.js`** (línea 451)
+   - **ANTES:** `const concept = loan.title || loan.item_description || 'Sin concepto';`
+   - **DESPUÉS:** `const concept = loan.description || 'Sin concepto';`
+
+#### Beneficios
+
+- ✅ Consistencia entre backend (WhatsApp) y frontend (web)
+- ✅ Simplificación de lógica (un solo campo para todos los tipos de préstamo)
+- ✅ Campo "Concepto" muestra la descripción correcta del préstamo
+
+---
+
+## [v3.0.17] - 2025-11-14 - 🚀 Arquitectura Simplificada: Mensajes WhatsApp desde Secrets
+
+### 🎯 Problema Detectado
+
+Después de v3.0.16, usuarios creados desde web app (como Juan) no recibían mensajes de confirmación WhatsApp.
+
+**Error:** `"The account is not registered"`
+
+**Causa Raíz:**
+- Tenants de usuarios creados desde web app NO tenían credenciales WhatsApp
+- `flow-handlers.ts` hacía INSERT directo sin copiar credenciales
+- `WhatsAppWindowManager` intentaba usar credenciales del tenant del usuario
+- Arquitectura compleja: cada tenant copiaba credenciales innecesariamente
+
+### ✅ Solución Aplicada: Arquitectura Simplificada
+
+**Principio:** Solo el bot tiene cuenta WhatsApp Business. Todos los mensajes se envían usando credenciales del bot desde secrets.
+
+#### 1. WhatsAppWindowManager Simplificado
+
+**Archivo:** `supabase/functions/_shared/whatsapp-window-manager.ts`
+
+**ANTES (líneas ~303-307):**
+```typescript
+const { data: tenant } = await this.supabase
+  .from('tenants')
+  .select('whatsapp_phone_number_id, whatsapp_access_token')
+  .eq('id', tenantId)  // ❌ Usa tenant del usuario
+  .single();
+```
+
+**DESPUÉS:**
+```typescript
+// Usar credenciales directamente desde secrets
+const whatsappAccessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+const whatsappPhoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID');
+
+if (!whatsappAccessToken || !whatsappPhoneNumberId) {
+  throw new Error('WhatsApp credentials not configured');
+}
+```
+
+**Cambios aplicados:**
+- ✅ `sendTemplateMessage()` usa secrets directamente
+- ✅ `sendFreeFormMessage()` usa secrets directamente
+- ✅ Sin query a base de datos para obtener credenciales
+- ✅ Más rápido, más simple, más confiable
+
+#### 2. ensure_user_tenant() Simplificado
+
+**Archivo:** `supabase/migrations/047_simplify_ensure_user_tenant.sql`
+
+**ANTES:**
+```sql
+-- Obtener credenciales del bot
+SELECT whatsapp_phone_number_id, whatsapp_access_token
+INTO v_whatsapp_phone_id, v_whatsapp_token
+FROM tenants
+WHERE whatsapp_access_token IS NOT NULL
+ORDER BY created_at ASC LIMIT 1;
+
+-- Crear tenant copiando credenciales
+INSERT INTO tenants (
+  name, owner_contact_profile_id,
+  whatsapp_phone_number_id, whatsapp_access_token,  -- ❌ Innecesario
+  timezone
+) VALUES (...);
+```
+
+**DESPUÉS:**
+```sql
+-- Crear tenant SIN credenciales (ya no las necesita)
+INSERT INTO tenants (
+  name,
+  owner_contact_profile_id,
+  timezone
+) VALUES (...);
+```
+
+#### 3. flow-handlers.ts Usa ensure_user_tenant()
+
+**Archivo:** `supabase/functions/_shared/flow-handlers.ts` (líneas ~228-240)
+
+**ANTES:**
+```typescript
+const { data: newTenant } = await this.supabase
+  .from('tenants')
+  .insert({
+    name: tenantName,
+    owner_contact_profile_id: contactProfile.id,
+    settings: {}
+  })
+  .select()
+  .single();
+```
+
+**DESPUÉS:**
+```typescript
+const { data: newTenantId } = await this.supabase
+  .rpc('ensure_user_tenant', {
+    p_contact_profile_id: contactProfile.id
+  });
+```
+
+### 📦 Migraciones Aplicadas
+
+- `047_simplify_ensure_user_tenant.sql` - Función simplificada sin copiar credenciales
+
+### ✨ Resultado
+
+**Arquitectura ANTES:**
+1. Cada tenant de usuario copia credenciales WhatsApp del bot
+2. `WhatsAppWindowManager` consulta DB para obtener credenciales
+3. Si tenant no tiene credenciales → fallback a env vars
+4. Complejo, propenso a errores, queries innecesarias
+
+**Arquitectura DESPUÉS:**
+1. Solo bot tiene cuenta WhatsApp Business
+2. Credenciales en Supabase secrets (ya existen)
+3. `WhatsAppWindowManager` usa secrets directamente
+4. Usuarios NO necesitan credenciales en su tenant
+5. Simple, rápido, confiable
+
+**Beneficios:**
+- ✅ Sin queries adicionales a DB
+- ✅ Tenants más livianos (sin credenciales duplicadas)
+- ✅ Usuarios creados desde web app reciben mensajes correctamente
+- ✅ Usuarios creados desde WhatsApp reciben mensajes correctamente
+- ✅ Arquitectura más simple y mantenible
+
+**Archivos modificados:**
+- `supabase/functions/_shared/whatsapp-window-manager.ts`
+- `supabase/functions/_shared/flow-handlers.ts`
+- `supabase/migrations/047_simplify_ensure_user_tenant.sql`
+
+---
+
+## [v3.0.16] - 2025-11-14 - 🔧 Fix: contact_tenant_id siempre debe tener valor en arquitectura P2P
+
+### 🎯 Problema Detectado
+
+Cuando Felipe crea un préstamo a Juan, el campo `borrower_tenant_id` quedaba NULL, imposibilitando la correlación correcta en confirmaciones.
+
+**Causa Raíz:**
+
+Al agregar un contacto desde la webapp, el campo `contact_tenant_id` quedaba NULL en dos casos:
+1. Usuario ya registrado con tenant → NO se buscaba su tenant existente
+2. Usuario nuevo sin tenant → NO se creaba tenant automáticamente
+
+**Impacto:**
+- Préstamos creados con `borrower_tenant_id: NULL`
+- Handler de confirmación en wa_webhook no podía encontrar el préstamo correcto
+- Confirmaba préstamo equivocado (el más antiguo en lugar del específico)
+
+**Bug Adicional:**
+- Error "duplicate key" al reintentar crear préstamo después de fallo
+- No se verificaba si contacto ya existía en libreta antes de INSERT
+
+### ✅ Solución Aplicada
+
+**Archivo:** `supabase/functions/_shared/flow-handlers.ts` (líneas 153-282)
+
+Implementamos lógica de 3 pasos robusta:
+
+1. **Verificar si contacto ya existe en libreta:**
+   ```typescript
+   const { data: existingContact } = await supabase
+     .from('tenant_contacts')
+     .select('*')
+     .eq('tenant_id', tenantId)
+     .eq('contact_profile_id', contactProfile.id)
+     .maybeSingle();
+   ```
+
+2. **Si existe → verificar/actualizar contact_tenant_id:**
+   - Buscar tenant del contacto
+   - Si no tiene, crear tenant automáticamente
+   - Actualizar contact_tenant_id si es necesario
+
+3. **Si NO existe → crear contacto completo:**
+
+1. **Buscar tenant existente:**
+   ```typescript
+   const { data: existingTenant } = await supabase
+     .from('tenants')
+     .select('id')
+     .eq('owner_contact_profile_id', contactProfile.id)
+     .maybeSingle();
+   ```
+
+2. **Si no existe, crear tenant automáticamente:**
+   ```typescript
+   const { data: newTenant } = await supabase
+     .from('tenants')
+     .insert({
+       name: `Cuenta de ${phoneNumber}`,
+       owner_contact_profile_id: contactProfile.id,
+       settings: {}
+     })
+     .select()
+     .single();
+   ```
+
+3. **Crear tenant_contact CON contact_tenant_id:**
+   ```typescript
+   .insert({
+     tenant_id: tenantId,
+     contact_profile_id: contactProfile.id,
+     contact_tenant_id: contactTenantId,  // ✅ SIEMPRE tiene valor
+     name: contactName,
+     ...
+   })
+   ```
+
+**Resultado:** `contact_tenant_id` NUNCA es NULL
+
+### 📁 Archivos Modificados
+- `supabase/functions/_shared/flow-handlers.ts` (líneas 153-210)
+
+### 🧪 Testing
+- ✅ Usuario nuevo sin tenant → crea tenant automáticamente
+- ✅ Usuario existente con tenant → usa tenant existente
+- ✅ Préstamos ahora tienen `borrower_tenant_id` correcto
+- ✅ Cuando usuario se registra luego → usa tenant pre-existente (no duplica)
+
+---
+
+## [v3.0.15] - 2025-11-14 - 🔧 Fix: Usar campo 'description' en lugar de 'item_description'
+
+### 🎯 Problema Detectado
+
+Usuario reportó que los préstamos mostraban "Sin concepto" en la app web a pesar de tener descripción al crearlos.
+
+Investigación:
+- DB tiene datos en `description`: "test6", "test5", "test", "test4" ✅
+- UI mostraba "Sin concepto" ❌
+
+**Causa Raíz:**
+
+Tres edge functions estaban usando el **campo incorrecto** para la descripción del préstamo:
+
+```typescript
+// ❌ ANTES: Usaban item_description (que es null)
+.select(`
+  id,
+  amount,
+  item_description,  // ❌ Este campo está null
+  ...
+`)
+```
+
+El schema de `agreements` tiene DOS campos de descripción:
+- `description` → Campo correcto con los datos ✅
+- `item_description` → Campo legacy que está `null` ❌
+
+### 🔧 Solución Aplicada
+
+**menu-data/index.ts (líneas 199 y 217):**
+
+Cambiar SELECT queries de ambas listas (lent/borrowed):
+
+```typescript
+// ✅ AHORA: Usa description (campo correcto)
+.select(`
+  id,
+  amount,
+  description,  // ✅ Campo correcto
+  ...
+`)
+```
+
+**loan-actions/index.ts (8 ocurrencias):**
+
+Reemplazar todas las referencias a `loan.item_description` por `loan.description`:
+
+```typescript
+// ❌ ANTES
+const loanText = loan.amount ? formatMoney(loan.amount) : loan.item_description;
+
+// ✅ AHORA
+const loanText = loan.amount ? formatMoney(loan.amount) : loan.description;
+```
+
+**wa_webhook/index.ts (2 ocurrencias):**
+
+Reemplazar referencias a `pendingLoan.item_description` por `pendingLoan.description`:
+
+```typescript
+// ❌ ANTES
+const loanDescription = pendingLoan.amount
+  ? `$${formatMoney(pendingLoan.amount)}`
+  : (pendingLoan.item_description || pendingLoan.title);
+
+// ✅ AHORA
+const loanDescription = pendingLoan.amount
+  ? `$${formatMoney(pendingLoan.amount)}`
+  : (pendingLoan.description || pendingLoan.title);
+```
+
+### ✅ Resultado
+
+Préstamos ahora muestran su descripción correctamente:
+
+1. ✅ Lista de préstamos muestra "test6", "test5", etc. en lugar de "Sin concepto"
+2. ✅ Mensajes de confirmación incluyen la descripción correcta
+3. ✅ Notificaciones usan la descripción correcta
+
+### 📦 Edge Functions Desplegadas
+
+- `menu-data` (nueva versión con campo description)
+- `loan-actions` (nueva versión con campo description)
+- `wa_webhook` (nueva versión con campo description)
+
+---
+
+## [v3.0.14] - 2025-11-14 - 🔧 Fix: Llenar borrower_tenant_id al confirmar préstamo
+
+### 🎯 Problema Detectado
+
+Usuario reportó que en la app web los préstamos no se mostraban correctamente:
+- Préstamos pendientes (`status=pending_confirmation`) aparecían en lista del lender
+- Pero NO aparecían en lista del borrower
+- Todos los préstamos tenían `borrower_tenant_id=null`
+
+**Causa Raíz:**
+
+El handler de confirmación en `wa_webhook` solo actualizaba el `status` a `'active'` pero **NO llenaba `borrower_tenant_id`**.
+
+```typescript
+// ❌ ANTES: Solo actualizaba status
+.update({
+  status: 'active',
+  updated_at: new Date().toISOString()
+})
+```
+
+**Flujo problemático:**
+1. Felipe crea préstamo → `borrower_tenant_id=null` (Juan aún no tiene tenant)
+2. Juan se registra → obtiene `tenant_id='f33df5ba-...'`
+3. Juan confirma → status cambia a 'active' pero `borrower_tenant_id` sigue `null` ❌
+4. Query de Juan busca por `borrower_tenant_id=tenant.id` → **NO encuentra préstamos**
+
+### 🔧 Solución Aplicada
+
+**wa_webhook/index.ts (líneas 418-426 y 1576-1584):** Actualizar ambos handlers
+
+Agregar `borrower_tenant_id` al UPDATE de confirmación:
+
+```typescript
+// ✅ AHORA: Actualiza status Y borrower_tenant_id
+.update({
+  status: 'active',
+  borrower_tenant_id: tenant.id, // Asociar tenant del borrower que confirma
+  updated_at: new Date().toISOString()
+})
+```
+
+**Corregir datos existentes:**
+
+Actualizados 3 préstamos pendientes que tenían `borrower_tenant_id=null`:
+- $52.342 → `borrower_tenant_id='f33df5ba-905c-4659-9e5a-e2d682837d3b'`
+- $555 → `borrower_tenant_id='f33df5ba-905c-4659-9e5a-e2d682837d3b'`
+- $2.444 → `borrower_tenant_id='f33df5ba-905c-4659-9e5a-e2d682837d3b'`
+
+### ✅ Resultado
+
+Préstamos ahora se asocian correctamente al tenant del borrower:
+
+1. ✅ Al confirmar, `borrower_tenant_id` se llena con el tenant del usuario que confirma
+2. ✅ Queries de `menu-data` encuentran préstamos del borrower correctamente
+3. ✅ Queries de `loan-actions` validan permisos correctamente
+4. ✅ Arquitectura P2P multi-tenant completa
+
+### 📦 Edge Functions Desplegadas
+
+- `wa_webhook` (nueva versión con fix de confirmación)
+
+---
+
+## [v3.0.13] - 2025-11-13 - 🔧 Fix: Permisos de detalle de préstamo (loan-actions)
+
+### 🎯 Problema Detectado
+
+Usuario reportó que al hacer clic en un préstamo para ver el detalle aparecía:
+"Error al cargar el préstamo, no tienes permiso para ver este préstamo"
+
+**Causa Raíz:**
+`loan-actions` validaba permisos usando campos legacy mono-tenant:
+
+```typescript
+// ❌ VALIDACIÓN LEGACY (GET y POST)
+if (loan.lender_tenant_contact_id === tokenData.contact_id) {
+  userRole = 'lender';
+} else if (loan.tenant_contact_id === tokenData.contact_id) {
+  userRole = 'borrower';
+}
+```
+
+Comparaba `contact_id` del usuario con `lender_tenant_contact_id` del préstamo,
+pero en P2P multi-tenant estos campos no coinciden porque:
+- Usuario tiene `contact_id` en SU tenant
+- Préstamo tiene `lender_tenant_id` y `borrower_tenant_id` (no contact_ids)
+
+### 🔧 Solución Aplicada
+
+**loan-actions/index.ts (líneas 137-156 y 291-310):** Actualizar validación de permisos
+
+```typescript
+// ✅ VALIDACIÓN P2P MULTI-TENANT
+// Para GET detail y POST actions:
+
+// Obtener préstamo sin JOINs legacy
+const { data: loan } = await supabase
+  .from('agreements')
+  .select('*')
+  .eq('id', loanId)
+  .single();
+
+// Determinar rol por tenant_id (no por contact_id)
+let userRole: 'lender' | 'borrower' | null = null;
+if (loan.lender_tenant_id === tokenData.tenant_id) {
+  userRole = 'lender';
+} else if (loan.borrower_tenant_id === tokenData.tenant_id) {
+  userRole = 'borrower';
+}
+```
+
+**loan-actions/index.ts (líneas 165-243):** Enriquecer con nombres
+
+Agregar lógica para resolver nombres de lender y borrower desde tenants:
+
+```typescript
+// Para lender
+if (loan.lender_tenant_id) {
+  const lenderTenant = await supabase
+    .from('tenants')
+    .select('owner_contact_profile_id')
+    .eq('id', loan.lender_tenant_id)
+    .single();
+
+  const lenderProfile = await supabase
+    .from('contact_profiles')
+    .select('id, first_name, last_name, phone_e164')
+    .eq('id', lenderTenant.owner_contact_profile_id)
+    .single();
+
+  lenderInfo = {
+    id: lenderProfile.id,
+    name: lenderProfile.first_name || lenderProfile.phone_e164,
+    phone_e164: lenderProfile.phone_e164
+  };
+}
+
+// Similar para borrower
+```
+
+**Cambios aplicados:**
+- GET `/loan-actions?action=get_detail`: Validación + enriquecimiento
+- POST `/loan-actions`: Validación para acciones (marcar devuelto, etc.)
+
+### ✅ Resultado
+
+Detalle de préstamos funciona correctamente en arquitectura P2P:
+
+1. ✅ Validación de permisos usa `lender_tenant_id` y `borrower_tenant_id`
+2. ✅ Usuario puede ver detalles de préstamos donde es lender O borrower
+3. ✅ Nombres de lender/borrower resueltos desde tenants
+4. ✅ Compatibilidad con préstamos legacy (fallback a tenant_contact_id)
+
+### 📦 Edge Functions Desplegadas
+
+- `loan-actions` (versión nueva)
+
+---
+
+## [v3.0.12] - 2025-11-13 - 🔧 Fix: App web usar campos P2P (lender/borrower_tenant_id)
+
+### 🎯 Problema Detectado
+
+Usuario reportó que en la app web no ve los préstamos recién creados.
+
+**Causa Raíz:**
+La función `menu-data` usaba queries legacy con campos mono-tenant:
+
+```typescript
+// ❌ QUERIES LEGACY (mono-tenant)
+// Para préstamos donde soy lender:
+.eq('lender_tenant_contact_id', tokenData.contact_id)
+
+// Para préstamos donde soy borrower:
+.in('tenant_contact_id', contactIds)  // Busca en TODOS los tenants
+```
+
+Estos campos no funcionan en arquitectura P2P multi-tenant donde:
+- Lender tiene su propio tenant
+- Borrower tiene su propio tenant
+- El préstamo se registra con `lender_tenant_id` y `borrower_tenant_id`
+
+### 🔧 Solución Aplicada
+
+**menu-data/index.ts (líneas 194-226):** Actualizar queries a campos P2P
+
+```typescript
+// ✅ QUERIES P2P MULTI-TENANT
+// Para préstamos donde soy lender:
+const { data: lentAgreements } = await supabase
+  .from('agreements')
+  .select('id, amount, item_description, due_date, status, created_at, tenant_contact_id, borrower_tenant_id')
+  .eq('lender_tenant_id', tokenData.tenant_id)  // MI tenant es el lender
+  .in('status', ['active', 'pending_confirmation'])
+  .order('created_at', { ascending: false });
+
+// Para préstamos donde soy borrower:
+const { data: borrowedAgreements } = await supabase
+  .from('agreements')
+  .select('id, amount, item_description, due_date, status, created_at, tenant_contact_id, lender_tenant_id')
+  .eq('borrower_tenant_id', tokenData.tenant_id)  // MI tenant es el borrower
+  .in('status', ['active', 'pending_confirmation'])
+  .order('created_at', { ascending: false });
+```
+
+**menu-data/index.ts (líneas 228-308):** Enriquecer con nombres de borrower/lender
+
+Agregar lógica para resolver nombres desde:
+- `borrower_tenant_id` → obtener owner_contact_profile_id del tenant → nombre
+- `lender_tenant_id` → obtener owner_contact_profile_id del tenant → nombre
+- Fallback a `tenant_contact_id` para préstamos legacy
+
+```typescript
+// Enriquecer préstamos lent con nombres de borrowers
+const enrichedLent = await Promise.all((lentAgreements || []).map(async (loan) => {
+  let borrowerName = 'Desconocido';
+
+  if (loan.borrower_tenant_id) {
+    // Obtener nombre desde tenant del borrower
+    const borrowerTenant = await supabase
+      .from('tenants')
+      .select('owner_contact_profile_id')
+      .eq('id', loan.borrower_tenant_id)
+      .single();
+
+    // Obtener nombre desde contact_profile
+    const borrowerProfile = await supabase
+      .from('contact_profiles')
+      .select('first_name, last_name, phone_e164')
+      .eq('id', borrowerTenant.owner_contact_profile_id)
+      .single();
+
+    borrowerName = borrowerProfile.first_name || borrowerProfile.phone_e164;
+  }
+
+  return { ...loan, borrower: { name: borrowerName } };
+}));
+```
+
+### ✅ Resultado
+
+App web ahora muestra correctamente préstamos en arquitectura P2P:
+
+1. ✅ Préstamos donde soy lender → Busca por `lender_tenant_id = mi tenant`
+2. ✅ Préstamos donde soy borrower → Busca por `borrower_tenant_id = mi tenant`
+3. ✅ Nombres de borrower/lender resueltos desde tenants
+4. ✅ Compatibilidad con préstamos legacy (fallback a tenant_contact_id)
+
+### 📦 Edge Functions Desplegadas
+
+- `menu-data` (versión nueva)
+
+---
+
+## [v3.0.11] - 2025-11-13 - 🔧 Fix: Buscar préstamos por borrower_tenant_id
+
+### 🎯 Problema Detectado
+
+Usuario reportó que después de v3.0.10, el handler seguía mostrando
+"No encontré ningún préstamo pendiente de confirmación" a pesar de que
+los préstamos existían con status `'pending_confirmation'`.
+
+**Causa Raíz:**
+Los handlers de confirmación (líneas 400-407 y 1557-1564) buscaban préstamos
+usando el campo INCORRECTO en arquitectura P2P multi-tenant:
+
+```typescript
+// ❌ INCORRECTO
+.eq('tenant_contact_id', contact.id)  // Busca contacto en SU tenant
+```
+
+**Por qué fallaba:**
+En arquitectura P2P, cuando Felipe (+56964943476) crea un préstamo para el tester (+56942356880):
+
+```
+Agreement creado:
+- tenant_id: tenant de Felipe (lender)
+- tenant_contact_id: contacto del tester EN tenant de Felipe
+- lender_tenant_id: tenant de Felipe
+- borrower_tenant_id: tenant del tester (f33df5ba-...)
+
+Cuando tester hace clic en "Sí, confirmo":
+- Su tenant.id = f33df5ba-... (tenant del tester)
+- Su contact.id = dd7fd0e0-... (contacto en SU tenant)
+
+Handler buscaba:
+.eq('tenant_contact_id', dd7fd0e0-...) ❌ NO coincide
+
+Debía buscar:
+.eq('borrower_tenant_id', f33df5ba-...) ✅ Coincide
+```
+
+### 🔧 Solución Aplicada
+
+**wa_webhook/index.ts (líneas 400-407 y 1557-1564):** Buscar por borrower_tenant_id
+
+```typescript
+// ✅ CORRECTO
+const { data: pendingLoan } = await supabase
+  .from('agreements')
+  .select('*')
+  .eq('borrower_tenant_id', tenant.id)  // MI tenant es el borrower
+  .eq('status', 'pending_confirmation')
+  .order('created_at', { ascending: false })
+  .limit(1)
+  .maybeSingle();
+```
+
+**Lógica corregida:**
+- **Handler tipo "text"** (líneas 400-407): Busca por `borrower_tenant_id`
+- **Handler tipo "button"** (líneas 1557-1564): Busca por `borrower_tenant_id`
+- Ambos handlers ahora alineados con arquitectura P2P multi-tenant
+
+### ✅ Resultado
+
+Flujo de confirmación ahora funciona correctamente en arquitectura P2P:
+
+1. ✅ Lender crea préstamo → `borrower_tenant_id` = tenant del borrower
+2. ✅ Sistema envía plantilla al borrower
+3. ✅ Borrower hace clic en botón
+4. ✅ Handler busca por `borrower_tenant_id` = SU tenant
+5. ✅ Encuentra préstamo pendiente correctamente
+6. ✅ Actualiza status a `'active'` o `'rejected'`
+
+### 📦 Edge Functions Desplegadas
+
+- `wa_webhook` (versión 175)
+
+---
+
+## [v3.0.10] - 2025-11-13 - 🔧 Fix: Préstamos creados con status 'pending_confirmation'
+
+### 🎯 Problema Detectado
+
+Usuario reportó: "Sí, confirmo" ahora genera "No encontré ningún préstamo pendiente de confirmación".
+
+**Causa Raíz:**
+Después de v3.0.9, los handlers de confirmación funcionan correctamente, pero no encuentran
+préstamos pendientes porque `create_p2p_loan` los estaba creando directamente con status `'active'`
+en lugar de `'pending_confirmation'`.
+
+**Flujo incorrecto:**
+```
+Lender crea préstamo → status: 'active' ❌
+↓
+Sistema envía plantilla → Borrower ve botones
+↓
+Borrower hace clic "Sí, confirmo" → No encuentra préstamo pendiente
+```
+
+**Flujo correcto esperado:**
+```
+Lender crea préstamo → status: 'pending_confirmation' ✅
+↓
+Sistema envía plantilla → Borrower ve botones
+↓
+Borrower confirma → status cambia a 'active'
+Borrower rechaza → status cambia a 'rejected'
+```
+
+### 🔧 Solución Aplicada
+
+**Migración 046:** `create_p2p_loan` ahora crea con `'pending_confirmation'`
+
+```sql
+-- supabase/migrations/046_create_p2p_loan_pending_confirmation.sql
+INSERT INTO agreements (
+  ...
+  status
+) VALUES (
+  ...
+  'pending_confirmation'  -- ✅ CAMBIO: Antes era 'active'
+)
+```
+
+**Evento actualizado:**
+```sql
+INSERT INTO events (
+  tenant_id,
+  agreement_id,
+  event_type,
+  payload
+) VALUES (
+  p_my_tenant_id,
+  v_agreement_id,
+  'opt_in_sent',
+  jsonb_build_object(
+    'action', 'p2p_loan_created',
+    'status', 'pending_confirmation',  -- ✅ Refleja status real
+    'created_at', NOW()
+  )
+);
+```
+
+### ✅ Resultado
+
+Flujo completo de confirmación ahora funciona end-to-end:
+
+1. ✅ Lender crea préstamo → status: `'pending_confirmation'`
+2. ✅ Sistema envía plantilla `loan_confirmation_request_v1` al borrower
+3. ✅ Borrower ve botones: "Sí, confirmo" / "No, rechazar"
+4. ✅ Handler encuentra préstamo pendiente
+5. ✅ Confirmación → status: `'active'`
+6. ✅ Rechazo → status: `'rejected'`
+
+### 📦 Migraciones Aplicadas
+
+- `046_create_p2p_loan_pending_confirmation.sql`
+
+---
+
+## [v3.0.9] - 2025-11-13 - 🔧 Fix: Botones de confirmación enviados como tipo "button"
+
+### 🎯 Problema Detectado
+
+Usuario reportó que al hacer clic en "No, rechazar" en la plantilla de confirmación,
+seguía apareciendo el mensaje "Esta funcionalidad está temporalmente desactivada".
+
+**Causa Raíz:**
+WhatsApp puede enviar los quick_reply buttons de las plantillas de dos formas:
+1. Como tipo "text" con el texto del botón (ej: "Sí, confirmo") ✅ Ya manejado en v3.0.8
+2. Como tipo "button" con button_id (ej: "si_confirmo", "no_rechazar") ❌ NO manejado
+
+El handler implementado en v3.0.8 solo procesaba mensajes tipo "text", pero cuando WhatsApp
+envía los botones como tipo "button", estos pasaban por la verificación de feature flags
+y eran bloqueados por no estar en la whitelist de botones permitidos.
+
+### 🔧 Solución Aplicada
+
+**1. wa_webhook/index.ts (líneas 982-986):** Agregar botones de confirmación a whitelist
+
+```typescript
+// Botones de confirmación de préstamo (SIEMPRE permitidos - core business)
+const isLoanConfirmationButton = buttonId.toLowerCase().includes('confirm') ||
+                                 buttonId.toLowerCase().includes('reject') ||
+                                 buttonId.toLowerCase().includes('rechazar') ||
+                                 buttonId.toLowerCase().includes('si_confirmo') ||
+                                 buttonId.toLowerCase().includes('no_rechazar');
+
+const isButtonAllowed = allowedButtons.includes(buttonId) ||
+                        isDynamicMarkReturned ||
+                        isLoanConfirmationButton ||  // ✅ NUEVO
+                        (FEATURES.INTERACTIVE_BUTTONS && isInteractiveButton) ||
+                        (FEATURES.CONVERSATIONAL_FLOWS && isFlowButton);
+```
+
+**2. wa_webhook/index.ts (líneas 1543-1642):** Handler en switch statement
+
+```typescript
+default:
+  // Detectar botones de confirmación/rechazo por su ID
+  const isConfirmButton = buttonId.toLowerCase().includes('confirm') ||
+                          buttonId.toLowerCase().includes('si_confirmo');
+  const isRejectButton = buttonId.toLowerCase().includes('reject') ||
+                         buttonId.toLowerCase().includes('rechazar') ||
+                         buttonId.toLowerCase().includes('no_rechazar');
+
+  if (isConfirmButton || isRejectButton) {
+    // Buscar préstamo pendiente
+    const pendingLoan = await supabase
+      .from('agreements')
+      .select('*')
+      .eq('tenant_contact_id', contact.id)
+      .eq('status', 'pending_confirmation')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (isConfirmButton) {
+      // Confirmar préstamo
+      await supabase.from('agreements')
+        .update({ status: 'active' })
+        .eq('id', pendingLoan.id);
+
+      responseMessage = '✅ *Préstamo confirmado*...';
+    } else {
+      // Rechazar préstamo
+      await supabase.from('agreements')
+        .update({ status: 'rejected' })
+        .eq('id', pendingLoan.id);
+
+      responseMessage = '❌ *Préstamo rechazado*...';
+    }
+    break;
+  }
+```
+
+### ✅ Resultado
+
+Ahora la confirmación/rechazo funciona independientemente de cómo Meta envíe los botones:
+- ✅ Tipo "text": Handler en líneas 391-493
+- ✅ Tipo "button": Handler en líneas 1543-1642
+- ✅ Whitelist: Siempre permitidos (core business)
+
+### 📦 Edge Functions Desplegadas
+
+- `wa_webhook` (versión 174)
+
+---
+
+## [v3.0.8] - 2025-11-13 - ✅ Activar confirmación de préstamos por WhatsApp
+
+### 🎯 Problema Detectado
+
+Después de corregir v3.0.6 y v3.0.7, la confirmación de préstamos por WhatsApp funciona PERO:
+- Usuario recibe plantilla `loan_confirmation_request_v1` correctamente ✅
+- Usuario hace clic en botón "Sí, confirmo" ✅
+- Aparece mensaje: "Esta funcionalidad está temporalmente desactivada" ❌
+
+**Causa:**
+No existía handler para procesar los botones `quick_reply` de la plantilla.
+Los botones envían el texto como mensaje regular, pero no había lógica para detectar
+"Sí, confirmo" o "No, rechazar".
+
+### 🔧 Solución Aplicada
+
+**wa_webhook/index.ts (líneas 391-493):** Nuevo handler para confirmación
+
+```typescript
+else if (cleanText.includes('si, confirmo') || cleanText.includes('sí, confirmo') ||
+          cleanText.includes('no, rechazar')) {
+
+  const isConfirm = cleanText.includes('si, confirmo') || cleanText.includes('sí, confirmo');
+
+  // 1. Buscar agreement pendiente más reciente del borrower
+  const pendingLoan = await supabase
+    .from('agreements')
+    .select('*')
+    .eq('tenant_contact_id', contact.id)
+    .eq('status', 'pending_confirmation')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (isConfirm) {
+    // 2. CONFIRMAR: cambiar status a 'active'
+    await supabase
+      .from('agreements')
+      .update({ status: 'active' })
+      .eq('id', pendingLoan.id);
+
+    // 3. Registrar evento
+    await supabase.from('events').insert({
+      event_type: 'confirmed_returned',
+      payload: { action: 'loan_confirmed_by_borrower' }
+    });
+
+    responseMessage = "✅ Préstamo confirmado...";
+
+  } else {
+    // 2. RECHAZAR: cambiar status a 'rejected'
+    await supabase
+      .from('agreements')
+      .update({ status: 'rejected' })
+      .eq('id', pendingLoan.id);
+
+    responseMessage = "❌ Préstamo rechazado...";
+  }
+}
+```
+
+### ✨ Resultado
+
+- ✅ Usuario hace clic en "Sí, confirmo" → status cambia a 'active'
+- ✅ Usuario hace clic en "No, rechazar" → status cambia a 'rejected'
+- ✅ Se registra evento con acción específica
+- ✅ Usuario recibe mensaje de confirmación/rechazo
+- ✅ Si no hay préstamos pendientes, informa al usuario
+
+**Flujo completo funcionando:**
+1. Lender crea préstamo desde formulario web
+2. Sistema envía plantilla WhatsApp al borrower
+3. Borrower recibe mensaje con botones "Sí, confirmo" / "No, rechazar"
+4. Borrower hace clic → Status actualizado y evento registrado
+5. Borrower recibe confirmación de la acción
+
+**Archivos modificados:**
+- `supabase/functions/wa_webhook/index.ts` (líneas 391-493)
+
+---
+
+## [v3.0.7] - 2025-11-13 - 🐛 Agregar created_by a create_p2p_loan
+
+### 🎯 Problema Detectado
+
+Después de corregir los parámetros de `create_p2p_loan` en v3.0.6, aparece nuevo error al crear préstamos:
+
+```
+Error: null value in column "created_by" of relation "agreements"
+violates not-null constraint
+```
+
+**Contexto:**
+- La función `create_p2p_loan` crea agreements correctamente
+- PERO el campo `created_by` es **NOT NULL** en la tabla
+- La función no incluía este campo en el INSERT
+- Resultado: INSERT falla con constraint violation
+
+### 🔧 Solución Aplicada
+
+**Migración 045:** Actualizar `create_p2p_loan` para incluir `created_by`
+
+**Cambios en la función:**
+
+```sql
+-- 1. Declarar variable para almacenar user_id
+DECLARE
+  v_created_by_user_id UUID;
+
+-- 2. Obtener owner user del tenant
+SELECT id INTO v_created_by_user_id
+FROM users
+WHERE tenant_id = p_my_tenant_id
+  AND role = 'owner'
+LIMIT 1;
+
+-- 3. Validar que existe
+IF v_created_by_user_id IS NULL THEN
+  RAISE EXCEPTION 'Owner user not found for tenant';
+END IF;
+
+-- 4. Incluir en INSERT de agreements
+INSERT INTO agreements (
+  tenant_id,
+  tenant_contact_id,
+  lender_tenant_id,
+  borrower_tenant_id,
+  created_by,           -- ✅ NUEVO campo
+  type,
+  title,
+  ...
+) VALUES (
+  p_my_tenant_id,
+  p_other_contact_id,
+  v_lender_tenant_id,
+  v_borrower_tenant_id,
+  v_created_by_user_id, -- ✅ Owner user del tenant
+  'loan',
+  p_title,
+  ...
+);
+```
+
+### ✨ Resultado
+
+- ✅ Agreements se crean con `created_by` poblado automáticamente
+- ✅ Se usa el owner user del tenant que crea el préstamo
+- ✅ Constraint NOT NULL satisfecho
+- ✅ Préstamos se crean exitosamente desde formulario web
+
+**Archivos modificados:**
+- `supabase/migrations/045_add_created_by_to_create_p2p_loan.sql`
+
+---
+
+## [v3.0.6] - 2025-11-13 - 🐛 HOTFIX CRÍTICO: Corrección de create_p2p_loan
+
+### 🎯 Problema Detectado
+
+Los préstamos creados desde el formulario web se guardaban correctamente, PERO:
+- Los campos `lender_tenant_id` y `borrower_tenant_id` quedaban **NULL**
+- **NO se enviaba la confirmación por WhatsApp al borrower**
+- El préstamo quedaba creado solo con campos legacy (tenant_id, tenant_contact_id)
+
+**Síntomas:**
+- Usuario reportó: "envié un préstamo y no llegó la confirmación"
+- Investigación mostró: agreement existe pero sin campos P2P
+- No se activó el flujo de confirmación porque faltaban los tenant IDs
+
+### 🔍 Causa Raíz
+
+Existían **DOS versiones** de la función `create_p2p_loan` en la base de datos (function overloading):
+
+**Versión INCORRECTA (fantasma - OID 57299):**
+```sql
+create_p2p_loan(
+  p_lender_tenant_id UUID,
+  p_borrower_contact_id UUID,
+  p_amount NUMERIC,
+  ...
+)
+-- ❌ SIN p_i_am_lender
+-- ❌ No puede determinar quién es lender/borrower
+-- ❌ Deja lender_tenant_id y borrower_tenant_id como NULL
+```
+
+**Versión CORRECTA (OID 58406):**
+```sql
+create_p2p_loan(
+  p_my_tenant_id UUID,
+  p_other_contact_id UUID,
+  p_i_am_lender BOOLEAN, -- ✅ Parámetro crítico
+  p_amount NUMERIC,
+  ...
+)
+```
+
+El código en `flow-handlers.ts` llamaba a la versión incorrecta con parámetros que coincidían con la firma fantasma.
+
+### 🔧 Solución Aplicada
+
+**1. Migración 044:** Eliminar función fantasma
+```sql
+DROP FUNCTION IF EXISTS create_p2p_loan(
+  UUID, UUID, NUMERIC, VARCHAR, TEXT, DATE, VARCHAR
+);
+```
+
+**2. flow-handlers.ts (líneas 204-216):** Corregir parámetros RPC
+
+```typescript
+// ANTES (❌):
+.rpc('create_p2p_loan', {
+  p_lender_tenant_id: tenantId,
+  p_borrower_contact_id: contact.id,
+  p_amount: context.amount || 0,
+  // FALTA p_i_am_lender
+});
+
+// DESPUÉS (✅):
+.rpc('create_p2p_loan', {
+  p_my_tenant_id: tenantId,
+  p_other_contact_id: contact.id,
+  p_i_am_lender: true, // ✅ Usuario que crea = lender
+  p_amount: context.amount || 0,
+  ...
+});
+```
+
+### ✨ Resultado
+
+- ✅ Préstamos ahora se crean CON `lender_tenant_id` y `borrower_tenant_id` correctos
+- ✅ Se envía confirmación por WhatsApp al borrower usando plantilla `loan_confirmation_request_v1`
+- ✅ Sincronización P2P bidireccional funciona correctamente
+- ✅ Contactos recíprocos se auto-crean cuando corresponde
+
+**Archivos modificados:**
+- `supabase/migrations/044_drop_incorrect_create_p2p_loan.sql`
+- `supabase/functions/_shared/flow-handlers.ts`
+
+---
+
+## [v3.0.5] - 2025-11-13 - 🐛 Hotfix: Corrección de Registro de Eventos en Formulario Web
+
+### 🎯 Problema Detectado
+
+Al enviar un préstamo desde el formulario web, el sistema fallaba silenciosamente al intentar registrar el evento de completado. Los préstamos NO se creaban y no se enviaba la confirmación al borrower.
+
+**Errores en logs de Postgres:**
+```
+ERROR: invalid input value for enum event_type: "web_form_completed"
+ERROR: insert or update on table "events" violates foreign key constraint "events_contact_id_fkey"
+```
+
+### 🔍 Causa Raíz
+
+**Archivo:** `supabase/functions/loan-web-form/index.ts` (líneas 420-433)
+
+El código intentaba registrar un evento con dos problemas:
+
+1. **Enum inválido:** Usaba `event_type: 'web_form_completed'` que NO existe en el enum
+   - Valores válidos: opt_in_sent, opt_in_received, reminder_sent, confirmed_returned, confirmed_paid, rescheduled, button_clicked, flow_started, **flow_completed**, intent_detected, date_rescheduled
+
+2. **Foreign key violation:** Intentaba insertar `contact_id: lenderContactId`
+   - `lenderContactId` es un `contact_profile_id` (UUID del perfil global)
+   - La columna `events.contact_id` espera un `tenant_contact_id` (UUID del contacto local)
+
+### 🔧 Solución Aplicada
+
+**loan-web-form/index.ts (líneas 420-435):**
+
+```typescript
+// ANTES (❌ Incorrecto):
+await supabase
+  .from('events')
+  .insert({
+    tenant_id: tenantId,
+    contact_id: lenderContactId,  // ❌ Tipo incorrecto
+    agreement_id: result.agreementId,
+    event_type: 'web_form_completed',  // ❌ No existe en enum
+    payload: { ... }
+  });
+
+// DESPUÉS (✅ Correcto):
+await supabase
+  .from('events')
+  .insert({
+    tenant_id: tenantId,
+    // contact_id removido (no necesario, agreement_id ya vincula todo)
+    agreement_id: result.agreementId,
+    event_type: 'flow_completed',  // ✅ Valor válido del enum
+    payload: {
+      form_type: 'loan_web',
+      loan_type: body.loan_type,
+      new_contact: body.new_contact,
+      source: 'web_form'  // ✅ Diferenciador
+    }
+  });
+```
+
+### ✨ Resultado
+
+- ✅ Préstamos desde formulario web ahora se crean correctamente
+- ✅ Evento se registra sin errores con tipo `flow_completed`
+- ✅ Confirmación se envía al borrower vía WhatsApp
+- ✅ Payload incluye `source: 'web_form'` para analytics
+
+---
+
+## [v3.0.4] - 2025-11-13 - 📱 Nueva Plantilla WhatsApp: Confirmación de Préstamo
+
+### 🎯 Contexto
+
+Al cambiar de app de Meta Business, fue necesario recrear y aprobar nuevamente las plantillas de WhatsApp. Se aprobó la primera plantilla: `loan_confirmation_request_v1`.
+
+### 📋 Plantilla Registrada
+
+**Nombre:** `loan_confirmation_request_v1`
+**Categoría:** UTILITY
+**Idioma:** Spanish (CHL)
+**Estado:** ✅ Aprobada
+
+**Estructura:**
+```
+Header: "Confirmación de Préstamo"
+
+Body:
+Hola {{1}} 👋
+
+{{2}} registró un préstamo a tu nombre por *{{3}}*.
+
+🗓️ Fecha de devolución: {{4}}
+
+*¿Confirmas haber recibido este préstamo?*
+
+Si confirmas:
+✅ Activaremos recordatorios automáticos
+✅ Quedará registrado en el sistema
+
+Si no reconoces este préstamo, recházalo de inmediato.
+
+Responde con los botones ⬇️
+
+Botones:
+- "Sí, confirmo"
+- "No, rechazar"
+```
+
+**Variables:**
+1. {{1}} = Nombre del receptor/borrower
+2. {{2}} = Nombre del prestamista/lender
+3. {{3}} = Monto con concepto O descripción de objeto
+   - Dinero: `"$45.000 bajo el concepto 'Préstamo en efectivo'"`
+   - Objeto: `"una bicicleta"`, `"un HP Pavilion"`, etc.
+4. {{4}} = Fecha de devolución (ej. "31/10/25")
+
+### 🔧 Cambios Aplicados
+
+**flow-handlers.ts (líneas 801-840):**
+- Variable {{3}} es **flexible** para soportar ambos casos:
+  - **Préstamos de dinero:** Incluye monto + concepto
+  - **Préstamos de objetos:** Descripción del item
+- La plantilla dice "por *{{3}}*" que funciona gramaticalmente con ambos
+- Ejemplos de mensajes resultantes:
+  - "Felipe registró un préstamo a tu nombre por *$45.000 bajo el concepto 'Préstamo en efectivo'*."
+  - "Felipe registró un préstamo a tu nombre por *una bicicleta*."
+
+**Base de datos:**
+- Plantilla registrada en tabla `templates`
+- `meta_template_name`: `loan_confirmation_request_v1`
+- `approval_status`: `approved`
+- `has_buttons`: `true`
+- `variable_count`: `4`
+
+### ✨ Funcionalidad
+
+Cuando un usuario registra un préstamo a través del bot, el sistema:
+1. Crea el agreement con status `pending_confirmation`
+2. Envía plantilla al borrower solicitando confirmación
+3. Botones permiten confirmar o rechazar el préstamo
+4. Sistema activa recordatorios automáticos si se confirma
+
+---
+
+## [v3.0.3] - 2025-11-13 - 💬 Mensajes Diferenciados para Nuevos vs Existentes
+
+### 🎯 Problema Detectado
+
+Tanto usuarios nuevos como existentes recibían el mismo mensaje largo de bienvenida al escribir "hola", lo cual era redundante para usuarios que ya conocen la plataforma.
+
+### 🔧 Solución Aplicada
+
+**wa_webhook/index.ts:**
+- Agregado flag `isNewUser` en routing (líneas 200-261)
+- Se establece `isNewUser = true` solo cuando se auto-crea el tenant
+- Mensaje diferenciado según tipo de usuario:
+
+**Usuario NUEVO** (recién registrado):
+```
+¡Hola! 👋 Te damos la bienvenida a Payme, tu asistente de préstamos.
+
+Aquí puedes:
+✅ Registrar préstamos que hiciste o te hicieron
+✅ Ver el estado de tus préstamos
+✅ Recibir recordatorios de pago automáticos
+
+Todo lo controlas desde el siguiente enlace 👇
+
+⏱️ Válido por 30 días
+
+💡 Comandos útiles:
+• Escribe "estado" para ver tus préstamos activos
+• Escribe "menu" para obtener nuevamente este enlace
+```
+
+**Usuario EXISTENTE** (ya tiene cuenta):
+```
+¡Hola! 👋 Soy tu asistente de préstamos.
+
+Registra préstamos, ve su estado y gestiona tu información.
+
+⏱️ Válido por 30 días.
+```
+
+### ✨ Beneficios
+
+- ✅ Mejor experiencia para usuarios recurrentes (mensaje conciso)
+- ✅ Onboarding completo para nuevos usuarios (con instrucciones)
+- ✅ Reduce fricción en acceso rápido al menú
+- ✅ Mantiene información completa para quienes la necesitan
+
+---
+
+## [v3.0.0] - 2025-11-13 - 🏗️ Arquitectura Multi-Tenant P2P con Sincronización
+
+### 🎯 Cambios Arquitecturales Mayores
+
+**Sistema multi-tenant con auto-creación de cuentas:**
+- Cada usuario de WhatsApp obtiene automáticamente su propio tenant al escribir por primera vez
+- Función `ensure_user_tenant()` crea tenant + contact_profile + self-contact automáticamente
+- Routing inteligente: busca tenant por owner, crea automáticamente si no existe
+- Elimina necesidad de onboarding manual para usuarios nuevos
+
+**Sincronización bidireccional de préstamos (P2P):**
+- Préstamos se sincronizan automáticamente entre lender y borrower
+- Función `create_p2p_loan()` maneja creación con contactos recíprocos
+- Tabla `tenant_contacts` ahora incluye `contact_tenant_id` (referencia cruzada)
+- Tabla `agreements` incluye `lender_tenant_id` y `borrower_tenant_id` (modelo P2P)
+
+**Modelo de aliases personalizados:**
+- Felipe registra a María como "María - compañera de trabajo"
+- María ve a Felipe con el nombre de su contact_profile o alias que ella le puso
+- Cada tenant mantiene su propia nomenclatura de contactos
+
+### 🗄️ Migraciones SQL
+
+**037_add_owner_to_tenants.sql:**
+- Agrega `owner_contact_profile_id` a `tenants`
+- Índice único: 1 contact_profile = máximo 1 tenant
+
+**038_add_contact_tenant_to_tenant_contacts.sql:**
+- Agrega `contact_tenant_id` a `tenant_contacts`
+- Permite identificar el tenant del contacto (si tiene uno)
+- Pobla automáticamente datos existentes
+
+**039_add_p2p_fields_to_agreements.sql:**
+- Agrega `lender_tenant_id` y `borrower_tenant_id` a `agreements`
+- Migra automáticamente 60 agreements existentes
+- Resultado: 40 P2P completos, 20 con borrower no registrado
+
+**040_create_ensure_user_tenant.sql:**
+- Función SQL para auto-crear tenant de usuario
+- Crea tenant + self-contact + evento
+- Usa whatsapp_phone_number_id compartido
+
+**041_create_p2p_loan_function.sql:**
+- Función SQL para crear préstamos con sincronización P2P
+- Auto-crea contactos recíprocos si es necesario
+- Mantiene compatibilidad con campos legacy
+
+### 💻 Cambios en Edge Functions
+
+**wa_webhook/index.ts:**
+- Routing actualizado (líneas 199-262)
+- Auto-crea contact_profile + tenant para números nuevos
+- Llama a `ensure_user_tenant()` automáticamente
+- Maneja 2 casos: sin profile y profile sin tenant
+
+**_shared/flow-handlers.ts:**
+- Reemplaza INSERT directo por llamada a `create_p2p_loan()`
+- Mantiene lógica de reminder config y metadata
+- Compatibilidad con status 'pending_confirmation'
+
+**_shared/schema-provider.ts:**
+- Actualizado con campos P2P: `lender_tenant_id`, `borrower_tenant_id`, `contact_tenant_id`
+- Documentación de campos legacy vs P2P
+
+### 📊 Estado de la Base de Datos
+
+**Tenants:**
+- Felipe Abarca: owner asignado (+56964943476), 43 agreements
+- Catherine Pereira: owner asignado (+56962081122), 6 agreements
+- PrestaBot Chile: legacy sin owner, 11 agreements
+
+**Tenant Contacts:**
+- 6 con tenant asignado (usuarios registrados)
+- 7 sin tenant (contactos no registrados aún)
+
+**Agreements:**
+- 40 P2P completo (ambos tenants registrados)
+- 20 solo lender (borrower no registrado)
+
+### ✨ Funcionalidades Nuevas
+
+**Auto-onboarding:**
+- Usuario escribe al bot → contact_profile + tenant creado automáticamente
+- Recibe mensaje de bienvenida inmediatamente
+- Puede completar perfil después desde web
+
+**Préstamos P2P sincronizados:**
+- Felipe presta a María → ambos ven el préstamo en sus cuentas
+- Felipe ve: "Préstamo a María - compañera de trabajo"
+- María ve: "Préstamo de Felipe"
+- Actualización de status sincronizada automáticamente
+
+**Burbujas privadas:**
+- Cada usuario solo ve sus propios contactos
+- No hay directorio global de usuarios
+- Contactos se crean al registrar primer préstamo
+
+### 🔧 Compatibilidad
+
+**Campos legacy mantenidos:**
+- `tenant_id`, `tenant_contact_id` en agreements
+- Permite transición gradual
+- Queries antiguos siguen funcionando
+
+**Migración sin downtime:**
+- Datos existentes migrados automáticamente
+- Sistema funciona durante toda la migración
+- 0 préstamos perdidos
+
+### 📝 Impacto
+
+**Mejoras:**
+- ✅ Nuevos usuarios pueden usar el bot inmediatamente
+- ✅ Préstamos bidireccionales sincronizados automáticamente
+- ✅ Cada usuario tiene su espacio privado
+- ✅ Aliases personalizados por usuario
+
+**Cambios de comportamiento:**
+- Nuevos números reciben respuesta automática (antes fallaban)
+- Préstamos crean contactos recíprocos automáticamente
+- No hay más tenant compartido global (arquitectura legacy)
+
+---
+
+## [v3.0.2] - 2025-11-13 - 🧹 Corrección: Eliminar Self-Contact Innecesario
+
+### 🎯 Problema Detectado
+
+El usuario identificó que el contacto "Yo (Mi cuenta)" creado automáticamente en `ensure_user_tenant()` era innecesario y confuso:
+- Aparecía como "¡Hola Yo (Mi cuenta)!" en la interfaz web
+- Con `lender_tenant_id` y `borrower_tenant_id`, ya sabemos quién es quién
+- El self-contact no aportaba valor arquitectural
+
+### 🔧 Corrección Aplicada
+
+**Migración 042_update_ensure_user_tenant.sql:**
+- Elimina creación automática de self-contact en `ensure_user_tenant()`
+- Mantiene solo creación de tenant + evento
+- Documentación actualizada explicando la justificación
+
+**Migración 043_update_create_p2p_loan.sql:**
+- Actualiza firma de función con nuevo parámetro `p_i_am_lender: BOOLEAN`
+- Soporta ambas direcciones: "yo presto" (true) y "me prestan" (false)
+- Lógica determina automáticamente `lender_tenant_id` y `borrower_tenant_id`
+- Eventos registran la dirección para debugging
+
+**Limpieza de datos:**
+- Eliminados 3 self-contacts existentes:
+  - Felipe Abarca → "Yo (Mi cuenta)"
+  - Catherine Pereira → "Yo (Mi cuenta)"
+  - Cuenta de +56942356880 → "Yo (Mi cuenta)"
+
+### 💡 Lógica Correcta
+
+**Antes (incorrecto):**
+```
+María presta a Felipe:
+- agreement.tenant_id = maría_tenant
+- agreement.tenant_contact_id = felipe_contact (en tenant de María)
+- María tiene self-contact "Yo (Mi cuenta)" innecesario
+```
+
+**Después (correcto):**
+```
+María presta a Felipe:
+- agreement.lender_tenant_id = maría_tenant
+- agreement.borrower_tenant_id = felipe_tenant
+- NO hay self-contact
+- Visualización: JOIN tenant_contacts usando contact_tenant_id para obtener alias
+```
+
+### ✨ Beneficios
+
+- ✅ Interfaz más limpia (no más "Hola Yo (Mi cuenta)")
+- ✅ Arquitectura simplificada (un concepto menos)
+- ✅ `create_p2p_loan()` ahora soporta ambas direcciones con un solo flag
+- ✅ Modelo mental más claro: lender y borrower son suficientes
+
+---
+
+## [v2.7.1] - 2025-11-12 - 💬 Mejora de Mensaje de Bienvenida
+
+### 🎯 Cambios
+
+**Mensaje de bienvenida mejorado:**
+- Tono más amigable e invitador
+- Beneficios claros y específicos (registrar, ver estado, recordatorios)
+- Incluye comandos útiles para el usuario ("estado", "menu")
+- Botón renombrado de "Ingresar al menú" a "Acceder a Payme"
+
+**Texto anterior:**
+```
+¡Hola! 👋 Soy tu asistente de préstamos.
+Registra préstamos, ve su estado y gestiona tu información.
+⏱️ Válido por 30 días.
+```
+
+**Texto nuevo:**
+```
+¡Hola! 👋 Te damos la bienvenida a Payme, tu asistente de préstamos.
+
+Aquí puedes:
+✅ Registrar préstamos que hiciste o te hicieron
+✅ Ver el estado de tus préstamos
+✅ Recibir recordatorios de pago automáticos
+
+Todo lo controlas desde el siguiente enlace 👇
+
+⏱️ Válido por 30 días
+
+💡 Comandos útiles:
+• Escribe "estado" para ver tus préstamos activos
+• Escribe "menu" para obtener nuevamente este enlace
+```
+
+### 📝 Impacto
+
+- Mejor experiencia para nuevos usuarios (onboarding más claro)
+- Educación sobre comandos disponibles
+- Tono más profesional y acogedor
+
+---
+
+## [v2.7.0] - 2025-11-12 - 🚧 Modo Simplificado: Desactivación Temporal de IA y Flujos
+
+### 🎯 Objetivo
+
+Simplificar temporalmente el bot de WhatsApp para mantener solo las funcionalidades esenciales mientras se evalúa el uso y se optimizan recursos. **Implementación mediante feature flags** para fácil activación/desactivación sin errores de sintaxis.
+
+### ✅ Funcionalidades ACTIVAS
+
+**Comandos básicos:**
+- ✅ `hola`, `hi`, `menu`, `inicio`, `ayuda` → Genera URL del portal web (válida 30 días)
+- ✅ `estado`, `status` → Muestra préstamos activos
+
+**Botones interactivos:**
+- ✅ `check_status` → Ver estado de préstamos (activos y pendientes de confirmación)
+- ✅ `loan_{id}_mark_returned` → Marcar préstamo como devuelto (desde recordatorios)
+- ✅ Botones de confirmación del template `loan_confirmation_request_v1` (confirm/reject)
+
+**Edge functions activas:**
+- ✅ `generate-menu-token` → Genera tokens de acceso al portal
+- ✅ `loan-actions` → Procesa confirmaciones y devoluciones desde web
+
+### ❌ Funcionalidades DESACTIVADAS (vía Feature Flags)
+
+**Sistema de IA:**
+- ❌ AI Agent para procesamiento de texto genérico
+- ❌ Transcripción de audio con Whisper
+- ❌ Análisis de imágenes con GPT-4 Vision
+
+**Flujos conversacionales:**
+- ❌ `new_loan_chat` → Crear préstamo por WhatsApp conversacional
+- ❌ Listas interactivas de selección de contactos
+- ❌ Botones de flujo: `loan_money`, `loan_object`, `loan_other`
+- ❌ Botones de fecha: `date_tomorrow`, `date_end_of_month`, `date_custom`
+
+**Botones de funcionalidades:**
+- ❌ `new_loan`, `new_loan_web` → Solo desde portal web
+- ❌ `help` → Menú de ayuda
+- ❌ `reschedule` → Reprogramación de fechas
+- ❌ `new_service` → Servicios mensuales
+- ❌ `web_menu` → Plantilla de menú web
+- ❌ `user_profile` → WhatsApp Flow de perfil
+- ❌ `opt_in_yes`, `opt_in_no` → Opt-in de recordatorios
+- ❌ `loan_returned` → Marcar devuelto genérico
+
+**Procesamiento multimedia:**
+- ❌ Contactos compartidos (message.type === 'contacts')
+- ❌ Mensajes de audio (message.type === 'audio')
+- ❌ Mensajes con imágenes (message.type === 'image')
+
+### 📝 Cambios Técnicos
+
+**Archivo: `supabase/functions/wa_webhook/index.ts`**
+
+1. **Feature Flags agregados (líneas 13-26)**
+   ```typescript
+   const FEATURES = {
+     AI_PROCESSING: false,           // IA para texto, audio, imágenes
+     CONVERSATIONAL_FLOWS: false,    // Flujos de nuevo préstamo por WhatsApp
+     INTERACTIVE_BUTTONS: false,     // Botones: new_loan, help, reschedule, etc.
+     // Siempre activos:
+     CHECK_STATUS: true,             // Ver estado de préstamos
+     MARK_RETURNED: true,            // Marcar como devuelto
+     MENU_ACCESS: true               // Acceso al portal web
+   };
+   ```
+
+2. **Check condicional IA para texto (línea 409)**
+   - Condición: `if (!currentState && FEATURES.AI_PROCESSING)`
+   - Mensaje fallback cuando IA desactivada (líneas 478-483)
+
+3. **Check condicional flujos conversacionales (línea 486)**
+   - Condición: `if (!responseMessage && !aiProcessed && FEATURES.CONVERSATIONAL_FLOWS)`
+   - Solo procesa conversationManager si flag activo
+
+4. **Filtro de botones implementado (líneas 818-834)**
+   - Whitelist: `['check_status']`
+   - Dinámicos permitidos: `loan_{id}_mark_returned`
+   - Condicional para interactive buttons y flow buttons
+   - Mensaje de desactivación para botones no permitidos
+
+5. **Check condicional audio (línea 1715)**
+   - Condición: `} else if (message.type === 'audio' && FEATURES.AI_PROCESSING) {`
+   - Mensaje fallback (líneas 1930-1933)
+
+6. **Check condicional imagen (línea 1807)**
+   - Condición: `} else if (message.type === 'image' && FEATURES.AI_PROCESSING) {`
+   - Mensaje fallback (líneas 1934-1937)
+
+### 🔄 Para Reactivar Funcionalidades
+
+Simplemente cambiar los feature flags de `false` a `true` en las líneas 13-26:
+
+```typescript
+const FEATURES = {
+  AI_PROCESSING: true,           // ✅ Reactivar IA
+  CONVERSATIONAL_FLOWS: true,    // ✅ Reactivar flujos
+  INTERACTIVE_BUTTONS: true,     // ✅ Reactivar botones
+  // ...
+};
+```
+
+Luego desplegar: `npx supabase functions deploy wa_webhook --no-verify-jwt`
+
+### 📊 Impacto
+
+**Usuarios verán:**
+- ✅ Acceso normal al portal web
+- ✅ Ver estado de préstamos
+- ✅ Confirmación/rechazo de préstamos (desde template)
+- ✅ Marcar préstamos como devueltos (desde recordatorios)
+- ⚠️ Crear préstamos SOLO desde portal web
+- ⚠️ Sin procesamiento de IA para preguntas generales
+- ⚠️ Sin análisis de audio/imágenes
+
+**Recursos optimizados:**
+- ⬇️ Llamadas a OpenAI API (GPT-4, Whisper)
+- ⬇️ Procesamiento de estados conversacionales
+- ⬇️ Uso de tokens de contexto
+
+---
+
+## [2025-11-10] - 🔄 Migración de WhatsApp Business: Customware → Somos Payme
+
+### 🎯 Objetivo
+
+Migrar las credenciales de WhatsApp Business API desde la cuenta de "Customware" a la nueva cuenta dedicada "Somos Payme", alineando la identidad de marca del producto.
+
+### 📋 Cambios Realizados
+
+**Actualización de credenciales en base de datos**:
+
+Se actualizaron **3 tenants** con las nuevas credenciales de WhatsApp Business de Somos Payme:
+
+1. **PrestaBot Chile** (`d4c43ab8-426f-4bb9-8736-dfe301459590`)
+2. **Felipe Abarca** (`1f000059-0008-4b6d-96a4-eea08b8a0f94`)
+3. **Catherine Pereira** (`85625504-3553-464b-8d68-2f508a163ac2`)
+
+**Valores actualizados**:
+- `whatsapp_phone_number_id`: `778143428720890` → `926278350558118`
+- `whatsapp_business_account_id`: `773972555504544` → `1558540088893371`
+- `whatsapp_access_token`: Actualizado con token temporal de Somos Payme
+
+### ✅ Token Permanente Actualizado
+
+**COMPLETADO**: Token permanente generado y actualizado exitosamente.
+
+**Acciones realizadas**:
+1. ✅ Generado token permanente en Meta Business Manager (Somos Payme)
+2. ✅ Token actualizado en base de datos para los 3 tenants
+3. ✅ Timestamp: 2025-11-11 00:48:51 UTC
+4. ✅ Token configurado como **permanente** (no expira)
+
+**Token anterior (temporal):** `EAALZCmIM023IBP1nawh...` (ELIMINADO)
+**Token actual (permanente):** `EAALZCmIM023IBP2M4wM...` (ACTIVO)
+
+### 📋 Plantillas de WhatsApp a Migrar
+
+Las siguientes plantillas deben crearse en la cuenta de Somos Payme (Meta Business Manager):
+
+1. **`menu_web_access`** - Acceso al menú web personalizado
+   - Documentación: `docs/PLANTILLA_MENU_WEB.md`
+   - Categoría: UTILITY
+   - Variables: 1 (URL dinámica)
+
+2. **`loan_invitation`** - Invitación viral para nuevos usuarios
+   - Documentación: `docs/VIRAL_INVITATIONS.md`
+   - Categoría: UTILITY
+   - Variables: 3 (nombre lender, nombre borrower, monto) + 1 URL dinámica
+
+3. **`due_date_money_v1`** - Recordatorio de vencimiento (préstamos de dinero)
+   - Documentación: `docs/PLANTILLAS_RECORDATORIO_VENCIMIENTO.md`
+   - Categoría: UTILITY
+   - Variables: 11 + 1 URL dinámica
+
+4. **`due_date_object_v1`** - Recordatorio de vencimiento (préstamos de objetos)
+   - Documentación: `docs/PLANTILLAS_RECORDATORIO_VENCIMIENTO.md`
+   - Categoría: UTILITY
+   - Variables: 5 + 1 URL dinámica
+
+### ✅ Verificación Post-Migración
+
+Para verificar que todo funciona correctamente:
+
+```bash
+# Test de envío de plantilla
+deno run --allow-net supabase/functions/test-reminder/index.ts
+```
+
+### 🔍 Referencias
+
+- Credenciales actualizadas: 2025-11-11 00:20:28 UTC
+- Documentación de plantillas: `/docs/PLANTILLA_*.md`
+- Meta Business Manager: https://business.facebook.com/
+
+---
+
+## [2025-10-29] - v2.6.0 - 🎤 Búsqueda Fonética para Transcripciones de Audio
+
+### 🎯 Objetivo
+
+Mejorar la precisión de búsqueda de contactos cuando el usuario envía **mensajes de voz**, donde Whisper puede transcribir nombres con ortografía incorrecta pero fonéticamente correcta (ej: "Katy" → "Caty", "José" → "Hosé").
+
+### 🐛 Problema Identificado
+
+**Fricción innecesaria en búsquedas de audio**:
+
+Escenario actual:
+1. Usuario envía audio: *"¿Cuánta plata le debo a Katy?"*
+2. Whisper transcribe: "Katy" (con K)
+3. Base de datos tiene: "Caty" (con C)
+4. Bot encuentra 75% de similitud → **Pregunta confirmación**: "¿Te refieres a Caty?"
+5. Usuario debe responder manualmente (fricción innecesaria)
+
+**Problema raíz**: Whisper no puede determinar la ortografía correcta de nombres propios, solo transcribe fonéticamente. El sistema actual no diferencia entre errores de transcripción (audio) y errores de tipeo (texto).
+
+**Consecuencias**:
+- ❌ Confirmaciones innecesarias para nombres fonéticamente obvios
+- ❌ Experiencia de usuario degradada en mensajes de voz
+- ❌ No se aprovecha que "Katy" y "Caty" suenan idéntico en español
+
+### ✅ Solución Implementada
+
+#### 1. **Generador de Variantes Fonéticas** (`phonetic-variants.ts`)
+
+**Nuevo archivo**: `supabase/functions/_shared/phonetic-variants.ts` (~240 líneas)
+
+**Transformaciones fonéticas implementadas**:
+- **K/C/Qu**: Katy ↔ Caty ↔ Quaty, Carlos ↔ Karlos, Quique ↔ Kike
+- **Y/LL/I**: Yenny ↔ Jenny, Willy ↔ Wili ↔ Willi
+- **H silenciosa**: José ↔ Hosé, Elena ↔ Helena, Hernán ↔ Ernán
+- **Acentos**: María ↔ Maria, José ↔ Jose, Ramón ↔ Ramon
+- **S/Z (seseo)**: Susana ↔ Zuzana, González ↔ Gonzales
+- **B/V (betacismo)**: Victoria ↔ Bictoria, Víctor ↔ Bictor
+
+**Funciones principales**:
+```typescript
+// Genera hasta 20 variantes fonéticas ordenadas por probabilidad
+generatePhoneticVariants(name: string): string[]
+
+// Verifica si dos nombres son fonéticamente similares
+arePhoneticallySimilar(name1: string, name2: string): boolean
+```
+
+**Ejemplo de uso**:
+```typescript
+generatePhoneticVariants("Katy")
+// → ["katy", "caty", "kathi", "cathi", "kathy", "cathy", ...]
+```
+
+---
+
+#### 2. **Búsqueda Fonética en Contact Search** (`contact-fuzzy-search.ts`)
+
+**Modificación**: Función `findContactByName()` (líneas 95-206)
+
+**Nuevo parámetro**:
+```typescript
+usePhoneticVariants: boolean = false  // Activar búsqueda fonética
+```
+
+**Lógica implementada**:
+1. Si `usePhoneticVariants = true` → genera variantes fonéticas con `generatePhoneticVariants()`
+2. Compara **todas las variantes** contra nombres de contactos
+3. Retorna el match con **mayor similitud** entre todas las variantes
+4. Logs detallados: `"Phonetic match: 'Katy' → 'Caty' via variant 'caty' (95%)"`
+
+**Ejemplo**:
+```typescript
+// Audio: Usuario dice "Katy"
+findContactByName(supabase, tenantId, "Katy", 0.4, true)
+// Genera: ["katy", "caty", "kathi", ...]
+// Contacto en DB: "Caty"
+// Match: "caty" vs "caty" = 100% ✅
+```
+
+---
+
+#### 3. **Threshold Adaptativo según Origen** (`ai-agent/index.ts`)
+
+**Modificación**: Función `searchContacts()` (líneas 1464-1612)
+
+**Nuevo parámetro**:
+```typescript
+messageSource: 'audio' | 'text' = 'text'
+```
+
+**Threshold adaptativo** (líneas 1484-1492):
+```typescript
+// Audio: threshold más permisivo (errores de transcripción esperados)
+const threshold = isAudio ? 0.4 : 0.5;
+
+// Búsqueda fonética solo para audio
+const usePhonetic = isAudio;
+```
+
+**Lógica especial para audio con múltiples matches** (líneas 1526-1551):
+```typescript
+if (isAudio && matches.length > 1) {
+  const best = matches[0];  // Ordenados por similitud
+
+  // Si el mejor tiene ≥85% → auto-seleccionar (sin preguntar)
+  if (best.similarity >= 0.85) {
+    console.log(`Auto-selecting "${best.name}" (${best.similarity * 100}%)`);
+    return {
+      success: true,
+      message: `✅ Encontrado: ${best.name}`,
+      needs_confirmation: false,
+      auto_selected: true
+    };
+  }
+}
+```
+
+**Integración con message_type** (líneas 404-411):
+```typescript
+case 'search_contacts':
+  result = await searchContacts(
+    supabase,
+    tenantId,
+    args,
+    message_type === 'audio_transcription' ? 'audio' : 'text'  // ← Detecta origen
+  );
+  break;
+```
+
+---
+
+#### 4. **Indicador Visual para Audio** (`ai-agent/index.ts`)
+
+**Líneas 283-286**: Agrega emoji 🎤 al inicio de respuestas de audio
+
+```typescript
+// Agregar indicador 🎤 para mensajes de audio
+if (message_type === 'audio_transcription' && finalResponse) {
+  finalResponse = '🎤 ' + finalResponse;
+}
+```
+
+**Ejemplo**:
+```
+Usuario (audio): "¿Cuánto me debe Katy?"
+Bot: "🎤 Katy te debe $15.000 CLP (préstamo activo desde 2025-10-20)"
+```
+
+---
+
+#### 5. **Tool Description Actualizado** (`openai-client.ts`)
+
+**Línea 685**: Tool `search_contacts` ahora documenta búsqueda fonética:
+
+```typescript
+description: '🔍 VERIFICACIÓN DE CONTACTOS [...] Para mensajes de AUDIO 🎤 usa búsqueda fonética automática (Katy≈Caty, José≈Hosé) con threshold más permisivo (85%+ auto-selección). [...]'
+```
+
+---
+
+### 📊 Comparación Before/After
+
+#### Escenario: Usuario envía audio "¿Cuánto le debo a Katy?"
+
+**ANTES (v2.5.0)**:
+```
+1. Whisper transcribe: "Katy"
+2. DB tiene: "Caty"
+3. Fuzzy match: 75% de similitud
+4. Bot: "Encontré a 'Caty'. ¿Te refieres a ella?"
+5. Usuario: "Sí" (fricción innecesaria)
+```
+
+**DESPUÉS (v2.6.0)**:
+```
+1. Whisper transcribe: "Katy"
+2. Sistema detecta: message_type = 'audio_transcription'
+3. Genera variantes: ["katy", "caty", "kathi", ...]
+4. Match fonético: "caty" = "caty" = 100%
+5. Auto-selección: similitud ≥85%
+6. Bot: "🎤 Le debes $20.000 a Caty (vence 2025-11-05)"
+   (sin confirmación, respuesta directa)
+```
+
+---
+
+### 🔧 Archivos Modificados
+
+**Nuevos**:
+- `supabase/functions/_shared/phonetic-variants.ts` (240 líneas)
+
+**Modificados**:
+- `supabase/functions/_shared/contact-fuzzy-search.ts` (+50 líneas)
+  - Import de `generatePhoneticVariants()`
+  - Parámetro `usePhoneticVariants` en `findContactByName()`
+  - Loop de comparación de variantes (líneas 154-163)
+  - Logging de matches fonéticos (línea 184)
+
+- `supabase/functions/ai-agent/index.ts` (+20 líneas)
+  - Parámetro `messageSource` en `searchContacts()` (línea 1474)
+  - Threshold adaptativo (líneas 1484-1492)
+  - Lógica de auto-selección para audio ≥85% (líneas 1526-1551)
+  - Detección de `audio_transcription` en call site (líneas 404-411)
+  - Indicador 🎤 para respuestas de audio (líneas 283-286)
+
+- `supabase/functions/_shared/openai-client.ts` (+15 caracteres)
+  - Tool description de `search_contacts` (línea 685)
+
+---
+
+### 🎯 Resultados Esperados
+
+✅ **Menos fricción**: Auto-selección de contactos fonéticamente obvios (≥85%)
+✅ **Mejor UX en audio**: Respuestas directas sin confirmaciones innecesarias
+✅ **Manejo de variantes**: Katy/Caty, José/Hosé, Yenny/Jenny reconocidos automáticamente
+✅ **Indicador visual**: Emoji 🎤 identifica respuestas procesadas desde audio
+✅ **Backward compatible**: Búsqueda normal (threshold 0.5) para mensajes de texto
+
+---
+
+### 📝 Notas Técnicas
+
+- **Threshold conservador**: 85% para auto-selección (evita falsos positivos)
+- **Límite de variantes**: Máximo 20 variantes generadas (evita explosión combinatoria)
+- **Performance**: Variantes se generan una vez por búsqueda, todas comparadas en paralelo
+- **Logging**: Logs detallados en producción para debugging (`[ContactFuzzySearch] Phonetic match: ...`)
+
+---
+
+## [2025-10-28] - v2.5.0 - 🎯 Balance Detallado: Categorización por Status y Vencimiento
+
+### 🎯 Objetivo
+
+Expandir el AI Agent para manejar todos los **9 status de préstamos** (anteriormente solo 4) y generar balances detallados categorizados por vencimiento y confirmación.
+
+### 🐛 Problema Identificado
+
+**Schema Drift**: El AI Agent solo conocía 4 de los 9 status disponibles en la base de datos:
+- **Conocidos**: `active`, `completed`, `cancelled`, `overdue`
+- **Ignorados**: `due_soon`, `pending_confirmation`, `rejected`, `returned`, `paused`
+
+**Balance Simple**: La función `queryLoansBalance()` solo mostraba totales agregados sin desglose:
+```
+Me deben: $50.000
+Debo: $30.000
+Balance neto: +$20.000
+```
+
+**Consecuencias**:
+- ❌ No se podía identificar préstamos vencidos específicamente
+- ❌ No se veían préstamos sin confirmar (pending_confirmation)
+- ❌ No se distinguía entre préstamos al día vs por vencer
+- ❌ Usuarios no tenían visibilidad de urgencia de pagos
+
+### ✅ Solución Implementada
+
+#### 1. **Balance Detallado con Categorización** (`ai-agent/index.ts`)
+
+**Nueva función `queryLoansBalance()`** (líneas 681-861):
+- Query con **todos los status relevantes**: `active`, `overdue`, `due_soon`, `pending_confirmation`
+- **Categorización automática** por status
+- **Bidireccional**: ME DEBEN (prestado) + DEBO (recibido)
+- **Formato chileno** integrado: $99.000 (punto para miles)
+
+**Categorías para ME DEBEN (prestado)**:
+- 🔴 Vencidos (`status = 'overdue'`)
+- ⚠️ Por vencer (24h) (`status = 'due_soon'`)
+- ⏳ Sin confirmar (`status = 'pending_confirmation'`)
+- ✅ Al día (`status = 'active'`)
+
+**Categorías para DEBO (recibido)**:
+- 🔴 Vencidos (`status = 'overdue'`)
+- ⚠️ Por vencer (24h) (`status = 'due_soon'`)
+- ✅ Al día (`status = 'active'`)
+
+**Helper function**: `formatChileanNumber()` para formato consistente con v2.4.3
+
+---
+
+#### 2. **Expansión de Documentación de Status** (`openai-client.ts`)
+
+**Línea 524-534**: Documentación completa de los 9 status:
+```typescript
+- status: TEXT → Estados del préstamo:
+  * 'active': Activo, sin devolver, no vencido, confirmado
+  * 'overdue': Vencido, sin devolver (automático por función de BD)
+  * 'due_soon': Vence en < 24h (automático)
+  * 'pending_confirmation': Esperando confirmación del borrower
+  * 'rejected': Rechazado por borrower (mostrar SOLO si se pregunta)
+  * 'completed': Devuelto/pagado completamente
+  * 'returned', 'cancelled', 'paused'
+- borrower_confirmed: BOOLEAN → true (confirmado), false (rechazado), null
+```
+
+**Línea 620-624**: Actualizada tool description de `query_type='balance'`:
+```typescript
+- "balance": Balance DETALLADO categorizado por vencimiento y confirmación:
+  * ME DEBEN: vencidos, por vencer (24h), sin confirmar, al día + total
+  * DEBO: vencidos, por vencer (24h), al día + total
+  * Balance neto (diferencia entre ambos)
+```
+
+---
+
+#### 3. **RLS Policies y Ejemplos SQL** (`schema-provider.ts`)
+
+**Líneas 445-455**: Nuevas RLS policies sobre status:
+```typescript
+`STATUS de préstamos - IMPORTANTE:`,
+`  - 'active': Préstamo activo, sin devolver, no vencido, confirmado`,
+`  - 'overdue': Vencido sin devolver (automático)`,
+`  - 'due_soon': Vence en < 24h (automático)`,
+`  - 'pending_confirmation': Esperando confirmación del borrower`,
+`  - 'rejected': Rechazado (mostrar SOLO si se pregunta)`,
+`Para balance: filtrar por IN ('active', 'overdue', 'due_soon', 'pending_confirmation')`,
+`Para vencidos: usar status = 'overdue' (NO due_date < CURRENT_DATE)`
+```
+
+**Líneas 513-575**: Nuevos ejemplos SQL:
+1. **Balance detallado con CTE** - Categorización por status usando CASE + GROUP BY
+2. **Préstamos pendientes de confirmación** - Filtro por `status = 'pending_confirmation'`
+
+---
+
+### 📦 Archivos Modificados
+
+```bash
+supabase/functions/ai-agent/index.ts
+  - Línea 681-861: Reescrita queryLoansBalance() con categorización
+  - +180 líneas de código
+
+supabase/functions/_shared/openai-client.ts
+  - Línea 524-534: Expandida documentación de 9 status
+  - Línea 620-624: Actualizada tool description
+
+supabase/functions/_shared/schema-provider.ts
+  - Línea 445-455: Agregadas RLS policies sobre status
+  - Línea 513-575: Agregados 2 ejemplos SQL
+```
+
+### ✅ Resultado
+
+**Antes de v2.5.0**:
+```
+Usuario: "mi balance"
+Bot:
+💰 Resumen de préstamos activos
+
+📤 Prestado (me deben): $50.000
+📥 Recibido (debo): $30.000
+
+✅ Balance neto: +$20.000 a tu favor
+```
+
+**Después de v2.5.0**:
+```
+Usuario: "mi balance"
+Bot:
+💰 Balance Detallado
+
+📤 ME DEBEN (Prestado)
+  🔴 Vencidos: $15.000 (3 préstamos)
+  ⚠️  Por vencer (24h): $5.000 (1 préstamo)
+  ⏳ Sin confirmar: $10.000 (2 préstamos)
+  ✅ Al día: $20.000 (4 préstamos)
+  ──────────────────────
+  💰 Total: $50.000
+
+📥 DEBO (Recibido)
+  🔴 Vencidos: $8.000 (2 préstamos)
+  ⚠️  Por vencer (24h): $2.000 (1 préstamo)
+  ✅ Al día: $20.000 (3 préstamos)
+  ──────────────────────
+  💵 Total: $30.000
+
+💵 Balance Neto: +$20.000 a tu favor ✅
+```
+
+### 🎯 Beneficios
+
+- ✅ **Visibilidad completa** de préstamos vencidos separados
+- ✅ **Alertas tempranas** de préstamos por vencer (24h)
+- ✅ **Control de confirmaciones** (pending_confirmation)
+- ✅ **Bidireccional** (me deben + debo) con mismas categorías
+- ✅ **Formato chileno** consistente ($99.000)
+- ✅ **Emojis contextuales** (🔴 vencidos, ⚠️ urgente, ✅ al día)
+- ✅ **Backward compatible** - queries antiguas siguen funcionando
+
+### 📊 Casos de Uso Nuevos
+
+**Balance sin préstamos**:
+```
+📤 ME DEBEN (Prestado)
+  _No hay préstamos otorgados_
+
+📥 DEBO (Recibido)
+  _No hay préstamos recibidos_
+```
+
+**Solo vencidos**:
+```
+📤 ME DEBEN (Prestado)
+  🔴 Vencidos: $25.000 (5 préstamos)
+  ──────────────────────
+  💰 Total: $25.000
+```
+
+**Préstamos sin confirmar (query_loans_dynamic)**:
+```
+Usuario: "muéstrame préstamos sin confirmar"
+Bot: [Lista de préstamos con status = 'pending_confirmation']
+```
+
+---
+
+## [2025-10-28] - v2.4.3 - ✨ Mejoras de UX: Emojis y formato de números chileno
+
+### 🎯 Mejoras Solicitadas
+
+**Solicitud 1**: Hacer las respuestas más amigables usando emojis
+**Solicitud 2**: Usar formato de números chileno (punto para miles, coma para decimales)
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/_shared/openai-client.ts`
+
+#### 1. Agregado soporte de emojis (línea 407)
+
+```typescript
+2. USA EMOJIS cuando sea apropiado para hacer las respuestas más cálidas y expresivas
+```
+
+**Ejemplos de uso**:
+- "Le debes $99.000 a Caty 💰"
+- "Caty te debe $364.888 💵"
+- "✅ Listo! Registré el préstamo de $50.000 a Juan"
+- "No encontré préstamos con ese nombre 🤔"
+
+#### 2. Formato de números chileno (línea 408-411)
+
+```typescript
+3. FORMATO DE NÚMEROS (Chile): Usa PUNTO para miles y COMA para decimales
+   - Correcto: $99.000 | $1.234.567 | $50.000,50
+   - Incorrecto: $99,000 | $1,234,567 | $50,000.50
+```
+
+#### 3. Actualizado tono de conversación (línea 418)
+
+```typescript
+9. Tono: Amigable, cálido, cercano - como hablarías con un amigo por WhatsApp
+```
+
+### 📦 Cambios Aplicados
+
+```bash
+supabase/functions/_shared/openai-client.ts
+  - Línea 407: Agregada instrucción de uso de emojis
+  - Línea 408-411: Agregadas reglas de formato de números chileno
+  - Línea 413-416: Actualizados ejemplos con emojis y formato correcto
+  - Línea 418: Refinado tono de conversación (amigable, cálido, cercano)
+```
+
+### ✅ Resultado Esperado
+
+**Antes de v2.4.3**:
+```
+Usuario: "¿cuánto le debo a Caty?"
+Bot: "Le debes $99,000 a Caty"  ← formato estadounidense, sin emojis
+```
+
+**Después de v2.4.3**:
+```
+Usuario: "¿cuánto le debo a Caty?"
+Bot: "Le debes $99.000 a Caty 💰"  ← formato chileno + emoji
+```
+
+**Principios aplicados**:
+- ✅ Respuestas más cálidas y expresivas con emojis
+- ✅ Formato de números localizado para Chile (punto/coma)
+- ✅ Tono amigable y cercano tipo WhatsApp
+- ✅ Mantiene respuestas directas y concisas de v2.4.2
+
+---
+
+## [2025-10-28] - v2.4.2 - 🎨 Mejora de UX: Respuestas directas y concisas del AI Agent
+
+### 🎯 Problema Identificado
+
+**Bot demasiado técnico**: El AI Agent generaba respuestas verbosas con explicaciones técnicas innecesarias, confundiendo a los usuarios.
+
+**Ejemplo del problema**:
+```
+Usuario: "¿cuánto le debo a Caty?"
+Bot (ANTES): "Gracias. Encontré a Caty en tus contactos (Coincidencia alta).
+
+Sobre cuánto le debes a Caty:
+• La consulta actual para calcular el total que debes a Caty arrojó un valor nulo.
+Eso sugiere que, en los préstamos registrados, no hay préstamos en los que tú seas
+prestatario y Caty sea prestamista (o no hay registros activos de ese tipo)..."
+
+Usuario esperaba: "Le debes $99,000 a Caty"
+```
+
+**Causa**: System prompt contenía:
+- Estructura completa de BD con UUIDs y foreign keys
+- Instrucciones técnicas para desarrolladores
+- "Si hay error, explica qué pasó y cómo solucionarlo" → explicaciones técnicas
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/_shared/openai-client.ts`
+
+#### 1. Nueva sección "ESTILO DE RESPUESTA" al inicio del prompt (línea 406)
+
+```typescript
+🎯 ESTILO DE RESPUESTA - CRÍTICO - LEE ESTO PRIMERO:
+1. Responde DIRECTAMENTE y CONCISO, como un asistente amigable en WhatsApp
+2. NO expliques el proceso técnico, SQL, validaciones, o detalles de implementación
+3. Si ejecutaste funciones exitosamente, solo comunica el RESULTADO FINAL
+4. Ejemplo CORRECTO para "¿cuánto le debo a Caty?": "Le debes $99,000 a Caty"
+5. Ejemplo INCORRECTO: "La consulta actual para calcular el total que debes arrojó..."
+6. Si hay error, solo di "No pude procesar eso. ¿Puedes reformular?" SIN detalles técnicos
+7. Tu audiencia son usuarios finales, NO desarrolladores
+```
+
+#### 2. Modificada sección "RESPUESTAS" (línea 503)
+
+**Antes**:
+```
+- Si hay error, explica qué pasó y cómo solucionarlo
+```
+
+**Después**:
+```
+- Si hay error, di simplemente "No pude completar eso" sin explicar detalles técnicos
+```
+
+### 📦 Cambios Aplicados
+
+```bash
+supabase/functions/_shared/openai-client.ts
+  - Línea 406-413: Nueva sección crítica de estilo de respuesta
+  - Línea 503: Simplificada instrucción de manejo de errores
+```
+
+### ✅ Resultado Esperado
+
+**Después del fix**:
+```
+Usuario: "¿cuánto le debo a Caty?"
+Bot: "Le debes $99,000 a Caty"
+```
+
+**Principios aplicados**:
+- ✅ Respuestas directas y concisas
+- ✅ Sin jerga técnica (SQL, validaciones, estructura de BD)
+- ✅ Tono conversacional apropiado para WhatsApp
+- ✅ Errores comunicados de forma simple
+
+---
+
+## [2025-10-28] - v2.4.1 - 🐛 Fix crítico: Deduplicación de mensajes WhatsApp
+
+### 🎯 Problema Identificado
+
+**Bug en deduplicación**: La lógica de deduplicación de webhooks de WhatsApp bloqueaba TODOS los mensajes del mismo usuario enviados dentro de 2 minutos, en lugar de solo bloquear reintentos duplicados del mismo mensaje.
+
+**Impacto**:
+- Usuarios no podían enviar 2 mensajes seguidos en menos de 2 minutos
+- Mensajes legítimos eran silenciosamente descartados sin explicación
+- El AI Agent nunca recibía el mensaje → sin logs, sin respuesta
+
+**Síntomas observados**:
+- Usuario envía "¿cuánto le debo a Caty?" → sin respuesta
+- Logs muestran: `[Dedup] Skipping duplicate message` sin comparar wa_message_id
+- Logs de `ai-agent` vacíos (nunca fue invocado)
+
+### 🐛 Causa Raíz
+
+Código en `wa_webhook/index.ts` línea 180 (antes del fix):
+
+```typescript
+for (const recent of recentMessages) {
+  const recentAge = Date.now() - new Date(recent.created_at).getTime();
+
+  // ❌ BLOQUEABA cualquier mensaje reciente del mismo usuario
+  if (recentAge < 2 * 60 * 1000) { // 2 minutos
+    return { success: true, skipped: true, reason: 'duplicate_retry' };
+  }
+}
+```
+
+**Problema**: El código calculaba `messageContent` para comparar (línea 168) pero NUNCA lo usaba. Solo comparaba el tiempo.
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/wa_webhook/index.ts` (línea 181)
+
+```typescript
+// ✅ Ahora solo bloquea si es EL MISMO wa_message_id
+if (recentAge < 2 * 60 * 1000 && recent.wa_message_id === message.id) {
+  console.log('[Dedup] Found exact duplicate message (same wa_message_id)');
+  return { success: true, skipped: true, reason: 'duplicate_retry' };
+}
+```
+
+**Cambio clave**: Agregada comparación `&& recent.wa_message_id === message.id` para verificar que sea el MISMO mensaje (verdadero reintento de WhatsApp).
+
+### 📦 Archivos Modificados
+
+```bash
+supabase/functions/wa_webhook/index.ts
+  - Línea 181: Agregada comparación de wa_message_id
+  - Línea 182: Actualizado mensaje de log para claridad
+```
+
+### ✅ Resultado
+
+- ✅ Usuarios pueden enviar múltiples mensajes seguidos sin restricción
+- ✅ Reintentos legítimos de WhatsApp (mismo wa_message_id) siguen siendo bloqueados
+- ✅ AI Agent recibe todos los mensajes únicos correctamente
+
+### 🧪 Testing
+
+**Antes del fix:**
+```
+Usuario: "cuanto le debo a caty?"
+Webhook: [Dedup] Skipping duplicate (mensaje anterior hace 30s)
+AI Agent: (sin logs, nunca invocado)
+Resultado: Sin respuesta
+```
+
+**Después del fix:**
+```
+Usuario: "cuanto le debo a caty?"
+Webhook: Procesando mensaje (wa_message_id diferente)
+AI Agent: Procesando pregunta → Generando respuesta
+Resultado: Respuesta exitosa
+```
+
+---
+
+## [2025-01-27] - v2.0.13 - 🔧 Maintenance: Actualización completa de schema-provider.ts
+
+### 🎯 Objetivo
+
+Sincronizar el schema hardcoded en `schema-provider.ts` con el schema real de la base de datos para asegurar que el AI Agent genere SQL correcto y pueda aprovechar todas las columnas y features disponibles.
+
+### 🐛 Problema Identificado
+
+**Schema Drift**: El schema hardcoded en `supabase/functions/_shared/schema-provider.ts` estaba desactualizado respecto al schema real de PostgreSQL, causando que el AI Agent:
+- No conociera columnas importantes como `borrower_confirmed`, `item_description`, `bank_accounts`
+- Tuviera información incompleta de enum values (solo 3 de 9 status values)
+- No pudiera generar queries que utilicen features existentes en la DB
+
+**Ejemplo de discrepancia crítica:**
+
+```typescript
+// ❌ Schema hardcoded ANTES (incompleto)
+{
+  name: 'status',
+  description: 'Estado: "active", "completed", "cancelled"'
+}
+
+// ✅ Schema real en PostgreSQL
+enum agreement_status {
+  'active', 'completed', 'cancelled',
+  'overdue', 'returned', 'due_soon',
+  'paused', 'pending_confirmation', 'rejected'
+}
+```
+
+**Impacto**: El AI Agent no podía:
+- Filtrar préstamos vencidos (`status = 'overdue'`)
+- Detectar préstamos pendientes de confirmación
+- Acceder a información bancaria para respuestas sobre pagos
+- Usar campos como `borrower_confirmed` para validar estado de confirmación
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/_shared/schema-provider.ts`
+
+#### 1. Tabla `agreements` - Agregadas 13 columnas faltantes
+
+```typescript
+// Columnas agregadas:
+- contact_id (UUID, nullable) - LEGACY borrower
+- lender_contact_id (UUID, nullable) - LEGACY lender
+- created_by (UUID) - Usuario que creó el registro
+- title (VARCHAR) - Título del acuerdo
+- item_description (TEXT) - Descripción de objeto prestado
+- currency (VARCHAR) - Moneda del préstamo
+- start_date (DATE) - Fecha de inicio
+- borrower_confirmed (BOOLEAN) - Si borrower confirmó
+- borrower_confirmed_at (TIMESTAMPTZ) - Timestamp de confirmación
+- borrower_rejection_reason (VARCHAR) - Razón de rechazo
+- borrower_rejection_details (TEXT) - Detalles del rechazo
+- updated_at (TIMESTAMPTZ) - Última actualización
+- completed_at (TIMESTAMPTZ) - Timestamp de completado
+
+// Status enum actualizado:
+description: 'Estado: "active" (activo sin devolver), "completed" (devuelto/pagado),
+"cancelled", "overdue" (vencido), "returned", "due_soon" (próximo a vencer),
+"paused", "pending_confirmation" (esperando confirmación del borrower),
+"rejected" (rechazado por borrower)'
+```
+
+#### 2. Tabla `tenant_contacts` - Agregadas 9 columnas faltantes
+
+```typescript
+// Columnas agregadas:
+- preferred_channel (VARCHAR) - Canal preferido: whatsapp/telegram/auto
+- whatsapp_id (VARCHAR) - ID de WhatsApp
+- opt_in_date (TIMESTAMPTZ) - Fecha de opt-in WhatsApp
+- opt_out_date (TIMESTAMPTZ) - Fecha de opt-out WhatsApp
+- telegram_opt_in_status (opt_in_status) - Estado opt-in Telegram
+- timezone (VARCHAR) - Zona horaria
+- preferred_language (VARCHAR) - Idioma preferido
+- metadata (JSONB) - Metadata adicional
+- updated_at (TIMESTAMPTZ) - Última actualización
+```
+
+#### 3. Tabla `contact_profiles` - Agregadas 8 columnas faltantes
+
+```typescript
+// Columnas agregadas:
+- telegram_username (VARCHAR) - Username de Telegram
+- telegram_first_name (VARCHAR) - Nombre en Telegram
+- telegram_last_name (VARCHAR) - Apellido en Telegram
+- first_name (VARCHAR) - Nombre del contacto
+- last_name (VARCHAR) - Apellido del contacto
+- email (VARCHAR) - Email del contacto
+- bank_accounts (JSONB) - Array de cuentas bancarias (rut, bank_name, account_type, etc)
+- verified (BOOLEAN) - Si el perfil está verificado
+- updated_at (TIMESTAMPTZ) - Última actualización
+```
+
+### 📦 Cambios Aplicados
+
+- ✅ `schema-provider.ts` actualizado con 30+ columnas faltantes
+- ✅ Enum values documentados completamente (9 status values en lugar de 3)
+- ✅ Descripciones semánticas agregadas para todas las columnas nuevas
+- ✅ Regla agregada en `.claude/CLAUDE.md` para prevenir schema drift futuro
+
+### 📋 Nueva Regla de Mantenimiento
+
+**Agregada en `.claude/CLAUDE.md` (Regla #4):**
+
+> **CRÍTICO - Schema Awareness**: Cada vez que modifiques las tablas `agreements`, `tenant_contacts` o `contact_profiles` (agregar/eliminar columnas, cambiar tipos, modificar enums), DEBES actualizar inmediatamente `supabase/functions/_shared/schema-provider.ts` para reflejar los cambios. El AI Agent depende de este archivo para generar SQL correcto. Schema desactualizado = queries incorrectos.
+
+### 🎯 Resultado Esperado
+
+**Antes de la actualización:**
+```
+Usuario: "muéstrame préstamos vencidos"
+AI Agent: ❌ Genera SQL sin filtro 'overdue' (no conoce el enum value)
+→ Query incorrecto o incompleto
+```
+
+**Después de la actualización:**
+```
+Usuario: "muéstrame préstamos vencidos"
+AI Agent: ✅ Genera SQL con WHERE status = 'overdue'
+→ Query correcto utilizando enum value existente
+```
+
+**Queries ahora posibles:**
+- "préstamos pendientes de confirmación" → `status = 'pending_confirmation'`
+- "mostrar cuenta bancaria de contacto X" → acceso a `contact_profiles.bank_accounts`
+- "préstamos de objetos sin monto" → filtro `amount IS NULL` + `item_description IS NOT NULL`
+- "préstamos que Caty no ha confirmado" → `borrower_confirmed IS NULL` + lender filter
+
+### 🔍 Notas Técnicas
+
+**Por qué schema hardcoded en lugar de dinámico:**
+
+1. **Semántica de negocio**: PostgreSQL `information_schema` solo da tipos y nombres, NO significado. El LLM necesita saber que `tenant_contact_id = contactId` significa "yo recibí el préstamo" vs `lender_tenant_contact_id = contactId` significa "yo presté".
+
+2. **Few-shot learning**: Los ejemplos en el schema son tan importantes como las columnas. Le enseñan al LLM patrones específicos del dominio.
+
+3. **Performance**: Leer `information_schema` en cada request agrega latencia. Schema hardcoded es instantáneo.
+
+**Trade-off aceptado:**
+- **Pro**: Control total de semántica, ejemplos contextuales, zero latency
+- **Contra**: Requiere disciplina para mantener sincronizado con migraciones
+
+**Mitigación**: Regla #4 en CLAUDE.md obliga a actualizar schema-provider.ts cada vez que se toca la DB.
+
+### 📊 Impacto
+
+- **30+ columnas** ahora disponibles para el AI Agent
+- **9 status values** correctamente documentados (vs 3 anteriores)
+- **Queries más precisos**: AI puede usar campos de confirmación, rechazo, banking info
+- **Prevención futura**: Regla en CLAUDE.md previene drift en próximas migraciones
+
+---
+
+## [2025-01-27] - v2.0.12 - 🐛 Bugfix: Semicolon en SQL generado causa syntax error
+
+### 🐛 Problema Identificado
+
+**Síntoma**: Después de aplicar fixes v2.0.9 (async webhook), v2.0.10 (multi-turn) y v2.0.11 (regex LIKE), el AI Agent aún falla al ejecutar SQL con error:
+
+```
+[SQL Agent] Generated SQL: SELECT SUM(a.amount) AS total_owed_to_caty FROM agreements a WHERE a.tenant_id = '...' AND a.type = 'loan' AND a.status = 'active' AND a.tenant_contact_id = '...' AND a.lender_tenant_contact_id = '...';
+
+[SQL Agent] Execution error: {
+  code: "P0001",
+  message: 'SQL syntax error: syntax error at or near ";"'
+}
+```
+
+**Queries rechazados**: SQL válido generado por `sql-generator.ts` que termina con `;` (semicolon) - una práctica estándar en SQL.
+
+**Causa Raíz**: En `safe_execute_query()`, envolvemos el query del usuario en una subquery para aplicar el LIMIT:
+
+```sql
+-- Línea 100 de safe_execute_query (migraciones 029, 035)
+EXECUTE format(
+  'SELECT COALESCE(json_agg(row_to_json(t)), ''[]''::json) FROM (%s LIMIT %s) t',
+  sql_query,
+  max_rows
+) INTO result;
+```
+
+**El bug**: Si `sql_query` termina con `;`, el formato resultante es:
+
+```sql
+SELECT ... FROM (
+  SELECT SUM(...) FROM agreements WHERE ...;  -- ❌ semicolon dentro de subquery
+  LIMIT 100
+) t
+```
+
+PostgreSQL **no permite semicolons dentro de subqueries**. El `;` es un **statement terminator** válido solo al final de un statement completo, no dentro de expresiones.
+
+**Por qué falla**:
+1. SQL Generator produce: `"SELECT SUM(...) FROM agreements WHERE ...;"`
+2. `safe_execute_query()` envuelve en subquery: `SELECT ... FROM (...; LIMIT 100) t`
+3. PostgreSQL parser encuentra `;` dentro de subquery → **syntax error**
+4. Exception lanzada → Attempt 1/3 falla → retry loop
+5. AI Agent retorna error al usuario
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/migrations/036_safe_execute_query_strip_semicolon.sql`
+
+Agregamos paso de limpieza que elimina el semicolon del final antes de ejecutar (líneas 107-112):
+
+```sql
+-- =====================================================
+-- FIX v2.0.12: Eliminar semicolon del final antes de ejecutar
+-- =====================================================
+-- Esto evita errores cuando envolvemos el query en una subquery
+-- Ejemplo: SELECT ... FROM (SELECT ... ; LIMIT 100) t
+--                                      ↑ causa syntax error
+cleaned_query := rtrim(sql_query, ';');
+
+-- =====================================================
+-- EJECUTAR QUERY CON LÍMITE DE FILAS
+-- =====================================================
+BEGIN
+  -- Ejecutar query limpio (sin semicolon)
+  EXECUTE format(
+    'SELECT COALESCE(json_agg(row_to_json(t)), ''[]''::json) FROM (%s LIMIT %s) t',
+    cleaned_query,  -- ✅ Ahora sin semicolon
+    max_rows
+  ) INTO result;
+```
+
+**Por qué esta solución es correcta**:
+1. **Preserva validación de seguridad**: El semicolon se elimina DESPUÉS de todas las validaciones de seguridad (líneas 67-70 detectan múltiples statements)
+2. **Compatible con ambos estilos**: Acepta queries con o sin semicolon final
+3. **Simple y segura**: Usa `rtrim(sql_query, ';')` - función built-in de PostgreSQL
+4. **No rompe lógica existente**: Solo afecta la ejecución, no las validaciones
+
+### 📦 Cambios Aplicados
+
+- ✅ Migración 036 aplicada a base de datos
+- ✅ Función `safe_execute_query()` actualizada con strip de semicolon
+- ✅ Comentario de función actualizado con versión v2.0.12
+- ✅ Variable `cleaned_query` agregada a DECLARE block
+
+### 🎯 Resultado Esperado
+
+**Antes del fix**:
+```
+SQL Agent genera: "SELECT SUM(a.amount) FROM agreements WHERE tenant_id = '...';"
+→ safe_execute_query valida: ✅ PASS (LIKE 'select%', no keywords peligrosos)
+→ safe_execute_query ejecuta: SELECT ... FROM (...; LIMIT 100) t
+→ PostgreSQL error: "syntax error at or near ;"
+→ Attempt 1/3 falla → retry → falla → falla
+→ AI Agent retorna error al usuario
+```
+
+**Después del fix**:
+```
+SQL Agent genera: "SELECT SUM(a.amount) FROM agreements WHERE tenant_id = '...';"
+→ safe_execute_query valida: ✅ PASS (todas las validaciones)
+→ safe_execute_query limpia: rtrim(..., ';') → "SELECT SUM(...) WHERE ..."
+→ safe_execute_query ejecuta: SELECT ... FROM (...) LIMIT 100) t
+→ PostgreSQL ejecuta exitosamente
+→ Retorna resultados: [{"total_owed_to_caty": 5000}]
+→ AI Agent genera respuesta: "Le debes $5,000 a Caty"
+```
+
+### 🔍 Notas Técnicas
+
+**PostgreSQL Semicolon Semantics**:
+- `;` es un **statement terminator** usado por clientes SQL (psql, pgAdmin)
+- El **parser de PostgreSQL** NO requiere `;` para ejecutar queries
+- `;` **no puede aparecer** dentro de expresiones, subqueries, o CTEs
+- Solo es válido al **final de un statement completo**
+
+**Por qué SQL Generator produce queries con semicolon**:
+- GPT-5-nano aprende de código SQL estándar que incluye `;`
+- Es una práctica común en ejemplos de SQL y documentación
+- No es un error del generador - es SQL válido en contexto normal
+
+**Alternativas consideradas**:
+1. ❌ Modificar prompt del SQL Generator para no generar `;`
+   - Frágil: LLM puede incluir `;` de todas formas
+   - Requiere re-engineering del prompt
+2. ❌ Usar `string_agg` en lugar de subquery con LIMIT
+   - Más complejo y menos legible
+   - No maneja correctamente casos edge (0 resultados)
+3. ✅ Strip semicolon en `safe_execute_query()` antes de ejecutar
+   - Simple, robusto, no afecta otras capas
+   - Maneja ambos casos: con y sin semicolon
+
+### 📋 Testing Recomendado
+
+1. **Test básico de suma**:
+   ```
+   Usuario: "cuanto le debo a caty?"
+   Esperado: "Le debes $X en Y préstamos" (respuesta específica con números)
+   ```
+
+2. **Test multi-turn completo**:
+   - Verificar logs de AI Agent muestran múltiples iterations
+   - Verificar `search_contacts` ejecuta correctamente
+   - Verificar `query_loans_dynamic` ejecuta correctamente
+   - Verificar respuesta final es útil y específica
+
+3. **Test async webhook**:
+   - Verificar tiempo de respuesta del webhook < 2 segundos
+   - Verificar no hay mensajes duplicados enviados a WhatsApp
+   - Verificar deduplicación funciona en ventana de 2 minutos
+
+### 🎓 Fixes Acumulados (v2.0.9 → v2.0.12)
+
+Este fix completa una serie de 4 correcciones críticas:
+
+1. **v2.0.9**: WhatsApp retry loop → Async fire-and-forget + deduplicación
+2. **v2.0.10**: AI Agent one-shot limitation → Multi-turn tool calling loop
+3. **v2.0.11**: PostgreSQL POSIX regex bug → LIKE pattern matching
+4. **v2.0.12**: Semicolon in subquery → Strip antes de ejecutar
+
+**Estado actual**: Sistema completo de AI Agent con SQL dinámico FUNCIONAL ✅
+
+---
+
+## [2025-01-27] - v2.0.11 - 🐛 Bugfix: Regex en safe_execute_query rechazando SELECTs válidos
+
+### 🐛 Problema Identificado
+
+**Síntoma**: AI Agent ejecutaba `query_loans_dynamic` correctamente (multi-turn funcionando), pero **todos los intentos de ejecutar SQL fallaban** con error:
+
+```
+[SQL Agent] Execution error: {
+  code: "P0001",
+  message: "Only SELECT queries are allowed. Query starts with: SELECT SUM(a.amount)..."
+}
+```
+
+**Queries rechazados**: Queries SELECT válidos como `"SELECT SUM(a.amount) FROM agreements WHERE..."` eran incorrectamente marcados como no-SELECT.
+
+**Causa Raíz**: Bug en el regex de validación de `safe_execute_query()` (migración 029, línea 43):
+
+```sql
+-- ❌ BUGGY (migración 029)
+normalized_sql := lower(trim(sql_query));
+
+IF normalized_sql !~ '^\s*select' THEN
+  RAISE EXCEPTION 'Only SELECT queries are allowed...';
+END IF;
+```
+
+**El bug**: PostgreSQL **NO soporta `\s` como shorthand para whitespace** en POSIX regex. El patrón `'^\s*select'` busca literalmente el carácter backslash seguido de 's' (`\s`), NO "cero o más espacios".
+
+**Por qué falla**:
+1. Input: `"SELECT SUM(a.amount)..."`
+2. Después de `lower(trim())`: `"select sum(a.amount)..."`
+3. El regex `'^\s*select'` NO coincide porque busca el string literal `"\s"`
+4. La validación falla → Exception lanzada → Query rechazado
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/migrations/035_fix_safe_execute_query_regex.sql`
+
+Reemplazado regex con patrón `LIKE` más simple y rápido (línea 37):
+
+```sql
+-- ✅ FIX (migración 035)
+normalized_sql := lower(trim(sql_query));
+
+-- Usar LIKE en lugar de regex (más simple y rápido)
+IF NOT (normalized_sql LIKE 'select%') THEN
+  RAISE EXCEPTION 'Only SELECT queries are allowed...';
+END IF;
+```
+
+**Por qué esta solución es mejor**:
+1. **Correcta**: Después de `lower(trim())`, el query DEBE empezar con `"select"`
+2. **Más simple**: No requiere regex engine
+3. **Más rápida**: `LIKE` es más eficiente que regex matching
+4. **Más legible**: Patrón `'select%'` es más claro que `'^\s*select'`
+
+**Mejoras adicionales** en la migración 035:
+- Cambiado `\b` (word boundary, no soportado en POSIX) a `\y` (word boundary de PostgreSQL) en todos los regex
+- Validaciones 2, 3, 7 ahora usan `\y` para correctitud en PostgreSQL
+
+### 📦 Cambios Aplicados
+
+- ✅ Migración 035 aplicada a base de datos
+- ✅ Función `safe_execute_query()` actualizada con fix de regex
+- ✅ Comentario de función actualizado con versión v2.0.11
+
+### 🎯 Resultado Esperado
+
+**Antes del fix**:
+```
+SQL Agent genera: "SELECT SUM(a.amount) FROM agreements WHERE..."
+→ safe_execute_query rechaza: "Only SELECT queries are allowed"
+→ Attempt 1/3 falla
+→ Attempt 2/3 falla
+→ Attempt 3/3 falla
+→ AI Agent retorna error genérico al usuario
+```
+
+**Después del fix**:
+```
+SQL Agent genera: "SELECT SUM(a.amount) FROM agreements WHERE..."
+→ safe_execute_query valida: normalized_sql LIKE 'select%' → ✅ PASS
+→ Ejecuta query exitosamente
+→ Retorna resultados
+→ AI Agent genera respuesta útil: "Le debes $5,000 a Caty en 2 préstamos"
+```
+
+### 🔍 Notas Técnicas
+
+**PostgreSQL POSIX Regex vs Perl Regex**:
+- `\s` (whitespace): NO soportado en POSIX regex
+- `\b` (word boundary): NO soportado en POSIX regex
+- `\y` (word boundary): Extensión de PostgreSQL para word boundaries
+- `[[:space:]]`: Clase POSIX para whitespace (alternativa a `\s`)
+
+**Por qué no usar `[[:space:]]`**:
+Después de `lower(trim(sql_query))`, el query NO tiene espacios al inicio, entonces:
+- `'^\s*select'` busca: inicio + cero o más espacios + "select"
+- `'select%'` busca: inicio con "select" + cualquier cosa
+
+Como `trim()` elimina espacios al inicio, `LIKE 'select%'` es equivalente y más simple.
+
+**Seguridad**: El fix NO compromete la seguridad. La validación sigue siendo estricta:
+- Solo permite queries que empiecen con "select" (lowercase)
+- Todas las demás validaciones (keywords destructivos, funciones peligrosas, tenant_id, etc.) permanecen intactas
+
+### 📋 Testing Recomendado
+
+1. **Probar query_loans_dynamic**:
+   - "cuanto le debo a caty?"
+   - Verificar que NO falle con error de "Only SELECT queries allowed"
+
+2. **Verificar en logs**:
+   - ✅ `[SQL Agent] Generated SQL: SELECT SUM...`
+   - ✅ `[SQL Agent] Syntax validation PASSED`
+   - ✅ `[SQL Agent] LLM validation PASSED`
+   - ✅ `[SQL Agent] Executing SQL via safe_execute_query()...`
+   - ✅ Sin errores de "Only SELECT queries allowed"
+   - ✅ Query ejecuta exitosamente
+
+3. **Verificar respuesta final**:
+   - AI Agent debe generar respuesta útil con datos de préstamos
+   - No debe retornar mensaje genérico de error
+
+---
+
+## [2025-01-27] - v2.0.10 - 🚀 Feature: Multi-Turn Tool Calling en AI Agent
+
+### 🐛 Problema Identificado
+
+**Síntoma**: AI Agent ejecutaba `search_contacts("Caty")` pero no continuaba con `query_loans_dynamic` para obtener los préstamos. Guardaba mensaje con `contentLength: 0` y no generaba respuesta útil.
+
+**Causa Raíz**: La arquitectura del AI Agent solo permitía **UNA ronda de tool calling**. Después de ejecutar funciones, retornaba inmediatamente sin dar oportunidad a OpenAI de:
+1. Procesar los resultados de las funciones
+2. Decidir ejecutar funciones adicionales (encadenamiento)
+3. Generar respuesta final en lenguaje natural
+
+**Flujo antiguo (One-shot)**:
+```
+Usuario: "cuanto le debo a caty?"
+→ OpenAI: tool_calls=[search_contacts('Caty')]
+→ Ejecutar search_contacts → {id: abc-123, name: "Caty"}
+→ ❌ RETORNAR INMEDIATAMENTE (sin respuesta útil)
+→ contentLength: 0
+```
+
+**Evidencia del problema**:
+- Logs mostraban `[AI-Agent] Executing function: search_contacts`
+- Logs mostraban `[ContactFuzzySearch] Found matches: 1`
+- Pero mensaje final tenía `contentLength: 0`
+- No se ejecutaba `query_loans_dynamic` después
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/ai-agent/index.ts`
+
+Implementado **loop multi-turn de tool calling** que permite múltiples rondas de interacción con OpenAI (líneas 149-294):
+
+#### Arquitectura Multi-Turn
+
+```typescript
+let currentMessages = messages;
+let allToolResults: any[] = [];
+let maxIterations = 5; // Límite de seguridad
+
+while (iteration < maxIterations) {
+  // 1. Llamar a OpenAI
+  const response = await openai.chatCompletion({
+    messages: currentMessages,
+    tools,
+    tool_choice: 'auto'
+  });
+
+  const finishReason = choice.finish_reason;
+
+  // 2. Caso: OpenAI quiere ejecutar funciones
+  if (finishReason === 'tool_calls') {
+    // Agregar mensaje del assistant con tool_calls
+    currentMessages.push({
+      role: 'assistant',
+      tool_calls: assistantMessage.tool_calls
+    });
+
+    // Ejecutar funciones y agregar resultados
+    for (const toolCall of assistantMessage.tool_calls) {
+      const result = await executeFunction(...);
+
+      // Agregar resultado como mensaje "tool"
+      currentMessages.push({
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        content: JSON.stringify(result)
+      });
+    }
+
+    // Continuar al siguiente iteration
+    continue;
+  }
+
+  // 3. Caso: OpenAI generó respuesta final
+  if (finishReason === 'stop') {
+    finalResponse = assistantMessage.content;
+    break; // Salir del loop
+  }
+}
+```
+
+#### Flujo Nuevo (Multi-turn)
+
+**Ejemplo: "cuanto le debo a caty?"**
+
+```
+RONDA 1:
+→ OpenAI: tool_calls=[search_contacts('Caty')]
+→ Ejecutar search_contacts → {id: abc-123, name: "Caty"}
+→ Agregar resultado al historial como mensaje "tool"
+→ finish_reason: "tool_calls" → CONTINUAR
+
+RONDA 2:
+→ OpenAI (con contexto de búsqueda): tool_calls=[query_loans_dynamic({
+    contact_id: 'abc-123',
+    direction: 'yo_debo'
+  })]
+→ Ejecutar query_loans_dynamic → {loans: [...], total: 5000}
+→ Agregar resultado al historial
+→ finish_reason: "tool_calls" → CONTINUAR
+
+RONDA 3:
+→ OpenAI (con contexto completo): "Le debes $5,000 a Caty en 2 préstamos activos"
+→ finish_reason: "stop" → TERMINAR
+→ Guardar respuesta y retornar
+```
+
+#### Características Clave
+
+1. **Loop con límite de seguridad**: Máximo 5 iteraciones para evitar loops infinitos
+
+2. **Manejo de finish_reason**:
+   - `"tool_calls"`: Continuar loop, ejecutar funciones
+   - `"stop"`: Salir del loop, retornar respuesta final
+   - Otros: Salir con mensaje de fallback
+
+3. **Tracking completo**:
+   - `allToolResults[]`: Lista de todas las funciones ejecutadas
+   - `totalTokensUsed`: Suma de tokens de todas las rondas
+   - `iterations`: Número de rondas realizadas
+
+4. **Logs detallados**:
+   ```
+   [AI-Agent] Tool calling iteration 1/5
+   [AI-Agent] Finish reason: tool_calls
+   [AI-Agent] Tool calls detected: 1
+   [AI-Agent] Executing function: search_contacts
+   [AI-Agent] Tool calling iteration 2/5
+   [AI-Agent] Finish reason: tool_calls
+   [AI-Agent] Executing function: query_loans_dynamic
+   [AI-Agent] Tool calling iteration 3/5
+   [AI-Agent] Finish reason: stop
+   [AI-Agent] Final response generated (length: 87)
+   ```
+
+### 📦 Edge Functions Desplegadas
+
+- ✅ `ai-agent` (nueva versión) - Loop multi-turn implementado
+
+### 🎯 Resultado Esperado
+
+**Antes del fix**:
+```
+Usuario: "cuanto le debo a caty?"
+Bot: [Sin respuesta o respuesta genérica]
+```
+
+**Después del fix**:
+```
+Usuario: "cuanto le debo a caty?"
+Bot: "Le debes $5,000 a Caty en 2 préstamos activos"
+```
+
+### 🔍 Notas Técnicas
+
+**OpenAI Tool Calling Protocol**:
+- Cuando `finish_reason === "tool_calls"`, el modelo NO genera texto final
+- El campo `message.content` suele ser `null` o `""`
+- Se espera que agregues resultados al historial y hagas una nueva llamada
+- El modelo usa los resultados para decidir próximas acciones
+
+**Formato de mensajes con role "tool"**:
+```typescript
+{
+  role: 'tool',
+  tool_call_id: 'call_abc123', // ID del tool call original
+  content: JSON.stringify(result) // Resultado como JSON string
+}
+```
+
+**Performance**:
+- Cada ronda agrega ~1-3 segundos de latencia
+- Típicamente 2-3 rondas para tareas complejas
+- Con async architecture (v2.0.9), no bloquea webhook
+
+### 📋 Testing Recomendado
+
+Probar preguntas que requieren múltiples tool calls:
+
+1. **Búsqueda + Query**:
+   - "cuanto le debo a caty?"
+   - "cuanto me debe juan?"
+   - "que prestamos tengo con maria?"
+
+2. **Verificar en logs**:
+   - ✅ `[AI-Agent] Tool calling iteration 1/5`
+   - ✅ `[AI-Agent] Tool calling iteration 2/5`
+   - ✅ `[AI-Agent] Final response generated (length: >0)`
+   - ✅ Respuesta tiene contenido útil
+
+3. **Verificar en response**:
+   ```json
+   {
+     "success": true,
+     "response": "Le debes $5,000 a Caty...",
+     "actions": [
+       {"function_name": "search_contacts", ...},
+       {"function_name": "query_loans_dynamic", ...}
+     ],
+     "iterations": 3
+   }
+   ```
+
+---
+
+## [2025-01-27] - v2.0.9 - 🐛 Bugfix Crítico: Loop de Reintentos de WhatsApp por Timeout
+
+### 🐛 Problema Identificado
+
+**Síntoma**: Usuario envía 1 mensaje, bot responde múltiples veces (5+ mensajes) sin interacción adicional del usuario.
+
+**Causa Raíz**: WhatsApp Business API reintenta webhooks si no recibe `200 OK` en <20 segundos, pero el AI Agent tarda 60-80 segundos en procesar. Cada reintento también sufre timeout, creando un **loop infinito de reintentos**.
+
+**Evidencia del problema**:
+```
+ai-agent execution_time_ms: 64722ms (~64 segundos)
+wa_webhook execution_time_ms: 11176ms (esperando con await fetch)
+→ WhatsApp NO recibe 200 OK en <20s
+→ WhatsApp reintenta con NUEVO wa_message_id
+→ Webhook procesa reintento como mensaje nuevo
+→ Loop infinito
+```
+
+**Datos observados**:
+- 1 mensaje de usuario a las 13:55
+- 4+ mensajes inbound con diferentes `wa_message_id` (13:40, 13:55, 16:46, 16:54)
+- Múltiples respuestas del bot (14:08, 16:16, 16:46, 17:30, 18:55)
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/wa_webhook/index.ts`
+
+#### 1. **Deduplicación de Mensajes** (líneas 155-192)
+
+Detecta reintentos de WhatsApp verificando mensajes recientes del mismo remitente:
+
+```typescript
+// WhatsApp reintenta con NUEVO wa_message_id, así que no podemos usar ese campo
+// Verificamos mensajes recientes del mismo remitente en ventana de 2 minutos
+const { data: recentMessages } = await supabase
+  .from('whatsapp_messages')
+  .select('id, created_at, wa_message_id')
+  .eq('direction', 'inbound')
+  .gte('created_at', new Date(Date.now() - 5 * 60 * 1000).toISOString())
+  .order('created_at', { ascending: false })
+  .limit(50);
+
+for (const recent of recentMessages) {
+  const recentAge = Date.now() - new Date(recent.created_at).getTime();
+  if (recentAge < 2 * 60 * 1000) { // 2 minutos
+    console.log('[Dedup] Skipping duplicate message (WhatsApp retry)');
+    return { success: true, skipped: true, reason: 'duplicate_retry' };
+  }
+}
+```
+
+#### 2. **Arquitectura Asíncrona - Fire-and-Forget** (3 ubicaciones)
+
+Convertidas **3 llamadas a AI Agent** de síncronas (`await fetch`) a asíncronas (`fetch().then()`):
+
+**a) Mensajes de texto** (líneas 433-523):
+```typescript
+// ✅ ANTES: await fetch() bloqueaba webhook 60-80s
+// ✅ AHORA: fetch().then() permite retornar 200 OK inmediatamente
+
+fetch(`${SUPABASE_URL}/functions/v1/ai-agent`, { /* ... */ })
+  .then(async (aiResponse) => {
+    const aiResult = await aiResponse.json();
+
+    // Enviar respuesta al usuario DESPUÉS de procesar
+    const windowManager = new WhatsAppWindowManager(/* ... */);
+    await windowManager.sendMessage(tenant.id, contact.id, finalMessage);
+
+    console.log('[AI-AGENT] Response sent to user (async)');
+  })
+  .catch(error => {
+    // Manejar errores y notificar al usuario
+    console.error('[AI-AGENT] Error:', error);
+  });
+
+// ✅ Webhook retorna 200 OK inmediatamente
+console.log('[AI-AGENT] Message queued for async processing');
+```
+
+**b) Audio transcription** (líneas 1775-1856):
+- Mismo patrón fire-and-forget
+- WhatsAppWindowManager envía respuesta cuando transcripción está lista
+
+**c) Image analysis** (líneas 1936-2015):
+- GPT Vision analiza imagen en background
+- Respuesta enviada al usuario cuando análisis completa
+
+### 📦 Edge Functions Desplegadas
+
+- ✅ `wa_webhook` (nueva versión) - Deduplicación + AI Agent asíncrono
+
+### 🎯 Resultado Esperado
+
+**Antes del fix**:
+```
+Usuario envía mensaje → Webhook espera 60-80s → Timeout WhatsApp
+→ WhatsApp reintenta → Webhook espera 60-80s → Timeout WhatsApp
+→ Loop infinito → 5+ respuestas del bot
+```
+
+**Después del fix**:
+```
+Usuario envía mensaje → Webhook retorna 200 OK en <2s
+→ AI Agent procesa en background (60-80s)
+→ Bot responde UNA VEZ cuando AI Agent termina
+→ Si WhatsApp reintenta → Deduplicación detecta y skips
+```
+
+### 🔍 Notas Técnicas
+
+**WhatsApp Business API Timeout**: 20 segundos máximo para responder al webhook
+
+**Fire-and-Forget Pattern**:
+- `fetch()` sin `await` permite continuar ejecución
+- `.then()` maneja respuesta en callback asíncrono
+- Webhook retorna `200 OK` inmediatamente
+
+**WhatsAppWindowManager**: Utilizado en callbacks `.then()` para enviar respuestas desde background processing, evitando depender del ciclo de vida del webhook.
+
+**Ventana de Deduplicación**: 2 minutos (120 segundos) - suficiente para cubrir reintentos típicos de WhatsApp.
+
+### 📋 Testing Recomendado
+
+1. Enviar mensaje que requiera AI Agent (ej: "cuanto le debo a caty?")
+2. Verificar en logs:
+   - ✅ `[AI-AGENT] Message queued for async processing`
+   - ✅ `[AI-AGENT] Response sent to user (async)`
+   - ✅ webhook execution_time < 5 segundos
+   - ✅ ai-agent execution_time ~60-80 segundos (sin bloquear webhook)
+3. Verificar que bot responde **UNA SOLA VEZ**
+4. Verificar en `whatsapp_messages`: solo 1 mensaje inbound por mensaje de usuario
+
+---
+
+## [2025-01-27] - v2.0.8 - 🤖 Hotfix: AI Agent - Schema de DB en System Prompt
+
+### 🐛 Problema Identificado
+
+El AI Agent NO ejecutaba `query_loans_dynamic` correctamente porque el **system prompt** carecía del schema de base de datos. Sin conocer las tablas y columnas disponibles, el Agent no podía:
+- Decidir cuándo usar `query_loans_dynamic` vs queries pre-definidas
+- Entender qué información estaba disponible en la DB
+- Interpretar correctamente preguntas sobre préstamos y contactos
+
+**Síntoma observado**:
+```
+Usuario: "cuanto le debo a caty?"
+AI Agent:
+  1. ✅ Ejecuta search_contacts("Caty") → Encuentra contacto
+  2. ❌ NO ejecuta query_loans_dynamic
+  3. ❌ Respuesta vacía (contentLength: 0)
+```
+
+### ✅ Solución Implementada
+
+**Archivo modificado**: `supabase/functions/_shared/openai-client.ts`
+
+Agregada nueva sección "ESTRUCTURA DE BASE DE DATOS" al system prompt (`createSystemMessage()`) que incluye:
+
+1. **Tablas principales** con columnas clave:
+   - `agreements` (préstamos): tenant_id, tenant_contact_id, lender_tenant_contact_id, amount, due_date, status, type
+   - `tenant_contacts` (contactos): id, name, contact_profile_id, whatsapp_id
+   - `contact_profiles` (perfiles globales): phone_e164, first_name, last_name, email, bank_accounts
+
+2. **Relaciones clave** (Foreign Keys):
+   - agreements.tenant_contact_id → tenant_contacts.id (borrower)
+   - agreements.lender_tenant_contact_id → tenant_contacts.id (lender)
+   - tenant_contacts.contact_profile_id → contact_profiles.id
+
+3. **Direcciones de préstamo** (CRÍTICO para correctitud):
+   - "Yo presté" / "Me deben" → WHERE lender_tenant_contact_id = mi_contact_id
+   - "Yo recibí" / "Debo" → WHERE tenant_contact_id = mi_contact_id
+
+### 📦 Edge Functions Desplegadas
+
+- ✅ `ai-agent` (v161) - System prompt actualizado con schema de DB
+
+### 🎯 Resultado Esperado
+
+Con el schema en el system prompt, el AI Agent ahora puede:
+- ✅ Entender qué tablas y columnas existen
+- ✅ Decidir correctamente cuándo usar `query_loans_dynamic`
+- ✅ Interpretar correctamente la dirección de préstamos (yo presto vs yo recibo)
+- ✅ Generar respuestas completas para preguntas como "cuánto le debo a X"
+
+### 🔍 Notas Técnicas
+
+**Diferencia con Schema Provider**:
+- **System Prompt** (este fix): Schema básico para que AI Agent DECIDA qué función llamar
+- **Schema Provider** (`schema-provider.ts`): Schema detallado para que SQL Agent GENERE SQL
+
+Ambos son necesarios:
+1. System prompt → AI Agent decide: "necesito usar query_loans_dynamic"
+2. Schema Provider → SQL Agent genera: "SELECT SUM(amount) FROM agreements WHERE..."
+
+### 📋 Testing Recomendado
+
+Probar las siguientes preguntas para validar el fix:
+- "cuanto le debo a caty?" → Debe ejecutar query_loans_dynamic con dirección correcta
+- "cuanto me debe juan?" → Debe ejecutar query_loans_dynamic con dirección inversa
+- "que prestamos tengo vencidos?" → Debe ejecutar query_loans_dynamic con filtro de fecha
+
+---
+
+## [2025-01-27] - v2.4.0 - 🏗️ Arquitectura: Deprecación de Sistema Legacy de Contactos
+
+### 🎯 Objetivo
+
+Consolidar arquitectura de contactos eliminando la tabla legacy `contacts` y migrando completamente a `tenant_contacts` + `contact_profiles` para mejorar integridad referencial y simplificar el codebase.
+
+### 🔧 Cambios Implementados
+
+#### **FASE 1: Data Migration** (Migración 032)
+- ✅ Agregadas columnas `tenant_contact_id` a todas las tablas dependientes:
+  - `whatsapp_messages` (871 registros migrados)
+  - `events` (211 registros migrados)
+  - `messages`, `owner_notifications`, `message_queue`
+  - `conversation_states`, `telegram_conversation_states`
+- ✅ Backfill automático usando mapeo `contacts.tenant_contact_id`
+- ✅ Índices parciales creados para optimizar queries durante transición
+- ✅ Validación de integridad: 100% de registros migrados exitosamente
+
+#### **FASE 2: Code Migration**
+- ✅ **wa_webhook/index.ts**:
+  - Eliminada creación de `legacyContact` (líneas 276-309)
+  - Usar `tenant_contact_id` directamente en inserts
+  - 5 inserciones de `events` actualizadas
+- ✅ **whatsapp-window-manager.ts**:
+  - Query de ventana 24h usa `tenant_contact_id` (línea 55)
+  - Inserts de `whatsapp_messages` usan `tenant_contact_id` (líneas 388, 500)
+- ✅ **conversation-memory.ts**: Fallbacks legacy → modern ya existentes, mantenidos temporalmente
+- ✅ **Edge functions desplegadas**: Zero-downtime deployment
+
+#### **FASE 3: Schema Migration** (Pendiente)
+- ⏳ Agregar FKs `tenant_contact_id → tenant_contacts(id)` con CASCADE
+- ⏳ Hacer `tenant_contact_id NOT NULL` en todas las tablas
+- ⏳ Actualizar RLS policies (mayoría ya usa `tenant_id`, no requiere cambios)
+- ⏳ Deprecar columnas legacy en `agreements` (contact_id, lender_contact_id)
+
+#### **FASE 4: Cleanup** (Pendiente)
+- ⏳ Drop columnas `contact_id` de todas las tablas
+- ⏳ Drop RLS policies y triggers de tabla `contacts`
+- ⏳ Drop tabla `contacts CASCADE` (**IRREVERSIBLE**)
+- ⏳ Limpiar código: remover fallbacks legacy en conversation-memory.ts
+
+### 📊 Estado Actual
+
+**Arquitectura Legacy** (deprecada, en transición):
+- Tabla `contacts` (6 registros)
+- Columnas `contact_id` (nullable, deprecated)
+
+**Arquitectura Modern** (activa):
+- Tabla `tenant_contacts` (13 registros)
+- Tabla `contact_profiles` (10 registros, identidad global)
+- Columnas `tenant_contact_id` (activas, con datos backfilled)
+
+### ⚠️ Breaking Changes
+
+**Post-FASE 3** (cuando se aplique):
+- ❗ FKs cambiadas: `contact_id` dejará de funcionar
+- ❗ `tenant_contact_id` será NOT NULL (no admite nulls)
+- ❗ Punto de no retorno: rollback de código requerirá rollback de schema
+
+**Post-FASE 4** (cleanup final):
+- ❗ Tabla `contacts` eliminada permanentemente (**IRREVERSIBLE**)
+- ❗ Columnas `contact_id` eliminadas de todas las tablas
+- ❗ No hay rollback posible
+
+### 🔄 Rollback Points
+
+- **Después de FASE 1**: ✅ Safe - columnas nuevas nullable, código legacy funciona
+- **Después de FASE 2**: ✅ Safe - dual-write activo, puede rollback code
+- **Después de FASE 3**: ❌ Point of no return - FKs cambiadas, NOT NULL aplicado
+- **Después de FASE 4**: ❌ IRREVERSIBLE - tabla contacts eliminada
+
+### 📝 Migraciones Aplicadas
+
+- `032_deprecate_contacts_phase1_data_migration.sql` ✅
+- `033_deprecate_contacts_phase3_schema_migration.sql` ⏳ (próxima)
+- `034_deprecate_contacts_phase4_cleanup.sql` ⏳ (final)
+
+---
+
+## [2025-01-27] - v2.3.0 - ✨ Feature: Verificación Inteligente de Contactos + Logging Persistente
+
+### 🎯 Objetivos
+
+1. **Verificación Inteligente de Contactos**: Implementar verificación proactiva para que el AI Agent reconozca variantes de nombres (apodos, errores de tipeo, nombres parciales) y ofrezca opciones cuando hay ambigüedad.
+
+2. **Logging Persistente de OpenAI**: Crear tabla de auditoría para almacenar todos los payloads/respuestas de OpenAI con análisis de tokens y costos.
+
+### ✨ Nueva Funcionalidad
+
+#### Caso de Uso
+**Problema anterior:**
+- Usuario pregunta: "cuánto le debo a Catita"
+- Contacto registrado: "Caty"
+- Sistema NO reconocía que son la misma persona
+
+**Solución implementada:**
+1. **Verificación proactiva**: Antes de ejecutar cualquier operación con nombres, el agente usa `search_contacts()` para verificar el contacto
+2. **Fuzzy matching mejorado**: Usa distancia de Levenshtein con thresholds configurables
+3. **Respuestas inteligentes según confianza:**
+   - ✅ **Alta (>95%)**: Confirmación automática → "Encontrado: Caty"
+   - 🤔 **Media (80-95%)**: Pedir confirmación → "¿Te refieres a Caty? (similaridad: 83%)"
+   - 🔍 **Baja (<80%)**: Mostrar candidatos → Lista de opciones + crear nuevo
+   - ❌ **Sin matches**: Ofrecer crear contacto → "No encontré a Roberto. ¿Quieres agregarlo?"
+
+### 🔧 Cambios Implementados
+
+**1. System Prompt (`openai-client.ts:307-327`)**
+```diff
++ REGLAS DE INTERPRETACIÓN:
++ 1. Para nombres de contactos: usa búsqueda fuzzy (acepta apodos, nombres parciales, errores de tipeo)
++    ⚠️ VERIFICACIÓN OBLIGATORIA DE CONTACTOS:
++    - Si el usuario menciona un nombre que NO está en CONTACTOS DISPONIBLES → SIEMPRE usa search_contacts() PRIMERO
++    - Si el nombre es similar pero no exacto (ej: "Catita" vs "Caty") → search_contacts() para verificar
++    - Si search_contacts() retorna múltiples candidatos → presenta opciones al usuario
++    - Si search_contacts() no encuentra nada → ofrece crear el contacto con create_contact()
++    - Solo procede con create_loan u otras operaciones DESPUÉS de verificar/resolver el contacto
+```
+
+**2. Tool Description (`openai-client.ts:484-486`)**
+```diff
+- description: 'Buscar contactos del usuario'
++ description: '🔍 VERIFICACIÓN DE CONTACTOS (USA SIEMPRE ANTES DE create_loan/query_loans_dynamic con nombres). Busca contactos usando fuzzy matching para manejar apodos, variantes y errores de tipeo. Retorna candidatos con nivel de similaridad. OBLIGATORIO usar cuando el usuario menciona un nombre que no está exacto en CONTACTOS DISPONIBLES.'
+```
+
+**3. Función searchContacts (`ai-agent/index.ts:1308-1387`)**
+```typescript
+// Antes: Solo retornaba lista de matches
+// Después: Retorna información estructurada con niveles de confianza
+
+// Sin coincidencias → Sugerir crear contacto
+if (matches.length === 0) {
+  return {
+    success: true,
+    message: `❌ No encontré ningún contacto con el nombre "${args.search_term}". ¿Quieres que lo agregue a tus contactos?`,
+    data: {
+      matches: [],
+      suggestion: 'create_contact',
+      suggested_name: args.search_term
+    }
+  };
+}
+
+// Coincidencia exacta o muy alta (>0.95) → Confirmación automática
+if (matches.length === 1 && matches[0].similarity >= 0.95) {
+  return {
+    message: `✅ Encontrado: ${matches[0].name} (similaridad: ${(matches[0].similarity * 100).toFixed(0)}%)`,
+    data: {
+      best_match: matches[0],
+      confidence: 'high'
+    }
+  };
+}
+
+// Coincidencia parcial (0.8-0.95) → Pedir confirmación
+// Múltiples coincidencias → Mostrar candidatos con porcentajes
+```
+
+**4. Ejemplos Agregados al System Prompt (`openai-client.ts:362-376`)**
+```
+EJEMPLOS DE VERIFICACIÓN DE CONTACTOS:
+A. Usuario: "cuánto le debo a Catita" (pero en CONTACTOS DISPONIBLES solo está "Caty")
+   → PRIMERO: search_contacts(search_term="Catita")
+   → RESULTADO: "🤔 ¿Te refieres a Caty? (similaridad: 83%)"
+   → LUEGO: Asume que sí y ejecuta query_loans_dynamic con "Caty"
+
+B. Usuario: "presté 100 lucas a Juanito" (pero no existe "Juanito" en contactos)
+   → PRIMERO: search_contacts(search_term="Juanito")
+   → RESULTADO: Candidatos: "Juan Pérez (85%)", "Juan Carlos (78%)"
+   → RESPUESTA: Muestra candidatos y pregunta a cuál se refiere
+
+C. Usuario: "cuánto me debe Roberto" (no existe ningún Roberto)
+   → PRIMERO: search_contacts(search_term="Roberto")
+   → RESULTADO: "❌ No encontré ningún contacto con el nombre Roberto"
+   → RESPUESTA: "No tengo registrado a Roberto en tus contactos. ¿Quieres que lo agregue?"
+```
+
+### 📊 Niveles de Similaridad
+
+| Rango | Nivel | Comportamiento |
+|-------|-------|----------------|
+| ≥ 0.95 | Alta | Confirmación automática |
+| 0.80 - 0.94 | Media | Pedir confirmación al usuario |
+| 0.50 - 0.79 | Baja | Mostrar candidatos + opción crear |
+| < 0.50 | Sin match | Ofrecer crear contacto nuevo |
+
+### 🔧 Algoritmo de Fuzzy Matching
+
+Ya existía en `contact-fuzzy-search.ts`:
+- **Levenshtein Distance**: Calcula similitud entre strings
+- **Normalización**: Remueve acentos y caracteres especiales
+- **Partial matching**: Detecta cuando un nombre contiene al otro
+
+### 🧪 Testing Manual
+
+**Casos a probar:**
+1. ✅ "cuánto le debo a Catita" → Debe reconocer "Caty"
+2. ✅ "presté 100 lucas a Juanito" → Debe mostrar candidatos "Juan"
+3. ✅ "cuánto me debe Roberto" → Debe ofrecer crear contacto
+4. ✅ "consulta préstamos de Caty" → Debe usar match exacto sin verificación
+
+### 📦 Deployment
+
+```bash
+npx supabase functions deploy ai-agent
+```
+
+**Edge Function deployada:** ai-agent v29
+
+### 🎯 Impacto en UX
+
+**Antes:**
+- Usuario: "cuánto le debo a Catita"
+- Bot: "No encontré préstamos con Catita" ❌
+
+**Después:**
+- Usuario: "cuánto le debo a Catita"
+- Bot: "🤔 ¿Te refieres a Caty? (similaridad: 83%)"
+- Bot: "Le debes $50.000 a Caty" ✅
+
+### 🔗 Archivos Modificados
+
+1. `supabase/functions/_shared/openai-client.ts`:
+   - System prompt con reglas de verificación obligatoria
+   - Tool description más explícita para search_contacts
+   - Ejemplos de verificación de contactos
+
+2. `supabase/functions/ai-agent/index.ts`:
+   - Función searchContacts mejorada con niveles de confianza
+   - Respuestas estructuradas con sugerencias de acción
+
+3. Sistema de permisos (`ai-permissions.ts`):
+   - search_contacts ya estaba registrado (READONLY, max 20/hora)
+
+### 🚀 Próximos Pasos (Verificación de Contactos)
+
+- [ ] Probar con usuarios reales y ajustar thresholds si es necesario
+- [ ] Considerar agregar caché de búsquedas recientes para optimizar
+- [ ] Evaluar agregar función para seleccionar contacto de lista directamente
+
+---
+
+## 📊 PARTE 2: Logging Persistente de OpenAI
+
+### 🎯 Objetivo
+
+Almacenar todos los requests/responses de OpenAI en base de datos para:
+- 🐛 **Debugging**: Ver payloads completos y tool_calls para entender comportamiento del AI
+- 💰 **Análisis de costos**: Trackear tokens usados y estimar gastos por tenant/modelo
+- 📈 **Optimización**: Identificar prompts que consumen muchos tokens
+- 🔍 **Auditoría**: Trazabilidad completa de todas las interacciones con OpenAI
+
+### 🗄️ Nueva Tabla: `openai_requests_log`
+
+```sql
+CREATE TABLE openai_requests_log (
+  id UUID PRIMARY KEY,
+
+  -- Contexto
+  tenant_id UUID NOT NULL,
+  contact_id UUID,
+
+  -- Request
+  model TEXT NOT NULL,
+  request_type TEXT NOT NULL, -- chat_completion, transcription, vision
+  request_payload JSONB NOT NULL, -- Payload completo enviado
+
+  -- Response
+  response_payload JSONB, -- Respuesta completa (null si error)
+  status TEXT NOT NULL, -- success, error
+  error_message TEXT,
+
+  -- Tokens y Costos
+  prompt_tokens INT,
+  completion_tokens INT,
+  total_tokens INT,
+  cached_tokens INT, -- Prompt caching de OpenAI
+
+  -- Tool Calls
+  tool_calls_count INT DEFAULT 0,
+  tool_calls JSONB, -- Array con todos los function calls
+
+  -- Metadata
+  finish_reason TEXT, -- stop, length, tool_calls, content_filter
+  response_time_ms INT,
+
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### 📊 Vista de Análisis de Costos
+
+```sql
+CREATE VIEW openai_cost_analysis AS
+SELECT
+  DATE_TRUNC('day', created_at) as date,
+  tenant_id,
+  model,
+  COUNT(*) as request_count,
+  SUM(total_tokens) as total_tokens,
+  SUM(cached_tokens) as total_cached_tokens,
+  AVG(response_time_ms) as avg_response_time_ms,
+  -- Estimación de costo según precios actuales
+  CASE
+    WHEN model LIKE 'gpt-5%' THEN
+      (SUM(prompt_tokens) * 0.000002 + SUM(completion_tokens) * 0.000008)
+    WHEN model LIKE 'gpt-4o%' THEN
+      (SUM(prompt_tokens) * 0.0000025 + SUM(completion_tokens) * 0.00001)
+    ELSE 0
+  END as estimated_cost_usd
+FROM openai_requests_log
+GROUP BY date, tenant_id, model;
+```
+
+### 🔧 Cambios Implementados
+
+**1. Constructor de OpenAIClient (`openai-client.ts:83-97`)**
+```typescript
+constructor(
+  apiKey: string,
+  baseUrl: string = 'https://api.openai.com/v1',
+  options?: {
+    supabase?: any;      // Para logging en BD
+    tenantId?: string;   // Contexto del tenant
+    contactId?: string;  // Contexto del usuario
+  }
+)
+```
+
+**2. Método de Logging (`openai-client.ts:704-754`)**
+```typescript
+private async logOpenAIRequest(params: {
+  requestType: 'chat_completion' | 'transcription' | 'vision';
+  model: string;
+  requestPayload: any;
+  responsePayload?: any;
+  status: 'success' | 'error';
+  errorMessage?: string;
+  responseTimeMs: number;
+}): Promise<void>
+```
+
+**3. Integración en chatCompletion() (`openai-client.ts:102-247`)**
+- Mide `response_time_ms` con `Date.now()`
+- Captura request payload completo
+- Captura response payload completo
+- Extrae tokens, tool_calls y finish_reason
+- Inserta en BD al finalizar (success o error)
+
+**4. Uso en ai-agent (`ai-agent/index.ts:39-43`)**
+```typescript
+const openai = new OpenAIClient(openaiApiKey, 'https://api.openai.com/v1', {
+  supabase,
+  tenantId: tenant_id,
+  contactId: contact_id
+});
+```
+
+### 🔍 Cómo Consultar los Logs
+
+**Ver últimos 10 requests:**
+```sql
+SELECT
+  created_at,
+  model,
+  status,
+  total_tokens,
+  tool_calls_count,
+  response_time_ms,
+  finish_reason
+FROM openai_requests_log
+ORDER BY created_at DESC
+LIMIT 10;
+```
+
+**Ver payload completo de un request:**
+```sql
+SELECT
+  request_payload->'messages' as messages,
+  request_payload->'tools' as tools,
+  response_payload->'choices'->0->'message'->'tool_calls' as tool_calls
+FROM openai_requests_log
+WHERE id = 'uuid-aqui';
+```
+
+**Ver cuánto le debo a "Catita" (buscar en payloads):**
+```sql
+SELECT
+  created_at,
+  request_payload->'messages' as messages,
+  tool_calls,
+  response_payload
+FROM openai_requests_log
+WHERE request_payload::text ILIKE '%Catita%'
+ORDER BY created_at DESC;
+```
+
+**Análisis de costos del último mes:**
+```sql
+SELECT
+  date,
+  model,
+  request_count,
+  total_tokens,
+  estimated_cost_usd
+FROM openai_cost_analysis
+WHERE date >= NOW() - INTERVAL '30 days'
+ORDER BY date DESC;
+```
+
+### 📦 Deployment
+
+**Migración aplicada:**
+```bash
+supabase migrations apply 031_openai_requests_log
+```
+
+**Edge Function deployada:**
+```bash
+npx supabase functions deploy ai-agent
+```
+
+**Versión:** ai-agent v30
+
+### 🎯 Impacto
+
+**Antes:**
+- Logs efímeros en consola de Supabase (~7 días)
+- No se podía ver el payload completo enviado a OpenAI
+- No había forma de analizar costos por tenant
+- Debugging requería activar logs manualmente y esperar a reproducir el error
+
+**Después:**
+- ✅ Todos los requests persistidos permanentemente en BD
+- ✅ Payloads completos (request + response) queryables con SQL
+- ✅ Vista de análisis de costos por día/tenant/modelo
+- ✅ Debugging post-mortem: puedes ver qué pasó en cualquier momento
+- ✅ Análisis de tool_calls: ver qué funciones se ejecutan y con qué argumentos
+- ✅ Optimización de prompts: identificar mensajes que consumen muchos tokens
+
+### 📊 Ejemplo de Registro
+
+Cuando el usuario pregunta **"cuánto le debo a Catita"**:
+
+```json
+{
+  "id": "...",
+  "tenant_id": "...",
+  "contact_id": "...",
+  "model": "gpt-5-nano",
+  "request_type": "chat_completion",
+  "request_payload": {
+    "model": "gpt-5-nano",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Eres un asistente virtual... VERIFICACIÓN OBLIGATORIA DE CONTACTOS..."
+      },
+      {
+        "role": "user",
+        "content": "cuánto le debo a Catita"
+      }
+    ],
+    "tools": [...]
+  },
+  "response_payload": {
+    "id": "chatcmpl-...",
+    "choices": [{
+      "message": {
+        "tool_calls": [{
+          "function": {
+            "name": "search_contacts",
+            "arguments": "{\"search_term\":\"Catita\"}"
+          }
+        }]
+      },
+      "finish_reason": "tool_calls"
+    }],
+    "usage": {
+      "prompt_tokens": 1250,
+      "completion_tokens": 45,
+      "total_tokens": 1295
+    }
+  },
+  "status": "success",
+  "prompt_tokens": 1250,
+  "completion_tokens": 45,
+  "total_tokens": 1295,
+  "tool_calls_count": 1,
+  "tool_calls": [...],
+  "finish_reason": "tool_calls",
+  "response_time_ms": 1834,
+  "created_at": "2025-01-27T..."
+}
+```
+
+### 🔗 Archivos Modificados/Creados
+
+1. **Migración:**
+   - `supabase/migrations/031_openai_requests_log.sql` - Tabla + vista de análisis
+
+2. **OpenAI Client:**
+   - `openai-client.ts:83-97` - Constructor con opciones de logging
+   - `openai-client.ts:102-247` - chatCompletion() con logging integrado
+   - `openai-client.ts:704-754` - Método logOpenAIRequest()
+
+3. **AI Agent:**
+   - `ai-agent/index.ts:39-43` - Pasar contexto a OpenAIClient
+
+### 🚀 Próximos Pasos (Logging)
+
+- [ ] Agregar logging para Whisper (transcription)
+- [ ] Agregar logging para Vision API (image analysis)
+- [ ] Crear dashboard en Supabase para visualizar métricas
+- [ ] Configurar alertas cuando costos superen threshold
+- [ ] Implementar retention policy (ej: mantener solo últimos 90 días)
+
+---
+
 ## [2025-01-27] - v2.2.2 - 🐛 Hotfix: Remover parámetro temperature incompatible con gpt-5-nano
 
 ### 🐛 Problema Identificado

@@ -150,35 +150,127 @@ export class FlowHandlers {
           console.log('Created new contact_profile:', contactProfile.id);
         }
 
-        // Ahora crear tenant_contact
-        const { data: newTenantContact, error: createError } = await this.supabase
+        // PRIMERO: Verificar si este contacto ya existe en la libreta
+        const { data: existingContact } = await this.supabase
           .from('tenant_contacts')
-          .insert({
-            tenant_id: tenantId,
-            contact_profile_id: contactProfile.id,
-            name: contactName,
-            preferred_channel: 'whatsapp',
-            opt_in_status: 'pending',
-            preferred_language: 'es',
-            metadata: {
-              created_from: 'new_loan_flow',
-              needs_phone: !context.new_contact_phone
-            }
-          })
           .select('*, contact_profiles(phone_e164, telegram_id)')
-          .single();
+          .eq('tenant_id', tenantId)
+          .eq('contact_profile_id', contactProfile.id)
+          .maybeSingle();
 
-        if (createError) {
-          console.error('Error creating tenant_contact:', createError);
-          throw new Error(`Failed to create tenant_contact: ${createError.message}`);
+        if (existingContact) {
+          // Contacto YA existe → verificar/actualizar contact_tenant_id
+          console.log('Contact already exists in libreta, verifying contact_tenant_id...');
+
+          // Buscar tenant del contacto
+          const { data: contactTenant } = await this.supabase
+            .from('tenants')
+            .select('id')
+            .eq('owner_contact_profile_id', contactProfile.id)
+            .maybeSingle();
+
+          const contactTenantId = contactTenant ? contactTenant.id : null;
+
+          // Si no tiene tenant, crear uno
+          if (!contactTenantId) {
+            const tenantName = phoneNumber
+              ? `Cuenta de ${phoneNumber}`
+              : `Cuenta de ${contactName}`;
+
+            const { data: newTenant, error: tenantError } = await this.supabase
+              .from('tenants')
+              .insert({
+                name: tenantName,
+                owner_contact_profile_id: contactProfile.id,
+                settings: {}
+              })
+              .select()
+              .single();
+
+            if (!tenantError && newTenant) {
+              // Actualizar contact_tenant_id del contacto existente
+              await this.supabase
+                .from('tenant_contacts')
+                .update({ contact_tenant_id: newTenant.id })
+                .eq('id', existingContact.id);
+
+              console.log(`Created tenant and updated existing contact: ${newTenant.id}`);
+            }
+          } else if (existingContact.contact_tenant_id !== contactTenantId) {
+            // Actualizar contact_tenant_id si es diferente
+            await this.supabase
+              .from('tenant_contacts')
+              .update({ contact_tenant_id: contactTenantId })
+              .eq('id', existingContact.id);
+
+            console.log(`Updated contact_tenant_id: ${contactTenantId}`);
+          }
+
+          contact = existingContact;
+          console.log('Using existing tenant_contact:', contact.id);
+
+        } else {
+          // Contacto NUEVO → buscar o crear tenant y luego crear contacto
+          let contactTenantId = null;
+
+          // Buscar si este contact_profile ya tiene un tenant registrado
+          const { data: existingTenant } = await this.supabase
+            .from('tenants')
+            .select('id')
+            .eq('owner_contact_profile_id', contactProfile.id)
+            .maybeSingle();
+
+          if (existingTenant) {
+            // Caso 1: El contacto ya tiene tenant (usuario registrado)
+            contactTenantId = existingTenant.id;
+            console.log(`Contact already has tenant: ${contactTenantId}`);
+          } else {
+            // Caso 2: El contacto NO tiene tenant → usar ensure_user_tenant()
+            const { data: newTenantId, error: tenantError } = await this.supabase
+              .rpc('ensure_user_tenant', {
+                p_contact_profile_id: contactProfile.id
+              });
+
+            if (tenantError || !newTenantId) {
+              console.error('Error creating tenant for contact:', tenantError);
+              throw new Error(`Failed to create tenant: ${tenantError?.message || 'Unknown error'}`);
+            }
+
+            contactTenantId = newTenantId;
+            console.log(`Created new tenant for contact using ensure_user_tenant: ${contactTenantId}`);
+          }
+
+          // Crear tenant_contact CON contact_tenant_id
+          const { data: newTenantContact, error: createError } = await this.supabase
+            .from('tenant_contacts')
+            .insert({
+              tenant_id: tenantId,
+              contact_profile_id: contactProfile.id,
+              contact_tenant_id: contactTenantId,  // ✅ SIEMPRE tiene valor
+              name: contactName,
+              preferred_channel: 'whatsapp',
+              opt_in_status: 'pending',
+              preferred_language: 'es',
+              metadata: {
+                created_from: 'new_loan_flow',
+                needs_phone: !context.new_contact_phone
+              }
+            })
+            .select('*, contact_profiles(phone_e164, telegram_id)')
+            .single();
+
+          if (createError) {
+            console.error('Error creating tenant_contact:', createError);
+            throw new Error(`Failed to create tenant_contact: ${createError.message}`);
+          }
+
+          if (!newTenantContact) {
+            throw new Error('Tenant contact insert returned null');
+          }
+
+          contact = newTenantContact;
+          console.log('Created new tenant_contact:', contact.id);
         }
-
-        if (!newTenantContact) {
-          throw new Error('Tenant contact insert returned null');
-        }
-
-        contact = newTenantContact;
-        console.log('Created new tenant_contact:', contact.id);
 
       } else {
         throw new Error('Neither contact_id nor temp_contact_name provided in context');
@@ -191,31 +283,40 @@ export class FlowHandlers {
 
       console.log('Final contact selected:', contact.id);
 
-      // 3. Crear el acuerdo de préstamo
+      // 3. Crear el acuerdo de préstamo usando create_p2p_loan (sincronización P2P)
       const dueDate = context.due_date;
-      const agreementId = generateUUID();
 
       // Preparar título y descripción según el tipo de préstamo
       const title = context.amount
         ? `Préstamo de $${formatMoney(context.amount)}`
         : `Préstamo: ${context.item_description}`;
 
+      const description = context.item_description || 'Dinero';
+
+      // Usar función create_p2p_loan para sincronización automática
+      // Firma correcta: (p_my_tenant_id, p_other_contact_id, p_i_am_lender, ...)
+      const { data: agreementId, error: loanError } = await this.supabase
+        .rpc('create_p2p_loan', {
+          p_my_tenant_id: tenantId,
+          p_other_contact_id: contact.id,
+          p_i_am_lender: true, // El usuario que crea el préstamo es el lender
+          p_amount: context.amount || 0,
+          p_title: title,
+          p_description: description,
+          p_due_date: dueDate,
+          p_currency: 'CLP'
+        });
+
+      if (loanError || !agreementId) {
+        console.error('Error creating P2P loan:', loanError);
+        throw new Error(`Failed to create P2P loan: ${loanError?.message || 'Unknown error'}`);
+      }
+
+      // Actualizar el agreement con campos legacy adicionales
       const { data: agreement } = await this.supabase
         .from('agreements')
-        .insert({
-          id: agreementId,
-          tenant_id: tenantId,
-          tenant_contact_id: contact.id, // Borrower como tenant_contact_id
-          lender_tenant_contact_id: context.lender_contact_id || null, // Lender como tenant_contact_id
+        .update({
           created_by: ownerUser.id,
-          type: 'loan',
-          title: title,
-          description: `Préstamo creado mediante flujo conversacional`,
-          item_description: context.item_description || 'Dinero',
-          amount: context.amount || null, // Monto si es dinero
-          currency: 'MXN',
-          start_date: formatDateLocal(new Date()),
-          due_date: dueDate,
           status: 'pending_confirmation',
           reminder_config: {
             enabled: true,
@@ -231,11 +332,12 @@ export class FlowHandlers {
           exdates: [],
           reminder_count: 0
         })
+        .eq('id', agreementId)
         .select()
         .single();
 
       if (!agreement) {
-        throw new Error('Failed to create agreement');
+        throw new Error('Failed to update agreement metadata');
       }
 
       // 4. Configurar recordatorios automáticamente
@@ -791,6 +893,10 @@ export class FlowHandlers {
       }
 
       // 4. Preparar variable {{3}} según tipo de préstamo
+      // Plantilla: "{{2}} registró un préstamo a tu nombre por *{{3}}*."
+      // {{3}} puede ser:
+      // - Dinero: "$45.000 bajo el concepto 'Préstamo en efectivo'"
+      // - Objeto: "una bicicleta", "un HP Pavilion", etc.
       let loanItem = '';
       if (context.amount) {
         // Préstamo de dinero: formatear monto con concepto
@@ -818,10 +924,10 @@ export class FlowHandlers {
           {
             type: 'body',
             parameters: [
-              { type: 'text', text: borrowerContact.name },           // {{1}}
-              { type: 'text', text: lenderName },                     // {{2}}
-              { type: 'text', text: loanItem },                       // {{3}}
-              { type: 'text', text: this.formatDate(agreement.due_date) } // {{4}} - dd/mm/aa
+              { type: 'text', text: borrowerContact.name },           // {{1}} Nombre del receptor
+              { type: 'text', text: lenderName },                     // {{2}} Nombre del prestamista
+              { type: 'text', text: loanItem },                       // {{3}} Monto+concepto o descripción objeto
+              { type: 'text', text: this.formatDate(agreement.due_date) } // {{4}} Fecha (ej. "31/10/25")
             ]
           }
         ]

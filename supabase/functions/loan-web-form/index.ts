@@ -418,17 +418,19 @@ serve(async (req: Request) => {
         console.log('[LOAN_WEB_FORM] Loan created successfully:', result.agreementId);
 
         // Registrar evento de formulario web completado
+        // Usamos 'flow_completed' (valor válido del enum) y removemos contact_id
+        // (lenderContactId es contact_profile_id, no tenant_contact_id)
         await supabase
           .from('events')
           .insert({
             tenant_id: tenantId,
-            contact_id: lenderContactId,
             agreement_id: result.agreementId,
-            event_type: 'web_form_completed',
+            event_type: 'flow_completed',
             payload: {
               form_type: 'loan_web',
               loan_type: body.loan_type,
-              new_contact: body.new_contact
+              new_contact: body.new_contact,
+              source: 'web_form'
             }
           });
 

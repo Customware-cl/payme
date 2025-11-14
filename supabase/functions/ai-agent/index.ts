@@ -34,11 +34,6 @@ serve(async (req: Request) => {
       throw new Error('OPENAI_API_KEY no configurada');
     }
 
-    // Inicializar clientes
-    const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
-    const openai = new OpenAIClient(openaiApiKey);
-    const memory = new ConversationMemory(supabase);
-
     // Parsear request
     const {
       tenant_id,
@@ -47,6 +42,15 @@ serve(async (req: Request) => {
       message_type = 'text', // text, audio_transcription, image_analysis
       metadata = {}
     } = await req.json();
+
+    // Inicializar clientes
+    const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+    const openai = new OpenAIClient(openaiApiKey, 'https://api.openai.com/v1', {
+      supabase,
+      tenantId: tenant_id,
+      contactId: contact_id
+    });
+    const memory = new ConversationMemory(supabase);
 
     console.log('[AI-Agent] Request:', {
       tenant_id,
@@ -142,109 +146,154 @@ serve(async (req: Request) => {
     // Obtener herramientas (functions)
     const tools = OpenAIClient.createTools();
 
-    // Llamar a OpenAI con function calling
-    const completionResult = await openai.chatCompletion({
-      model: 'gpt-5-nano', // gpt-5-nano es 12x más barato que gpt-4o-mini
-      messages,
-      tools,
-      tool_choice: 'auto',
-      // temperature: 0.7, // GPT-5 nano solo acepta temperature=1 (default)
-      max_completion_tokens: 1000, // GPT-5 usa max_completion_tokens
-      verbosity: 'medium', // GPT-5: respuestas balanceadas (no muy largas ni muy cortas)
-      reasoning_effort: 'low' // GPT-5: razonamiento ligero para respuestas rápidas
-    });
+    // ========================================
+    // MULTI-TURN TOOL CALLING LOOP
+    // ========================================
+    // OpenAI puede requerir múltiples rondas de tool calling para completar una tarea.
+    // Por ejemplo: "cuanto le debo a caty?" requiere:
+    //   RONDA 1: search_contacts("Caty") → {id: abc-123}
+    //   RONDA 2: query_loans_dynamic(contact_id=abc-123) → {total: 5000}
+    //   RONDA 3: Generar respuesta final en lenguaje natural
 
-    if (!completionResult.success || !completionResult.data) {
-      throw new Error(completionResult.error || 'Error en OpenAI completion');
-    }
+    let currentMessages = messages;
+    let allToolResults: any[] = [];
+    let totalTokensUsed = 0;
+    let maxIterations = 5; // Límite de seguridad para evitar loops infinitos
+    let iteration = 0;
+    let finalResponse = '';
 
-    const response = completionResult.data;
-    const choice = response.choices[0];
-    const assistantMessage = choice.message;
+    while (iteration < maxIterations) {
+      iteration++;
+      console.log(`[AI-Agent] Tool calling iteration ${iteration}/${maxIterations}`);
 
-    // Verificar si hay tool calls
-    if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-      console.log('[AI-Agent] Tool calls detected:', assistantMessage.tool_calls.length);
+      // Llamar a OpenAI
+      const completionResult = await openai.chatCompletion({
+        model: 'gpt-5-nano', // gpt-5-nano es 12x más barato que gpt-4o-mini
+        messages: currentMessages,
+        tools,
+        tool_choice: 'auto',
+        // temperature: 0.7, // GPT-5 nano solo acepta temperature=1 (default)
+        max_completion_tokens: 1000, // GPT-5 usa max_completion_tokens
+        verbosity: 'medium', // GPT-5: respuestas balanceadas (no muy largas ni muy cortas)
+        reasoning_effort: 'low' // GPT-5: razonamiento ligero para respuestas rápidas
+      });
 
-      // Procesar cada tool call
-      const toolResults = [];
+      if (!completionResult.success || !completionResult.data) {
+        throw new Error(completionResult.error || 'Error en OpenAI completion');
+      }
 
-      for (const toolCall of assistantMessage.tool_calls) {
-        const functionName = toolCall.function.name;
-        const functionArgs = JSON.parse(toolCall.function.arguments);
+      const response = completionResult.data;
+      const choice = response.choices[0];
+      const assistantMessage = choice.message;
+      const finishReason = choice.finish_reason;
 
-        console.log('[AI-Agent] Executing function:', functionName, functionArgs);
+      totalTokensUsed += response.usage?.total_tokens || 0;
 
-        // Ejecutar la función correspondiente
-        const result = await executeFunction(
-          supabase,
-          openai,
+      console.log(`[AI-Agent] Finish reason: ${finishReason}`);
+
+      // Caso 1: Assistant quiere ejecutar funciones
+      if (finishReason === 'tool_calls' && assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+        console.log(`[AI-Agent] Tool calls detected: ${assistantMessage.tool_calls.length}`);
+
+        // Agregar mensaje del assistant al historial
+        currentMessages.push({
+          role: 'assistant',
+          content: assistantMessage.content || null,
+          tool_calls: assistantMessage.tool_calls
+        });
+
+        // Ejecutar cada tool call y agregar resultados
+        for (const toolCall of assistantMessage.tool_calls) {
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+
+          console.log(`[AI-Agent] Executing function: ${functionName}`, functionArgs);
+
+          // Ejecutar la función
+          const result = await executeFunction(
+            supabase,
+            openai,
+            tenant_id,
+            contact_id,
+            functionName,
+            functionArgs
+          );
+
+          // Agregar resultado a la lista completa
+          allToolResults.push({
+            tool_call_id: toolCall.id,
+            function_name: functionName,
+            result
+          });
+
+          // Agregar resultado como mensaje "tool" para OpenAI
+          currentMessages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result)
+          });
+
+          console.log(`[AI-Agent] Function ${functionName} executed successfully`);
+        }
+
+        // Continuar al siguiente iteration (OpenAI procesará los resultados)
+        continue;
+      }
+
+      // Caso 2: Assistant generó respuesta final (finish_reason: "stop")
+      if (finishReason === 'stop') {
+        finalResponse = assistantMessage.content || '';
+        console.log(`[AI-Agent] Final response generated (length: ${finalResponse.length})`);
+
+        // Guardar mensaje final del asistente
+        await memory.saveMessage(
           tenant_id,
           contact_id,
-          functionName,
-          functionArgs
+          'assistant',
+          finalResponse,
+          {
+            tool_calls_count: allToolResults.length,
+            iterations: iteration
+          }
         );
 
-        toolResults.push({
-          tool_call_id: toolCall.id,
-          function_name: functionName,
-          result
-        });
+        // Si no hay respuesta de texto pero hay tool results, generar mensaje de fallback
+        if (!finalResponse && allToolResults.length > 0) {
+          const firstMessageResult = allToolResults.find(r => r.result.message);
+          if (firstMessageResult) {
+            finalResponse = firstMessageResult.result.message;
+          }
+        }
+
+        break; // Salir del loop
       }
 
-      // Guardar respuesta del asistente con tool calls
-      await memory.saveMessage(
-        tenant_id,
-        contact_id,
-        'assistant',
-        assistantMessage.content || '',
-        {
-          tool_calls: assistantMessage.tool_calls,
-          tool_results: toolResults
-        }
-      );
-
-      // Construir mensaje de respuesta
-      // Si el asistente no generó texto, usar el mensaje del primer tool result
-      let responseMessage = assistantMessage.content || '';
-
-      if (!responseMessage && toolResults.length > 0) {
-        const firstMessageResult = toolResults.find(r => r.result.message);
-        if (firstMessageResult) {
-          responseMessage = firstMessageResult.result.message;
-        }
-      }
-
-      // Retornar resultado con acciones ejecutadas
-      return new Response(
-        JSON.stringify({
-          success: true,
-          response: responseMessage || 'Procesando...',
-          actions: toolResults,
-          needs_confirmation: toolResults.some(r => r.result.needs_confirmation),
-          tokens_used: response.usage.total_tokens
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      // Caso 3: Otros finish_reason (length, content_filter, etc.)
+      console.log(`[AI-Agent] Unexpected finish_reason: ${finishReason}`);
+      finalResponse = assistantMessage.content || 'No pude completar la solicitud.';
+      break;
     }
 
-    // Sin tool calls, solo respuesta de texto
-    const responseText = assistantMessage.content || '';
+    // Verificar si llegamos al límite de iteraciones
+    if (iteration >= maxIterations) {
+      console.warn(`[AI-Agent] Reached max iterations (${maxIterations}), stopping loop`);
+      finalResponse = finalResponse || 'La solicitud tomó demasiado tiempo. Por favor intenta de nuevo.';
+    }
 
-    // Guardar respuesta del asistente
-    await memory.saveMessage(
-      tenant_id,
-      contact_id,
-      'assistant',
-      responseText
-    );
+    // Agregar indicador 🎤 para mensajes de audio
+    if (message_type === 'audio_transcription' && finalResponse) {
+      finalResponse = '🎤 ' + finalResponse;
+    }
 
+    // Retornar resultado final
     return new Response(
       JSON.stringify({
         success: true,
-        response: responseText,
-        actions: [],
-        tokens_used: response.usage.total_tokens
+        response: finalResponse || 'Procesado correctamente',
+        actions: allToolResults,
+        needs_confirmation: allToolResults.some(r => r.result?.needs_confirmation),
+        tokens_used: totalTokensUsed,
+        iterations: iteration
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
@@ -358,7 +407,12 @@ async function executeFunction(
         break;
 
       case 'search_contacts':
-        result = await searchContacts(supabase, tenantId, args);
+        result = await searchContacts(
+          supabase,
+          tenantId,
+          args,
+          message_type === 'audio_transcription' ? 'audio' : 'text'
+        );
         break;
 
       case 'create_contact':
@@ -635,29 +689,37 @@ async function queryLoans(
 }
 
 /**
- * Query tipo 'balance': Resumen de totales prestados vs recibidos
+ * Query tipo 'balance': Balance detallado categorizado por vencimiento y confirmación
+ * Version 2.5.0 - Maneja los 9 status de préstamos (overdue, due_soon, pending_confirmation, active)
  */
 async function queryLoansBalance(
   supabase: any,
   tenantId: string,
   userTenantContactId: string
 ) {
-  // Préstamos otorgados (soy lender)
+  // Helper: Formatear número con punto para miles y coma para decimales (formato chileno)
+  const formatChileanNumber = (num: number): string => {
+    const parts = num.toFixed(0).split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return parts.join(',');
+  };
+
+  // 1. Query préstamos otorgados (soy lender) - TODOS LOS STATUS RELEVANTES
   const { data: lentLoans, error: lentError } = await supabase
     .from('agreements')
-    .select('amount')
+    .select('id, amount, status, due_date')
     .eq('tenant_id', tenantId)
     .eq('type', 'loan')
-    .eq('status', 'active')
+    .in('status', ['active', 'overdue', 'due_soon', 'pending_confirmation'])
     .eq('lender_tenant_contact_id', userTenantContactId);
 
-  // Préstamos recibidos (soy borrower)
+  // 2. Query préstamos recibidos (soy borrower)
   const { data: borrowedLoans, error: borrowedError } = await supabase
     .from('agreements')
-    .select('amount')
+    .select('id, amount, status, due_date')
     .eq('tenant_id', tenantId)
     .eq('type', 'loan')
-    .eq('status', 'active')
+    .in('status', ['active', 'overdue', 'due_soon'])
     .eq('tenant_contact_id', userTenantContactId);
 
   if (lentError || borrowedError) {
@@ -669,22 +731,120 @@ async function queryLoansBalance(
     };
   }
 
-  // Calcular totales
-  const totalLent = (lentLoans || []).reduce((sum, loan) => sum + Number(loan.amount), 0);
-  const totalBorrowed = (borrowedLoans || []).reduce((sum, loan) => sum + Number(loan.amount), 0);
+  // 3. Categorizar préstamos otorgados (me deben)
+  const lentCategorized = {
+    overdue: [] as any[],
+    due_soon: [] as any[],
+    pending_confirmation: [] as any[],
+    active: [] as any[]
+  };
+
+  (lentLoans || []).forEach((loan: any) => {
+    if (loan.status === 'overdue') {
+      lentCategorized.overdue.push(loan);
+    } else if (loan.status === 'due_soon') {
+      lentCategorized.due_soon.push(loan);
+    } else if (loan.status === 'pending_confirmation') {
+      lentCategorized.pending_confirmation.push(loan);
+    } else {
+      lentCategorized.active.push(loan);
+    }
+  });
+
+  // 4. Categorizar préstamos recibidos (debo)
+  const borrowedCategorized = {
+    overdue: [] as any[],
+    due_soon: [] as any[],
+    active: [] as any[]
+  };
+
+  (borrowedLoans || []).forEach((loan: any) => {
+    if (loan.status === 'overdue') {
+      borrowedCategorized.overdue.push(loan);
+    } else if (loan.status === 'due_soon') {
+      borrowedCategorized.due_soon.push(loan);
+    } else {
+      borrowedCategorized.active.push(loan);
+    }
+  });
+
+  // 5. Calcular totales por categoría
+  const sumAmounts = (loans: any[]) => loans.reduce((sum, loan) => sum + Number(loan.amount || 0), 0);
+
+  const lentTotals = {
+    overdue: sumAmounts(lentCategorized.overdue),
+    due_soon: sumAmounts(lentCategorized.due_soon),
+    pending_confirmation: sumAmounts(lentCategorized.pending_confirmation),
+    active: sumAmounts(lentCategorized.active)
+  };
+
+  const borrowedTotals = {
+    overdue: sumAmounts(borrowedCategorized.overdue),
+    due_soon: sumAmounts(borrowedCategorized.due_soon),
+    active: sumAmounts(borrowedCategorized.active)
+  };
+
+  const totalLent = lentTotals.overdue + lentTotals.due_soon + lentTotals.pending_confirmation + lentTotals.active;
+  const totalBorrowed = borrowedTotals.overdue + borrowedTotals.due_soon + borrowedTotals.active;
   const netBalance = totalLent - totalBorrowed;
 
-  // Formatear respuesta
-  let message = '💰 *Resumen de préstamos activos*\n\n';
-  message += `📤 Prestado (me deben): $${totalLent.toLocaleString('es-CL')}\n`;
-  message += `📥 Recibido (debo): $${totalBorrowed.toLocaleString('es-CL')}\n\n`;
+  // 6. Formatear mensaje con categorías
+  let message = '💰 *Balance Detallado*\n\n';
 
-  if (netBalance > 0) {
-    message += `✅ Balance neto: +$${netBalance.toLocaleString('es-CL')} a tu favor`;
-  } else if (netBalance < 0) {
-    message += `⚠️ Balance neto: -$${Math.abs(netBalance).toLocaleString('es-CL')} en tu contra`;
+  // ME DEBEN (Prestado)
+  message += '📤 *ME DEBEN (Prestado)*\n';
+
+  if (lentTotals.overdue > 0) {
+    message += `  🔴 Vencidos: $${formatChileanNumber(lentTotals.overdue)} (${lentCategorized.overdue.length} préstamos)\n`;
+  }
+  if (lentTotals.due_soon > 0) {
+    message += `  ⚠️  Por vencer (24h): $${formatChileanNumber(lentTotals.due_soon)} (${lentCategorized.due_soon.length} préstamos)\n`;
+  }
+  if (lentTotals.pending_confirmation > 0) {
+    message += `  ⏳ Sin confirmar: $${formatChileanNumber(lentTotals.pending_confirmation)} (${lentCategorized.pending_confirmation.length} préstamos)\n`;
+  }
+  if (lentTotals.active > 0) {
+    message += `  ✅ Al día: $${formatChileanNumber(lentTotals.active)} (${lentCategorized.active.length} préstamos)\n`;
+  }
+
+  if (totalLent === 0) {
+    message += '  _No hay préstamos otorgados_\n';
   } else {
-    message += `⚖️ Balance neto: $0 (equilibrado)`;
+    message += `  ──────────────────────\n`;
+    message += `  💰 *Total: $${formatChileanNumber(totalLent)}*\n`;
+  }
+
+  message += '\n';
+
+  // DEBO (Recibido)
+  message += '📥 *DEBO (Recibido)*\n';
+
+  if (borrowedTotals.overdue > 0) {
+    message += `  🔴 Vencidos: $${formatChileanNumber(borrowedTotals.overdue)} (${borrowedCategorized.overdue.length} préstamos)\n`;
+  }
+  if (borrowedTotals.due_soon > 0) {
+    message += `  ⚠️  Por vencer (24h): $${formatChileanNumber(borrowedTotals.due_soon)} (${borrowedCategorized.due_soon.length} préstamos)\n`;
+  }
+  if (borrowedTotals.active > 0) {
+    message += `  ✅ Al día: $${formatChileanNumber(borrowedTotals.active)} (${borrowedCategorized.active.length} préstamos)\n`;
+  }
+
+  if (totalBorrowed === 0) {
+    message += '  _No hay préstamos recibidos_\n';
+  } else {
+    message += `  ──────────────────────\n`;
+    message += `  💵 *Total: $${formatChileanNumber(totalBorrowed)}*\n`;
+  }
+
+  message += '\n';
+
+  // Balance neto
+  if (netBalance > 0) {
+    message += `💵 *Balance Neto: +$${formatChileanNumber(netBalance)} a tu favor* ✅`;
+  } else if (netBalance < 0) {
+    message += `💵 *Balance Neto: -$${formatChileanNumber(Math.abs(netBalance))} en tu contra* ⚠️`;
+  } else {
+    message += `⚖️ *Balance Neto: $0 (equilibrado)*`;
   }
 
   return {
@@ -692,11 +852,17 @@ async function queryLoansBalance(
     message,
     needs_confirmation: false,
     data: {
-      total_lent: totalLent,
-      total_borrowed: totalBorrowed,
-      net_balance: netBalance,
-      lent_count: lentLoans?.length || 0,
-      borrowed_count: borrowedLoans?.length || 0
+      lent: {
+        categorized: lentCategorized,
+        totals: lentTotals,
+        total: totalLent
+      },
+      borrowed: {
+        categorized: borrowedCategorized,
+        totals: borrowedTotals,
+        total: totalBorrowed
+      },
+      net_balance: netBalance
     }
   };
 }
@@ -1305,14 +1471,44 @@ async function rescheduleLoan(
 /**
  * Buscar contactos
  */
+/**
+ * Buscar contactos con búsqueda fuzzy y fonética adaptativa
+ * v2.6.0: Agregado threshold adaptativo y búsqueda fonética para audio
+ */
 async function searchContacts(
   supabase: any,
   tenantId: string,
   args: {
     search_term: string;
-  }
+  },
+  messageSource: 'audio' | 'text' = 'text'  // ← NUEVO: Indicar origen del mensaje
 ) {
-  const result = await findContactByName(supabase, tenantId, args.search_term, 0.5);
+  const isAudio = messageSource === 'audio';
+
+  console.log('[searchContacts] Buscando:', {
+    term: args.search_term,
+    source: messageSource,
+    isAudio
+  });
+
+  // THRESHOLD ADAPTATIVO según origen
+  // Audio: 0.4 base (más permisivo porque puede haber errores de transcripción)
+  // Texto: 0.5 base (threshold normal)
+  const threshold = isAudio ? 0.4 : 0.5;
+
+  // BÚSQUEDA FONÉTICA activada solo para audio
+  const usePhonetic = isAudio;
+
+  console.log('[searchContacts] Config:', { threshold, usePhonetic });
+
+  // Búsqueda con threshold y fonética según origen
+  const result = await findContactByName(
+    supabase,
+    tenantId,
+    args.search_term,
+    threshold,
+    usePhonetic  // ← NUEVO PARÁMETRO
+  );
 
   if (!result.success) {
     return {
@@ -1321,11 +1517,107 @@ async function searchContacts(
     };
   }
 
+  const matches = result.matches || [];
+
+  // Sin coincidencias → Sugerir crear contacto
+  if (matches.length === 0) {
+    return {
+      success: true,
+      message: `❌ No encontré ningún contacto con el nombre "${args.search_term}". ¿Quieres que lo agregue a tus contactos?`,
+      needs_confirmation: false,
+      data: {
+        matches: [],
+        suggestion: 'create_contact',
+        suggested_name: args.search_term
+      }
+    };
+  }
+
+  // LÓGICA ESPECIAL PARA AUDIO: Si hay múltiples matches pero uno tiene >85%, usar automáticamente
+  if (isAudio && matches.length > 1) {
+    // Ordenar por similitud descendente (ya está ordenado, pero por seguridad)
+    matches.sort((a, b) => b.similarity - a.similarity);
+
+    const best = matches[0];
+    const secondBest = matches[1];
+
+    // Si el mejor tiene ≥85% de similitud, usar automáticamente (evitar fricción)
+    if (best.similarity >= 0.85) {
+      console.log(`[searchContacts] Audio mode: Auto-selecting best match "${best.name}" (${(best.similarity * 100).toFixed(0)}%) over "${secondBest.name}" (${(secondBest.similarity * 100).toFixed(0)}%)`);
+
+      return {
+        success: true,
+        message: `✅ Encontrado: ${best.name}`,
+        needs_confirmation: false,
+        data: {
+          matches: [best],
+          best_match: best,
+          confidence: 'high',
+          auto_selected: true,
+          reason: 'high_similarity_audio'
+        }
+      };
+    }
+  }
+
+  // Coincidencia exacta o muy alta (>0.95) → Confirmación automática
+  if (matches.length === 1 && matches[0].similarity >= 0.95) {
+    return {
+      success: true,
+      message: `✅ Encontrado: ${matches[0].name}`,
+      needs_confirmation: false,
+      data: {
+        matches: [matches[0]],
+        best_match: matches[0],
+        confidence: 'high'
+      }
+    };
+  }
+
+  // Coincidencia parcial (0.8-0.95) → Para audio con >85% usamos directamente, para texto pedimos confirmación
+  if (matches.length === 1) {
+    if (isAudio && matches[0].similarity >= 0.85) {
+      // Audio con alta similitud → Usar directamente
+      return {
+        success: true,
+        message: `✅ Encontrado: ${matches[0].name}`,
+        needs_confirmation: false,
+        data: {
+          matches: [matches[0]],
+          best_match: matches[0],
+          confidence: 'high'
+        }
+      };
+    } else if (matches[0].similarity >= 0.8) {
+      // Texto o audio con similitud media → Pedir confirmación
+      return {
+        success: true,
+        message: `🤔 ¿Te refieres a "${matches[0].name}"? (similaridad: ${(matches[0].similarity * 100).toFixed(0)}%)`,
+        needs_confirmation: false,
+        data: {
+          matches: [matches[0]],
+          best_match: matches[0],
+          confidence: 'medium',
+          suggestion: 'confirm_or_create'
+        }
+      };
+    }
+  }
+
+  // Múltiples coincidencias → Mostrar candidatos
+  const formattedList = matches.slice(0, 5).map((m, i) =>
+    `${i + 1}. ${m.name} (similaridad: ${(m.similarity * 100).toFixed(0)}%)`
+  ).join('\n');
+
   return {
     success: true,
-    message: formatMatchResults(result.matches || []),
+    message: `🔍 Encontré varios contactos similares a "${args.search_term}":\n${formattedList}\n\n¿A cuál te refieres? También puedo crear uno nuevo si ninguno es el correcto.`,
     needs_confirmation: false,
-    data: { matches: result.matches }
+    data: {
+      matches: matches.slice(0, 5),
+      confidence: 'low',
+      suggestion: 'select_or_create'
+    }
   };
 }
 

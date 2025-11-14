@@ -190,67 +190,134 @@ serve(async (req: Request) => {
         const userProfileId = userContact?.contact_profile_id;
 
         // Obtener préstamos donde el usuario es el prestador (lent)
-        // Estos están en MI tenant, así que buscar por lender_tenant_contact_id directo
+        // En P2P multi-tenant: buscar por lender_tenant_id
         const { data: lentAgreements } = await supabase
           .from('agreements')
           .select(`
             id,
             amount,
-            item_description,
+            description,
             due_date,
             status,
             created_at,
-            borrower:tenant_contacts!tenant_contact_id(id, name)
+            tenant_contact_id,
+            borrower_tenant_id
           `)
-          .eq('lender_tenant_contact_id', tokenData.contact_id)
+          .eq('lender_tenant_id', tokenData.tenant_id)
           .in('status', ['active', 'pending_confirmation'])
           .order('created_at', { ascending: false });
 
         // Obtener préstamos donde el usuario es el prestatario (borrowed)
-        // Estos pueden estar en OTROS tenants, necesitamos buscar por contact_profile_id
-        let borrowedAgreements = [];
+        // En P2P multi-tenant: buscar por borrower_tenant_id
+        const { data: borrowedAgreements } = await supabase
+          .from('agreements')
+          .select(`
+            id,
+            amount,
+            description,
+            due_date,
+            status,
+            created_at,
+            tenant_contact_id,
+            lender_tenant_id
+          `)
+          .eq('borrower_tenant_id', tokenData.tenant_id)
+          .in('status', ['active', 'pending_confirmation'])
+          .order('created_at', { ascending: false });
 
-        if (userProfileId) {
-          // Paso 1: Obtener todos los tenant_contacts que representan a este usuario (en todos los tenants)
-          const { data: allUserContacts } = await supabase
-            .from('tenant_contacts')
-            .select('id')
-            .eq('contact_profile_id', userProfileId);
+        // Enriquecer préstamos con nombres de borrower/lender
+        const enrichedLent = await Promise.all((lentAgreements || []).map(async (loan) => {
+          let borrowerName = 'Desconocido';
 
-          const contactIds = (allUserContacts || []).map(c => c.id);
+          // Intentar obtener nombre del borrower
+          if (loan.borrower_tenant_id) {
+            // El borrower tiene tenant, obtener su nombre desde tenants
+            const { data: borrowerTenant } = await supabase
+              .from('tenants')
+              .select('owner_contact_profile_id')
+              .eq('id', loan.borrower_tenant_id)
+              .single();
 
-          // Paso 2: Buscar agreements donde el borrower es alguno de esos tenant_contacts
-          if (contactIds.length > 0) {
-            const { data: agreements } = await supabase
-              .from('agreements')
-              .select(`
-                id,
-                amount,
-                item_description,
-                due_date,
-                status,
-                created_at,
-                lender:tenant_contacts!lender_tenant_contact_id(id, name)
-              `)
-              .in('tenant_contact_id', contactIds)
-              .in('status', ['active', 'pending_confirmation'])
-              .order('created_at', { ascending: false });
+            if (borrowerTenant?.owner_contact_profile_id) {
+              const { data: borrowerProfile } = await supabase
+                .from('contact_profiles')
+                .select('first_name, last_name, phone_e164')
+                .eq('id', borrowerTenant.owner_contact_profile_id)
+                .single();
 
-            borrowedAgreements = agreements || [];
+              if (borrowerProfile) {
+                borrowerName = borrowerProfile.first_name
+                  ? `${borrowerProfile.first_name} ${borrowerProfile.last_name || ''}`.trim()
+                  : borrowerProfile.phone_e164;
+              }
+            }
+          } else if (loan.tenant_contact_id) {
+            // Legacy: borrower sin tenant, obtener desde tenant_contacts
+            const { data: borrowerContact } = await supabase
+              .from('tenant_contacts')
+              .select('name')
+              .eq('id', loan.tenant_contact_id)
+              .single();
+
+            if (borrowerContact) {
+              borrowerName = borrowerContact.name;
+            }
           }
-        }
+
+          return { ...loan, borrower: { name: borrowerName } };
+        }));
+
+        const enrichedBorrowed = await Promise.all((borrowedAgreements || []).map(async (loan) => {
+          let lenderName = 'Desconocido';
+
+          // Intentar obtener nombre del lender
+          if (loan.lender_tenant_id) {
+            const { data: lenderTenant } = await supabase
+              .from('tenants')
+              .select('owner_contact_profile_id')
+              .eq('id', loan.lender_tenant_id)
+              .single();
+
+            if (lenderTenant?.owner_contact_profile_id) {
+              const { data: lenderProfile } = await supabase
+                .from('contact_profiles')
+                .select('first_name, last_name, phone_e164')
+                .eq('id', lenderTenant.owner_contact_profile_id)
+                .single();
+
+              if (lenderProfile) {
+                lenderName = lenderProfile.first_name
+                  ? `${lenderProfile.first_name} ${lenderProfile.last_name || ''}`.trim()
+                  : lenderProfile.phone_e164;
+              }
+            }
+          } else if (loan.tenant_contact_id) {
+            // Legacy: obtener desde tenant_contacts
+            const { data: lenderContact } = await supabase
+              .from('tenant_contacts')
+              .select('name')
+              .eq('id', loan.tenant_contact_id)
+              .single();
+
+            if (lenderContact) {
+              lenderName = lenderContact.name;
+            }
+          }
+
+          return { ...loan, lender: { name: lenderName } };
+        }));
 
         console.log('[MENU_DATA] Loans loaded:', {
-          lent: lentAgreements?.length || 0,
-          borrowed: borrowedAgreements.length
+          lent: enrichedLent.length,
+          borrowed: enrichedBorrowed.length
         });
 
         return new Response(JSON.stringify({
           success: true,
           contact_id: tokenData.contact_id,
           loans: {
-            lent: lentAgreements || [],
-            borrowed: borrowedAgreements
+            lent: enrichedLent,
+            borrowed: enrichedBorrowed
           }
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }

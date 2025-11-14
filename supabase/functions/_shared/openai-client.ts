@@ -76,10 +76,24 @@ export interface TranscriptionResponse {
 export class OpenAIClient {
   private apiKey: string;
   private baseUrl: string;
+  private supabase?: any; // SupabaseClient (opcional para logging)
+  private tenantId?: string;
+  private contactId?: string;
 
-  constructor(apiKey: string, baseUrl: string = 'https://api.openai.com/v1') {
+  constructor(
+    apiKey: string,
+    baseUrl: string = 'https://api.openai.com/v1',
+    options?: {
+      supabase?: any;
+      tenantId?: string;
+      contactId?: string;
+    }
+  ) {
     this.apiKey = apiKey;
     this.baseUrl = baseUrl;
+    this.supabase = options?.supabase;
+    this.tenantId = options?.tenantId;
+    this.contactId = options?.contactId;
   }
 
   /**
@@ -88,12 +102,45 @@ export class OpenAIClient {
   async chatCompletion(
     request: ChatCompletionRequest
   ): Promise<{ success: boolean; data?: ChatCompletionResponse; error?: string }> {
+    const startTime = Date.now();
+    let responsePayload: any = null;
+    let errorMessage: string | undefined;
+
     try {
+      const enableDetailedLogs = Deno.env.get('OPENAI_DETAILED_LOGS') === 'true';
+
+      // Logs resumidos (siempre activos)
       console.log('[OpenAI] Chat completion request:', {
         model: request.model,
         messages: request.messages.length,
-        has_tools: !!request.tools
+        has_tools: !!request.tools,
+        tool_count: request.tools?.length || 0
       });
+
+      // Logs detallados (opcional - activar con env var)
+      if (enableDetailedLogs) {
+        console.log('[OpenAI] 📤 FULL REQUEST:', JSON.stringify({
+          model: request.model,
+          messages: request.messages.map((m, i) => ({
+            index: i,
+            role: m.role,
+            content: typeof m.content === 'string'
+              ? m.content.substring(0, 500) + (m.content.length > 500 ? '...' : '')
+              : m.content,
+            tool_calls: (m as any).tool_calls || undefined
+          })),
+          tools: request.tools?.map(t => ({
+            type: t.type,
+            function: {
+              name: t.function.name,
+              description: t.function.description
+            }
+          })),
+          tool_choice: request.tool_choice,
+          temperature: request.temperature,
+          max_completion_tokens: request.max_completion_tokens
+        }, null, 2));
+      }
 
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -105,19 +152,71 @@ export class OpenAIClient {
       });
 
       const result = await response.json();
+      responsePayload = result;
 
       if (!response.ok) {
         console.error('[OpenAI] Error response:', result);
+        errorMessage = result.error?.message || 'Error calling OpenAI API';
+
+        // Log error en BD
+        await this.logOpenAIRequest({
+          requestType: 'chat_completion',
+          model: request.model,
+          requestPayload: request,
+          responsePayload: result,
+          status: 'error',
+          errorMessage,
+          responseTimeMs: Date.now() - startTime
+        });
+
         return {
           success: false,
-          error: result.error?.message || 'Error calling OpenAI API'
+          error: errorMessage
         };
       }
 
+      // Logs resumidos (siempre activos)
       console.log('[OpenAI] Success:', {
         model: result.model,
         tokens: result.usage?.total_tokens,
-        finish_reason: result.choices[0]?.finish_reason
+        finish_reason: result.choices[0]?.finish_reason,
+        has_tool_calls: !!result.choices[0]?.message?.tool_calls,
+        tool_calls_count: result.choices[0]?.message?.tool_calls?.length || 0
+      });
+
+      // Logs detallados (opcional)
+      if (enableDetailedLogs) {
+        console.log('[OpenAI] 📥 FULL RESPONSE:', JSON.stringify({
+          id: result.id,
+          model: result.model,
+          usage: result.usage,
+          choices: result.choices.map((c: any) => ({
+            index: c.index,
+            finish_reason: c.finish_reason,
+            message: {
+              role: c.message.role,
+              content: c.message.content,
+              tool_calls: c.message.tool_calls?.map((tc: any) => ({
+                id: tc.id,
+                type: tc.type,
+                function: {
+                  name: tc.function.name,
+                  arguments: tc.function.arguments
+                }
+              }))
+            }
+          }))
+        }, null, 2));
+      }
+
+      // Log success en BD
+      await this.logOpenAIRequest({
+        requestType: 'chat_completion',
+        model: request.model,
+        requestPayload: request,
+        responsePayload: result,
+        status: 'success',
+        responseTimeMs: Date.now() - startTime
       });
 
       return {
@@ -127,9 +226,22 @@ export class OpenAIClient {
 
     } catch (error) {
       console.error('[OpenAI] Exception:', error);
+      errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+      // Log exception en BD
+      await this.logOpenAIRequest({
+        requestType: 'chat_completion',
+        model: request.model,
+        requestPayload: request,
+        responsePayload: responsePayload,
+        status: 'error',
+        errorMessage,
+        responseTimeMs: Date.now() - startTime
+      });
+
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: errorMessage
       };
     }
   }
@@ -291,6 +403,24 @@ export class OpenAIClient {
 
 Tu función es ayudar a ${contactName} a gestionar sus préstamos y contactos de manera natural, segura y eficiente.
 
+🎯 ESTILO DE RESPUESTA - CRÍTICO - LEE ESTO PRIMERO:
+1. Responde DIRECTAMENTE y CONCISO, como un amigo amigable en WhatsApp
+2. USA EMOJIS cuando sea apropiado para hacer las respuestas más cálidas y expresivas
+3. FORMATO DE NÚMEROS (Chile): Usa PUNTO para miles y COMA para decimales
+   - Correcto: $99.000 | $1.234.567 | $50.000,50
+   - Incorrecto: $99,000 | $1,234,567 | $50,000.50
+4. NO expliques el proceso técnico, SQL, validaciones, o detalles de implementación
+5. Si ejecutaste funciones exitosamente, solo comunica el RESULTADO FINAL
+6. Ejemplos CORRECTOS:
+   - "¿cuánto le debo a Caty?" → "Le debes $99.000 a Caty 💰"
+   - "¿cuánto me debe Caty?" → "Caty te debe $364.888 💵"
+   - Préstamo creado → "✅ Listo! Registré el préstamo de $50.000 a Juan"
+   - No hay resultados → "No encontré préstamos con ese nombre 🤔"
+7. Ejemplo INCORRECTO: "La consulta actual para calcular el total que debes arrojó un valor nulo..."
+8. Si hay error, di "No pude procesar eso 😕 ¿Puedes reformular?" SIN detalles técnicos
+9. Tono: Amigable, cálido, cercano - como hablarías con un amigo por WhatsApp
+10. Tu audiencia son usuarios finales, NO desarrolladores
+
 SERVICIOS DISPONIBLES:
 ${availableServices.map(s => `- ${s}`).join('\n')}
 
@@ -306,6 +436,13 @@ REGLAS DE SEGURIDAD - CRÍTICO:
 
 REGLAS DE INTERPRETACIÓN:
 1. Para nombres de contactos: usa búsqueda fuzzy (acepta apodos, nombres parciales, errores de tipeo)
+   ⚠️ VERIFICACIÓN OBLIGATORIA DE CONTACTOS:
+   - Si el usuario menciona un nombre que NO está en CONTACTOS DISPONIBLES → SIEMPRE usa search_contacts() PRIMERO
+   - Si el nombre es similar pero no exacto (ej: "Catita" vs "Caty") → search_contacts() para verificar
+   - Si search_contacts() retorna múltiples candidatos → presenta opciones al usuario
+   - Si search_contacts() no encuentra nada → ofrece crear el contacto con create_contact()
+   - Solo procede con create_loan u otras operaciones DESPUÉS de verificar/resolver el contacto
+
 2. Para fechas relativas: calcula la fecha exacta en formato YYYY-MM-DD
    - "fin de mes" → último día del mes actual
    - "próximo viernes" → siguiente viernes desde hoy
@@ -352,11 +489,77 @@ EJEMPLOS CORRECTOS - USO DE FUNCIONES:
 9. Usuario: "agrega a juan lópez"
    → create_contact(name="juan lópez")
 
+EJEMPLOS DE VERIFICACIÓN DE CONTACTOS:
+A. Usuario: "cuánto le debo a Catita" (pero en CONTACTOS DISPONIBLES solo está "Caty")
+   → PRIMERO: search_contacts(search_term="Catita")
+   → RESULTADO: "🤔 ¿Te refieres a Caty? (similaridad: 83%)"
+   → LUEGO: Asume que sí y ejecuta query_loans_dynamic con "Caty"
+
+B. Usuario: "presté 100 lucas a Juanito" (pero no existe "Juanito" en contactos)
+   → PRIMERO: search_contacts(search_term="Juanito")
+   → RESULTADO: Candidatos: "Juan Pérez (85%)", "Juan Carlos (78%)"
+   → RESPUESTA: Muestra candidatos y pregunta a cuál se refiere
+
+C. Usuario: "cuánto me debe Roberto" (no existe ningún Roberto)
+   → PRIMERO: search_contacts(search_term="Roberto")
+   → RESULTADO: "❌ No encontré ningún contacto con el nombre Roberto"
+   → RESPUESTA: "No tengo registrado a Roberto en tus contactos. ¿Quieres que lo agregue?"
+
 RESPUESTAS:
 - Sé amable, profesional y conciso en español chileno
 - Evita lenguaje técnico innecesario
 - Confirma las acciones de forma clara
-- Si hay error, explica qué pasó y cómo solucionarlo
+- Si hay error, di simplemente "No pude completar eso" sin explicar detalles técnicos
+
+ESTRUCTURA DE BASE DE DATOS (para query_loans_dynamic):
+
+Tablas principales:
+
+1. **agreements** (Préstamos)
+   - tenant_id: UUID (obligatorio en queries)
+   - tenant_contact_id: UUID → Prestatario (borrower - quien RECIBE el préstamo)
+   - lender_tenant_contact_id: UUID → Prestamista (lender - quien PRESTA el dinero)
+   - amount: NUMERIC → Monto del préstamo
+   - due_date: DATE → Fecha de vencimiento
+   - status: TEXT → Estados del préstamo:
+     * 'active': Activo, sin devolver, no vencido, confirmado
+     * 'overdue': Vencido, sin devolver (actualizado automáticamente por función de BD)
+     * 'due_soon': Vence en menos de 24 horas (actualizado automáticamente)
+     * 'pending_confirmation': Esperando confirmación del borrower
+     * 'rejected': Rechazado por borrower (mostrar SOLO si se pregunta específicamente)
+     * 'completed': Devuelto/pagado completamente
+     * 'returned': Alias de completed
+     * 'cancelled': Cancelado por acuerdo mutuo
+     * 'paused': Pausado temporalmente
+   - borrower_confirmed: BOOLEAN → true (confirmado), false (rechazado), null (pendiente)
+   - type: TEXT → 'loan' (préstamos) o 'service' (servicios)
+   - created_at: TIMESTAMP
+   - completed_at: TIMESTAMP
+
+2. **tenant_contacts** (Contactos del tenant)
+   - id: UUID
+   - tenant_id: UUID
+   - contact_profile_id: UUID → Referencia a contact_profiles
+   - name: TEXT → Nombre/alias del contacto en este tenant
+   - whatsapp_id: TEXT
+   - opt_in_status: TEXT → 'pending', 'opted_in', 'opted_out'
+
+3. **contact_profiles** (Perfiles globales de contactos)
+   - id: UUID
+   - phone_e164: TEXT → Teléfono en formato internacional
+   - first_name: TEXT
+   - last_name: TEXT
+   - email: TEXT
+   - bank_accounts: JSONB → Array de cuentas bancarias
+
+Relaciones clave:
+- agreements.tenant_contact_id → tenant_contacts.id (borrower)
+- agreements.lender_tenant_contact_id → tenant_contacts.id (lender)
+- tenant_contacts.contact_profile_id → contact_profiles.id
+
+Direcciones de préstamo (IMPORTANTE):
+- "Yo presté" / "Me deben" → agreements WHERE lender_tenant_contact_id = mi_contact_id
+- "Yo recibí" / "Debo" → agreements WHERE tenant_contact_id = mi_contact_id
 
 Fecha actual: ${currentDate}
 Día de la semana: ${new Date().toLocaleDateString('es-CL', { weekday: 'long' })}`
@@ -414,7 +617,11 @@ Día de la semana: ${new Date().toLocaleDateString('es-CL', { weekday: 'long' })
                 type: 'string',
                 enum: ['all', 'pending', 'balance'],
                 description: `Tipo de consulta GENERAL (sin contactos específicos):
-- "balance": Resumen GENERAL de totales sin especificar personas (ej: "cuánto me deben EN TOTAL", "balance global", "resumen general")
+- "balance": Balance DETALLADO categorizado por vencimiento y confirmación:
+  * ME DEBEN (prestado): vencidos, por vencer (24h), sin confirmar, al día + total
+  * DEBO (recibido): vencidos, por vencer (24h), al día + total
+  * Balance neto (diferencia entre ambos)
+  Usar para: "mi balance", "balance general", "cuánto me deben en total", "resumen de préstamos"
 - "pending": Lista de vencidos/próximos a vencer SIN filtrar por contacto (ej: "qué está vencido", "alertas generales")
 - "all": Lista completa de todos los préstamos activos (ej: "todos mis préstamos")
 
@@ -475,13 +682,13 @@ Día de la semana: ${new Date().toLocaleDateString('es-CL', { weekday: 'long' })
         type: 'function',
         function: {
           name: 'search_contacts',
-          description: 'Buscar contactos del usuario',
+          description: '🔍 VERIFICACIÓN DE CONTACTOS (USA SIEMPRE ANTES DE create_loan/query_loans_dynamic con nombres). Busca contactos usando fuzzy matching para manejar apodos, variantes y errores de tipeo. Para mensajes de AUDIO 🎤 usa búsqueda fonética automática (Katy≈Caty, José≈Hosé) con threshold más permisivo (85%+ auto-selección). Retorna candidatos con nivel de similaridad. OBLIGATORIO usar cuando el usuario menciona un nombre que no está exacto en CONTACTOS DISPONIBLES.',
           parameters: {
             type: 'object',
             properties: {
               search_term: {
                 type: 'string',
-                description: 'Término de búsqueda (nombre, apodo, teléfono)'
+                description: 'Nombre o apodo del contacto a buscar (ej: "Catita", "Caty", "Catalina")'
               }
             },
             required: ['search_term']
@@ -601,5 +808,61 @@ Día de la semana: ${new Date().toLocaleDateString('es-CL', { weekday: 'long' })
         }
       }
     ];
+  }
+
+  /**
+   * Registrar request de OpenAI en base de datos (opcional)
+   * Solo se ejecuta si se pasó supabase client en el constructor
+   */
+  private async logOpenAIRequest(params: {
+    requestType: 'chat_completion' | 'transcription' | 'vision';
+    model: string;
+    requestPayload: any;
+    responsePayload?: any;
+    status: 'success' | 'error';
+    errorMessage?: string;
+    responseTimeMs: number;
+  }): Promise<void> {
+    // Si no hay supabase client o tenant_id, no logear
+    if (!this.supabase || !this.tenantId) {
+      return;
+    }
+
+    try {
+      // Extraer información de tokens y tool calls del response
+      const usage = params.responsePayload?.usage;
+      const choice = params.responsePayload?.choices?.[0];
+      const toolCalls = choice?.message?.tool_calls;
+
+      const logEntry = {
+        tenant_id: this.tenantId,
+        contact_id: this.contactId || null,
+        model: params.model,
+        request_type: params.requestType,
+        request_payload: params.requestPayload,
+        response_payload: params.responsePayload || null,
+        status: params.status,
+        error_message: params.errorMessage || null,
+        prompt_tokens: usage?.prompt_tokens || null,
+        completion_tokens: usage?.completion_tokens || null,
+        total_tokens: usage?.total_tokens || null,
+        cached_tokens: usage?.prompt_tokens_details?.cached_tokens || null,
+        tool_calls_count: toolCalls?.length || 0,
+        tool_calls: toolCalls || null,
+        finish_reason: choice?.finish_reason || null,
+        response_time_ms: params.responseTimeMs
+      };
+
+      const { error } = await this.supabase
+        .from('openai_requests_log')
+        .insert(logEntry);
+
+      if (error) {
+        console.error('[OpenAI] Error logging request:', error);
+      }
+    } catch (error) {
+      // No queremos que errores en logging bloqueen la ejecución
+      console.error('[OpenAI] Exception logging request:', error);
+    }
   }
 }

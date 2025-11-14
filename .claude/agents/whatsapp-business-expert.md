@@ -1,7 +1,7 @@
 ---
 name: whatsapp-business-expert
 description: Use this agent when you need expert guidance on WhatsApp Business strategy, customer engagement techniques, UI/UX design for WhatsApp Business interfaces, or optimization of WhatsApp Business campaigns. This includes creating engagement strategies, designing conversation flows, implementing traction techniques, analyzing metrics, and creating compelling visual designs for WhatsApp Business interactions. Examples: <example>Context: User needs help with WhatsApp Business strategy. user: 'Necesito mejorar la tasa de conversión en mi WhatsApp Business' assistant: 'Voy a usar el agente whatsapp-business-expert para analizar y optimizar tu estrategia de WhatsApp Business' <commentary>El usuario necesita ayuda con estrategia de WhatsApp Business, por lo que uso el agente especializado.</commentary></example> <example>Context: User wants to design a WhatsApp Business flow. user: 'Quiero crear un flujo de bienvenida para nuevos clientes' assistant: 'Utilizaré el agente whatsapp-business-expert para diseñar un flujo de bienvenida efectivo' <commentary>Se requiere diseño de flujo conversacional, área de expertise del agente.</commentary></example>
-model: inherit
+model: sonnet
 color: purple
 ---
 
