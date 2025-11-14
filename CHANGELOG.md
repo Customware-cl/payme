@@ -2,6 +2,87 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.10] - 2025-11-13 - 🔧 Fix: Préstamos creados con status 'pending_confirmation'
+
+### 🎯 Problema Detectado
+
+Usuario reportó: "Sí, confirmo" ahora genera "No encontré ningún préstamo pendiente de confirmación".
+
+**Causa Raíz:**
+Después de v3.0.9, los handlers de confirmación funcionan correctamente, pero no encuentran
+préstamos pendientes porque `create_p2p_loan` los estaba creando directamente con status `'active'`
+en lugar de `'pending_confirmation'`.
+
+**Flujo incorrecto:**
+```
+Lender crea préstamo → status: 'active' ❌
+↓
+Sistema envía plantilla → Borrower ve botones
+↓
+Borrower hace clic "Sí, confirmo" → No encuentra préstamo pendiente
+```
+
+**Flujo correcto esperado:**
+```
+Lender crea préstamo → status: 'pending_confirmation' ✅
+↓
+Sistema envía plantilla → Borrower ve botones
+↓
+Borrower confirma → status cambia a 'active'
+Borrower rechaza → status cambia a 'rejected'
+```
+
+### 🔧 Solución Aplicada
+
+**Migración 046:** `create_p2p_loan` ahora crea con `'pending_confirmation'`
+
+```sql
+-- supabase/migrations/046_create_p2p_loan_pending_confirmation.sql
+INSERT INTO agreements (
+  ...
+  status
+) VALUES (
+  ...
+  'pending_confirmation'  -- ✅ CAMBIO: Antes era 'active'
+)
+```
+
+**Evento actualizado:**
+```sql
+INSERT INTO events (
+  tenant_id,
+  agreement_id,
+  event_type,
+  payload
+) VALUES (
+  p_my_tenant_id,
+  v_agreement_id,
+  'opt_in_sent',
+  jsonb_build_object(
+    'action', 'p2p_loan_created',
+    'status', 'pending_confirmation',  -- ✅ Refleja status real
+    'created_at', NOW()
+  )
+);
+```
+
+### ✅ Resultado
+
+Flujo completo de confirmación ahora funciona end-to-end:
+
+1. ✅ Lender crea préstamo → status: `'pending_confirmation'`
+2. ✅ Sistema envía plantilla `loan_confirmation_request_v1` al borrower
+3. ✅ Borrower ve botones: "Sí, confirmo" / "No, rechazar"
+4. ✅ Handler encuentra préstamo pendiente
+5. ✅ Confirmación → status: `'active'`
+6. ✅ Rechazo → status: `'rejected'`
+
+### 📦 Migraciones Aplicadas
+
+- `046_create_p2p_loan_pending_confirmation.sql`
+
+---
+
 ## [v3.0.9] - 2025-11-13 - 🔧 Fix: Botones de confirmación enviados como tipo "button"
 
 ### 🎯 Problema Detectado
