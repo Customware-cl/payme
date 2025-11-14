@@ -2,6 +2,101 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.12] - 2025-11-13 - 🔧 Fix: App web usar campos P2P (lender/borrower_tenant_id)
+
+### 🎯 Problema Detectado
+
+Usuario reportó que en la app web no ve los préstamos recién creados.
+
+**Causa Raíz:**
+La función `menu-data` usaba queries legacy con campos mono-tenant:
+
+```typescript
+// ❌ QUERIES LEGACY (mono-tenant)
+// Para préstamos donde soy lender:
+.eq('lender_tenant_contact_id', tokenData.contact_id)
+
+// Para préstamos donde soy borrower:
+.in('tenant_contact_id', contactIds)  // Busca en TODOS los tenants
+```
+
+Estos campos no funcionan en arquitectura P2P multi-tenant donde:
+- Lender tiene su propio tenant
+- Borrower tiene su propio tenant
+- El préstamo se registra con `lender_tenant_id` y `borrower_tenant_id`
+
+### 🔧 Solución Aplicada
+
+**menu-data/index.ts (líneas 194-226):** Actualizar queries a campos P2P
+
+```typescript
+// ✅ QUERIES P2P MULTI-TENANT
+// Para préstamos donde soy lender:
+const { data: lentAgreements } = await supabase
+  .from('agreements')
+  .select('id, amount, item_description, due_date, status, created_at, tenant_contact_id, borrower_tenant_id')
+  .eq('lender_tenant_id', tokenData.tenant_id)  // MI tenant es el lender
+  .in('status', ['active', 'pending_confirmation'])
+  .order('created_at', { ascending: false });
+
+// Para préstamos donde soy borrower:
+const { data: borrowedAgreements } = await supabase
+  .from('agreements')
+  .select('id, amount, item_description, due_date, status, created_at, tenant_contact_id, lender_tenant_id')
+  .eq('borrower_tenant_id', tokenData.tenant_id)  // MI tenant es el borrower
+  .in('status', ['active', 'pending_confirmation'])
+  .order('created_at', { ascending: false });
+```
+
+**menu-data/index.ts (líneas 228-308):** Enriquecer con nombres de borrower/lender
+
+Agregar lógica para resolver nombres desde:
+- `borrower_tenant_id` → obtener owner_contact_profile_id del tenant → nombre
+- `lender_tenant_id` → obtener owner_contact_profile_id del tenant → nombre
+- Fallback a `tenant_contact_id` para préstamos legacy
+
+```typescript
+// Enriquecer préstamos lent con nombres de borrowers
+const enrichedLent = await Promise.all((lentAgreements || []).map(async (loan) => {
+  let borrowerName = 'Desconocido';
+
+  if (loan.borrower_tenant_id) {
+    // Obtener nombre desde tenant del borrower
+    const borrowerTenant = await supabase
+      .from('tenants')
+      .select('owner_contact_profile_id')
+      .eq('id', loan.borrower_tenant_id)
+      .single();
+
+    // Obtener nombre desde contact_profile
+    const borrowerProfile = await supabase
+      .from('contact_profiles')
+      .select('first_name, last_name, phone_e164')
+      .eq('id', borrowerTenant.owner_contact_profile_id)
+      .single();
+
+    borrowerName = borrowerProfile.first_name || borrowerProfile.phone_e164;
+  }
+
+  return { ...loan, borrower: { name: borrowerName } };
+}));
+```
+
+### ✅ Resultado
+
+App web ahora muestra correctamente préstamos en arquitectura P2P:
+
+1. ✅ Préstamos donde soy lender → Busca por `lender_tenant_id = mi tenant`
+2. ✅ Préstamos donde soy borrower → Busca por `borrower_tenant_id = mi tenant`
+3. ✅ Nombres de borrower/lender resueltos desde tenants
+4. ✅ Compatibilidad con préstamos legacy (fallback a tenant_contact_id)
+
+### 📦 Edge Functions Desplegadas
+
+- `menu-data` (versión nueva)
+
+---
+
 ## [v3.0.11] - 2025-11-13 - 🔧 Fix: Buscar préstamos por borrower_tenant_id
 
 ### 🎯 Problema Detectado
