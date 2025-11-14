@@ -2,6 +2,95 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.9] - 2025-11-13 - 🔧 Fix: Botones de confirmación enviados como tipo "button"
+
+### 🎯 Problema Detectado
+
+Usuario reportó que al hacer clic en "No, rechazar" en la plantilla de confirmación,
+seguía apareciendo el mensaje "Esta funcionalidad está temporalmente desactivada".
+
+**Causa Raíz:**
+WhatsApp puede enviar los quick_reply buttons de las plantillas de dos formas:
+1. Como tipo "text" con el texto del botón (ej: "Sí, confirmo") ✅ Ya manejado en v3.0.8
+2. Como tipo "button" con button_id (ej: "si_confirmo", "no_rechazar") ❌ NO manejado
+
+El handler implementado en v3.0.8 solo procesaba mensajes tipo "text", pero cuando WhatsApp
+envía los botones como tipo "button", estos pasaban por la verificación de feature flags
+y eran bloqueados por no estar en la whitelist de botones permitidos.
+
+### 🔧 Solución Aplicada
+
+**1. wa_webhook/index.ts (líneas 982-986):** Agregar botones de confirmación a whitelist
+
+```typescript
+// Botones de confirmación de préstamo (SIEMPRE permitidos - core business)
+const isLoanConfirmationButton = buttonId.toLowerCase().includes('confirm') ||
+                                 buttonId.toLowerCase().includes('reject') ||
+                                 buttonId.toLowerCase().includes('rechazar') ||
+                                 buttonId.toLowerCase().includes('si_confirmo') ||
+                                 buttonId.toLowerCase().includes('no_rechazar');
+
+const isButtonAllowed = allowedButtons.includes(buttonId) ||
+                        isDynamicMarkReturned ||
+                        isLoanConfirmationButton ||  // ✅ NUEVO
+                        (FEATURES.INTERACTIVE_BUTTONS && isInteractiveButton) ||
+                        (FEATURES.CONVERSATIONAL_FLOWS && isFlowButton);
+```
+
+**2. wa_webhook/index.ts (líneas 1543-1642):** Handler en switch statement
+
+```typescript
+default:
+  // Detectar botones de confirmación/rechazo por su ID
+  const isConfirmButton = buttonId.toLowerCase().includes('confirm') ||
+                          buttonId.toLowerCase().includes('si_confirmo');
+  const isRejectButton = buttonId.toLowerCase().includes('reject') ||
+                         buttonId.toLowerCase().includes('rechazar') ||
+                         buttonId.toLowerCase().includes('no_rechazar');
+
+  if (isConfirmButton || isRejectButton) {
+    // Buscar préstamo pendiente
+    const pendingLoan = await supabase
+      .from('agreements')
+      .select('*')
+      .eq('tenant_contact_id', contact.id)
+      .eq('status', 'pending_confirmation')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (isConfirmButton) {
+      // Confirmar préstamo
+      await supabase.from('agreements')
+        .update({ status: 'active' })
+        .eq('id', pendingLoan.id);
+
+      responseMessage = '✅ *Préstamo confirmado*...';
+    } else {
+      // Rechazar préstamo
+      await supabase.from('agreements')
+        .update({ status: 'rejected' })
+        .eq('id', pendingLoan.id);
+
+      responseMessage = '❌ *Préstamo rechazado*...';
+    }
+    break;
+  }
+```
+
+### ✅ Resultado
+
+Ahora la confirmación/rechazo funciona independientemente de cómo Meta envíe los botones:
+- ✅ Tipo "text": Handler en líneas 391-493
+- ✅ Tipo "button": Handler en líneas 1543-1642
+- ✅ Whitelist: Siempre permitidos (core business)
+
+### 📦 Edge Functions Desplegadas
+
+- `wa_webhook` (versión 174)
+
+---
+
 ## [v3.0.8] - 2025-11-13 - ✅ Activar confirmación de préstamos por WhatsApp
 
 ### 🎯 Problema Detectado

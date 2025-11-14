@@ -978,10 +978,17 @@ async function processInboundMessage(
         const isDynamicMarkReturned = buttonId.startsWith('loan_') && buttonId.endsWith('_mark_returned');
         const isInteractiveButton = ['new_loan', 'new_loan_chat', 'new_loan_web', 'help', 'reschedule', 'new_service', 'web_menu', 'user_profile', 'opt_in_yes', 'opt_in_no', 'loan_returned'].includes(buttonId);
         const isFlowButton = ['loan_money', 'loan_object', 'loan_other', 'date_tomorrow', 'date_end_of_month', 'date_custom'].includes(buttonId);
+        // Botones de confirmación de préstamo (SIEMPRE permitidos - core business)
+        const isLoanConfirmationButton = buttonId.toLowerCase().includes('confirm') ||
+                                         buttonId.toLowerCase().includes('reject') ||
+                                         buttonId.toLowerCase().includes('rechazar') ||
+                                         buttonId.toLowerCase().includes('si_confirmo') ||
+                                         buttonId.toLowerCase().includes('no_rechazar');
 
         // Verificar si el botón está permitido según los feature flags
         const isButtonAllowed = allowedButtons.includes(buttonId) ||
                                 isDynamicMarkReturned ||
+                                isLoanConfirmationButton ||
                                 (FEATURES.INTERACTIVE_BUTTONS && isInteractiveButton) ||
                                 (FEATURES.CONVERSATIONAL_FLOWS && isFlowButton);
 
@@ -1531,7 +1538,110 @@ async function processInboundMessage(
           }
           break;
 
+        // Casos para botones de confirmación de préstamo (cuando vienen como tipo "button")
         default:
+          // Detectar botones de confirmación/rechazo por su ID
+          const isConfirmButton = buttonId.toLowerCase().includes('confirm') ||
+                                  buttonId.toLowerCase().includes('si_confirmo');
+          const isRejectButton = buttonId.toLowerCase().includes('reject') ||
+                                 buttonId.toLowerCase().includes('rechazar') ||
+                                 buttonId.toLowerCase().includes('no_rechazar');
+
+          if (isConfirmButton || isRejectButton) {
+            console.log(`[LOAN_CONFIRMATION_BUTTON] Processing ${isConfirmButton ? 'confirmation' : 'rejection'} button`);
+
+            try {
+              // Buscar el agreement más reciente pendiente de confirmación donde el usuario es borrower
+              const { data: pendingLoan, error: fetchError } = await supabase
+                .from('agreements')
+                .select('*')
+                .eq('tenant_contact_id', contact.id)
+                .eq('status', 'pending_confirmation')
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+              if (fetchError) {
+                console.error('[LOAN_CONFIRMATION_BUTTON] Error fetching pending loan:', fetchError);
+                responseMessage = 'Hubo un error al procesar tu respuesta. Por favor intenta de nuevo.';
+              } else if (!pendingLoan) {
+                console.log('[LOAN_CONFIRMATION_BUTTON] No pending loan found');
+                responseMessage = 'No encontré ningún préstamo pendiente de confirmación.\n\nSi necesitas ayuda, escribe "menu".';
+              } else {
+                // Procesar confirmación o rechazo
+                if (isConfirmButton) {
+                  // CONFIRMAR
+                  const { error: updateError } = await supabase
+                    .from('agreements')
+                    .update({
+                      status: 'active',
+                      updated_at: new Date().toISOString()
+                    })
+                    .eq('id', pendingLoan.id);
+
+                  if (updateError) {
+                    console.error('[LOAN_CONFIRMATION_BUTTON] Error confirming:', updateError);
+                    responseMessage = 'Hubo un error al confirmar el préstamo. Por favor intenta de nuevo.';
+                  } else {
+                    await supabase.from('events').insert({
+                      tenant_id: tenant.id,
+                      tenant_contact_id: contact.id,
+                      agreement_id: pendingLoan.id,
+                      event_type: 'confirmed_returned',
+                      payload: {
+                        action: 'loan_confirmed_by_borrower',
+                        contact_name: contact.name,
+                        agreement_title: pendingLoan.title,
+                        confirmed_at: new Date().toISOString()
+                      }
+                    });
+
+                    const loanDescription = pendingLoan.amount
+                      ? `$${formatMoney(pendingLoan.amount)}`
+                      : (pendingLoan.item_description || pendingLoan.title);
+
+                    responseMessage = `✅ *Préstamo confirmado*\n\nHas confirmado recibir: ${loanDescription}\n\n📅 Fecha de devolución: ${formatDate(pendingLoan.due_date)}\n\n💡 Escribe "estado" para ver tus préstamos activos.`;
+                    console.log('[LOAN_CONFIRMATION_BUTTON] Loan confirmed successfully:', pendingLoan.id);
+                  }
+                } else {
+                  // RECHAZAR
+                  const { error: updateError } = await supabase
+                    .from('agreements')
+                    .update({
+                      status: 'rejected',
+                      updated_at: new Date().toISOString()
+                    })
+                    .eq('id', pendingLoan.id);
+
+                  if (updateError) {
+                    console.error('[LOAN_CONFIRMATION_BUTTON] Error rejecting:', updateError);
+                    responseMessage = 'Hubo un error al rechazar el préstamo. Por favor intenta de nuevo.';
+                  } else {
+                    await supabase.from('events').insert({
+                      tenant_id: tenant.id,
+                      tenant_contact_id: contact.id,
+                      agreement_id: pendingLoan.id,
+                      event_type: 'button_clicked',
+                      payload: {
+                        action: 'loan_rejected_by_borrower',
+                        contact_name: contact.name,
+                        agreement_title: pendingLoan.title,
+                        rejected_at: new Date().toISOString()
+                      }
+                    });
+
+                    responseMessage = `❌ *Préstamo rechazado*\n\nHas rechazado el préstamo. Se notificará al prestamista.\n\n💡 Si tienes alguna duda, escribe "menu" para acceder al portal.`;
+                    console.log('[LOAN_CONFIRMATION_BUTTON] Loan rejected successfully:', pendingLoan.id);
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('[LOAN_CONFIRMATION_BUTTON] Exception:', error);
+              responseMessage = 'Hubo un error al procesar tu respuesta. Por favor intenta de nuevo escribiendo "menu".';
+            }
+            break;
+          }
+
           // Manejar payloads dinámicos de botones HSM (ej: loan_123_mark_returned)
           if (buttonId.startsWith('loan_') && buttonId.endsWith('_mark_returned')) {
             const agreementId = buttonId.split('_')[1];
