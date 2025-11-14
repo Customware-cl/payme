@@ -2,6 +2,70 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.14] - 2025-11-14 - 🔧 Fix: Llenar borrower_tenant_id al confirmar préstamo
+
+### 🎯 Problema Detectado
+
+Usuario reportó que en la app web los préstamos no se mostraban correctamente:
+- Préstamos pendientes (`status=pending_confirmation`) aparecían en lista del lender
+- Pero NO aparecían en lista del borrower
+- Todos los préstamos tenían `borrower_tenant_id=null`
+
+**Causa Raíz:**
+
+El handler de confirmación en `wa_webhook` solo actualizaba el `status` a `'active'` pero **NO llenaba `borrower_tenant_id`**.
+
+```typescript
+// ❌ ANTES: Solo actualizaba status
+.update({
+  status: 'active',
+  updated_at: new Date().toISOString()
+})
+```
+
+**Flujo problemático:**
+1. Felipe crea préstamo → `borrower_tenant_id=null` (Juan aún no tiene tenant)
+2. Juan se registra → obtiene `tenant_id='f33df5ba-...'`
+3. Juan confirma → status cambia a 'active' pero `borrower_tenant_id` sigue `null` ❌
+4. Query de Juan busca por `borrower_tenant_id=tenant.id` → **NO encuentra préstamos**
+
+### 🔧 Solución Aplicada
+
+**wa_webhook/index.ts (líneas 418-426 y 1576-1584):** Actualizar ambos handlers
+
+Agregar `borrower_tenant_id` al UPDATE de confirmación:
+
+```typescript
+// ✅ AHORA: Actualiza status Y borrower_tenant_id
+.update({
+  status: 'active',
+  borrower_tenant_id: tenant.id, // Asociar tenant del borrower que confirma
+  updated_at: new Date().toISOString()
+})
+```
+
+**Corregir datos existentes:**
+
+Actualizados 3 préstamos pendientes que tenían `borrower_tenant_id=null`:
+- $52.342 → `borrower_tenant_id='f33df5ba-905c-4659-9e5a-e2d682837d3b'`
+- $555 → `borrower_tenant_id='f33df5ba-905c-4659-9e5a-e2d682837d3b'`
+- $2.444 → `borrower_tenant_id='f33df5ba-905c-4659-9e5a-e2d682837d3b'`
+
+### ✅ Resultado
+
+Préstamos ahora se asocian correctamente al tenant del borrower:
+
+1. ✅ Al confirmar, `borrower_tenant_id` se llena con el tenant del usuario que confirma
+2. ✅ Queries de `menu-data` encuentran préstamos del borrower correctamente
+3. ✅ Queries de `loan-actions` validan permisos correctamente
+4. ✅ Arquitectura P2P multi-tenant completa
+
+### 📦 Edge Functions Desplegadas
+
+- `wa_webhook` (nueva versión con fix de confirmación)
+
+---
+
 ## [v3.0.13] - 2025-11-13 - 🔧 Fix: Permisos de detalle de préstamo (loan-actions)
 
 ### 🎯 Problema Detectado

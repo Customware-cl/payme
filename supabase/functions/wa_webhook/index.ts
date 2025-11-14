@@ -415,11 +415,12 @@ async function processInboundMessage(
           } else {
             // Procesar confirmación o rechazo
             if (isConfirm) {
-              // CONFIRMAR: cambiar status a active
+              // CONFIRMAR: cambiar status a active y llenar borrower_tenant_id
               const { error: updateError } = await supabase
                 .from('agreements')
                 .update({
                   status: 'active',
+                  borrower_tenant_id: tenant.id, // Asociar tenant del borrower que confirma
                   updated_at: new Date().toISOString()
                 })
                 .eq('id', pendingLoan.id);
@@ -1572,11 +1573,12 @@ async function processInboundMessage(
               } else {
                 // Procesar confirmación o rechazo
                 if (isConfirmButton) {
-                  // CONFIRMAR
+                  // CONFIRMAR: cambiar status a active y llenar borrower_tenant_id
                   const { error: updateError } = await supabase
                     .from('agreements')
                     .update({
                       status: 'active',
+                      borrower_tenant_id: tenant.id, // Asociar tenant del borrower que confirma
                       updated_at: new Date().toISOString()
                     })
                     .eq('id', pendingLoan.id);
