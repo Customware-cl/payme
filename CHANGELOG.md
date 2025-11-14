@@ -2,6 +2,143 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.17] - 2025-11-14 - 🚀 Arquitectura Simplificada: Mensajes WhatsApp desde Secrets
+
+### 🎯 Problema Detectado
+
+Después de v3.0.16, usuarios creados desde web app (como Juan) no recibían mensajes de confirmación WhatsApp.
+
+**Error:** `"The account is not registered"`
+
+**Causa Raíz:**
+- Tenants de usuarios creados desde web app NO tenían credenciales WhatsApp
+- `flow-handlers.ts` hacía INSERT directo sin copiar credenciales
+- `WhatsAppWindowManager` intentaba usar credenciales del tenant del usuario
+- Arquitectura compleja: cada tenant copiaba credenciales innecesariamente
+
+### ✅ Solución Aplicada: Arquitectura Simplificada
+
+**Principio:** Solo el bot tiene cuenta WhatsApp Business. Todos los mensajes se envían usando credenciales del bot desde secrets.
+
+#### 1. WhatsAppWindowManager Simplificado
+
+**Archivo:** `supabase/functions/_shared/whatsapp-window-manager.ts`
+
+**ANTES (líneas ~303-307):**
+```typescript
+const { data: tenant } = await this.supabase
+  .from('tenants')
+  .select('whatsapp_phone_number_id, whatsapp_access_token')
+  .eq('id', tenantId)  // ❌ Usa tenant del usuario
+  .single();
+```
+
+**DESPUÉS:**
+```typescript
+// Usar credenciales directamente desde secrets
+const whatsappAccessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+const whatsappPhoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID');
+
+if (!whatsappAccessToken || !whatsappPhoneNumberId) {
+  throw new Error('WhatsApp credentials not configured');
+}
+```
+
+**Cambios aplicados:**
+- ✅ `sendTemplateMessage()` usa secrets directamente
+- ✅ `sendFreeFormMessage()` usa secrets directamente
+- ✅ Sin query a base de datos para obtener credenciales
+- ✅ Más rápido, más simple, más confiable
+
+#### 2. ensure_user_tenant() Simplificado
+
+**Archivo:** `supabase/migrations/047_simplify_ensure_user_tenant.sql`
+
+**ANTES:**
+```sql
+-- Obtener credenciales del bot
+SELECT whatsapp_phone_number_id, whatsapp_access_token
+INTO v_whatsapp_phone_id, v_whatsapp_token
+FROM tenants
+WHERE whatsapp_access_token IS NOT NULL
+ORDER BY created_at ASC LIMIT 1;
+
+-- Crear tenant copiando credenciales
+INSERT INTO tenants (
+  name, owner_contact_profile_id,
+  whatsapp_phone_number_id, whatsapp_access_token,  -- ❌ Innecesario
+  timezone
+) VALUES (...);
+```
+
+**DESPUÉS:**
+```sql
+-- Crear tenant SIN credenciales (ya no las necesita)
+INSERT INTO tenants (
+  name,
+  owner_contact_profile_id,
+  timezone
+) VALUES (...);
+```
+
+#### 3. flow-handlers.ts Usa ensure_user_tenant()
+
+**Archivo:** `supabase/functions/_shared/flow-handlers.ts` (líneas ~228-240)
+
+**ANTES:**
+```typescript
+const { data: newTenant } = await this.supabase
+  .from('tenants')
+  .insert({
+    name: tenantName,
+    owner_contact_profile_id: contactProfile.id,
+    settings: {}
+  })
+  .select()
+  .single();
+```
+
+**DESPUÉS:**
+```typescript
+const { data: newTenantId } = await this.supabase
+  .rpc('ensure_user_tenant', {
+    p_contact_profile_id: contactProfile.id
+  });
+```
+
+### 📦 Migraciones Aplicadas
+
+- `047_simplify_ensure_user_tenant.sql` - Función simplificada sin copiar credenciales
+
+### ✨ Resultado
+
+**Arquitectura ANTES:**
+1. Cada tenant de usuario copia credenciales WhatsApp del bot
+2. `WhatsAppWindowManager` consulta DB para obtener credenciales
+3. Si tenant no tiene credenciales → fallback a env vars
+4. Complejo, propenso a errores, queries innecesarias
+
+**Arquitectura DESPUÉS:**
+1. Solo bot tiene cuenta WhatsApp Business
+2. Credenciales en Supabase secrets (ya existen)
+3. `WhatsAppWindowManager` usa secrets directamente
+4. Usuarios NO necesitan credenciales en su tenant
+5. Simple, rápido, confiable
+
+**Beneficios:**
+- ✅ Sin queries adicionales a DB
+- ✅ Tenants más livianos (sin credenciales duplicadas)
+- ✅ Usuarios creados desde web app reciben mensajes correctamente
+- ✅ Usuarios creados desde WhatsApp reciben mensajes correctamente
+- ✅ Arquitectura más simple y mantenible
+
+**Archivos modificados:**
+- `supabase/functions/_shared/whatsapp-window-manager.ts`
+- `supabase/functions/_shared/flow-handlers.ts`
+- `supabase/migrations/047_simplify_ensure_user_tenant.sql`
+
+---
+
 ## [v3.0.16] - 2025-11-14 - 🔧 Fix: contact_tenant_id siempre debe tener valor en arquitectura P2P
 
 ### 🎯 Problema Detectado

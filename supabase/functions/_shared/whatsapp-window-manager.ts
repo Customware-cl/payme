@@ -299,18 +299,12 @@ export class WhatsAppWindowManager {
     variables: Record<string, any>
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
-      // Obtener información del tenant y contacto
-      const { data: tenant } = await this.supabase
-        .from('tenants')
-        .select('whatsapp_phone_number_id, whatsapp_access_token')
-        .eq('id', tenantId)
-        .single();
+      // Usar credenciales WhatsApp directamente desde secrets
+      const whatsappAccessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+      const whatsappPhoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID');
 
-      // Fallback a env vars si el tenant no tiene token configurado
-      if (tenant && !tenant.whatsapp_access_token) {
-        tenant.whatsapp_access_token = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
-        tenant.whatsapp_phone_number_id = tenant.whatsapp_phone_number_id || Deno.env.get('WHATSAPP_PHONE_NUMBER_ID');
-        console.log('[WhatsAppWindowManager] Using env vars as fallback');
+      if (!whatsappAccessToken || !whatsappPhoneNumberId) {
+        throw new Error('WhatsApp credentials not configured in Supabase secrets');
       }
 
       // Usar helper para resolver contacto y teléfono (con fallback a legacy contacts)
@@ -323,22 +317,8 @@ export class WhatsAppWindowManager {
         isLegacy
       });
 
-      console.log('[WhatsAppWindowManager] Validation check (template):', {
-        hasTenant: !!tenant,
-        hasAccessToken: !!tenant?.whatsapp_access_token,
-        accessTokenLength: tenant?.whatsapp_access_token?.length,
-        hasPhoneE164: !!phoneE164,
-        phoneE164Value: phoneE164
-      });
-
-      if (!tenant?.whatsapp_access_token || !phoneE164) {
-        const errorDetails = {
-          missingTenant: !tenant,
-          missingAccessToken: !tenant?.whatsapp_access_token,
-          missingPhone: !phoneE164
-        };
-        console.error('[WhatsAppWindowManager] Validation failed (template):', errorDetails);
-        throw new Error(`Missing WhatsApp configuration or contact phone: ${JSON.stringify(errorDetails)}`);
+      if (!phoneE164) {
+        throw new Error('Contact phone number not found');
       }
 
       // Preparar payload para WhatsApp API
@@ -363,11 +343,11 @@ export class WhatsAppWindowManager {
 
       // Enviar a WhatsApp API
       const response = await fetch(
-        `https://graph.facebook.com/v18.0/${tenant.whatsapp_phone_number_id}/messages`,
+        `https://graph.facebook.com/v18.0/${whatsappPhoneNumberId}/messages`,
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${tenant.whatsapp_access_token}`,
+            'Authorization': `Bearer ${whatsappAccessToken}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(payload)
@@ -423,18 +403,12 @@ export class WhatsAppWindowManager {
     message: string
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
-      // Obtener información del tenant y contacto
-      const { data: tenant } = await this.supabase
-        .from('tenants')
-        .select('whatsapp_phone_number_id, whatsapp_access_token')
-        .eq('id', tenantId)
-        .single();
+      // Usar credenciales WhatsApp directamente desde secrets
+      const whatsappAccessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+      const whatsappPhoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID');
 
-      // Fallback a env vars si el tenant no tiene token configurado
-      if (tenant && !tenant.whatsapp_access_token) {
-        tenant.whatsapp_access_token = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
-        tenant.whatsapp_phone_number_id = tenant.whatsapp_phone_number_id || Deno.env.get('WHATSAPP_PHONE_NUMBER_ID');
-        console.log('[WhatsAppWindowManager] Using env vars as fallback');
+      if (!whatsappAccessToken || !whatsappPhoneNumberId) {
+        throw new Error('WhatsApp credentials not configured in Supabase secrets');
       }
 
       // Usar helper para resolver contacto y teléfono (con fallback a legacy contacts)
@@ -447,22 +421,8 @@ export class WhatsAppWindowManager {
         isLegacy
       });
 
-      console.log('[WhatsAppWindowManager] Validation check (free-form):', {
-        hasTenant: !!tenant,
-        hasAccessToken: !!tenant?.whatsapp_access_token,
-        accessTokenLength: tenant?.whatsapp_access_token?.length,
-        hasPhoneE164: !!phoneE164,
-        phoneE164Value: phoneE164
-      });
-
-      if (!tenant?.whatsapp_access_token || !phoneE164) {
-        const errorDetails = {
-          missingTenant: !tenant,
-          missingAccessToken: !tenant?.whatsapp_access_token,
-          missingPhone: !phoneE164
-        };
-        console.error('[WhatsAppWindowManager] Validation failed (free-form):', errorDetails);
-        throw new Error(`Missing WhatsApp configuration or contact phone: ${JSON.stringify(errorDetails)}`);
+      if (!phoneE164) {
+        throw new Error('Contact phone number not found');
       }
 
       // Preparar payload para mensaje de texto
@@ -475,11 +435,11 @@ export class WhatsAppWindowManager {
 
       // Enviar a WhatsApp API
       const response = await fetch(
-        `https://graph.facebook.com/v18.0/${tenant.whatsapp_phone_number_id}/messages`,
+        `https://graph.facebook.com/v18.0/${whatsappPhoneNumberId}/messages`,
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${tenant.whatsapp_access_token}`,
+            'Authorization': `Bearer ${whatsappAccessToken}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(payload)

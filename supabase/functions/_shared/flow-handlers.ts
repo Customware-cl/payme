@@ -225,28 +225,19 @@ export class FlowHandlers {
             contactTenantId = existingTenant.id;
             console.log(`Contact already has tenant: ${contactTenantId}`);
           } else {
-            // Caso 2: El contacto NO tiene tenant → crear uno automáticamente
-            const tenantName = phoneNumber
-              ? `Cuenta de ${phoneNumber}`
-              : `Cuenta de ${contactName}`;
+            // Caso 2: El contacto NO tiene tenant → usar ensure_user_tenant()
+            const { data: newTenantId, error: tenantError } = await this.supabase
+              .rpc('ensure_user_tenant', {
+                p_contact_profile_id: contactProfile.id
+              });
 
-            const { data: newTenant, error: tenantError } = await this.supabase
-              .from('tenants')
-              .insert({
-                name: tenantName,
-                owner_contact_profile_id: contactProfile.id,
-                settings: {}
-              })
-              .select()
-              .single();
-
-            if (tenantError) {
+            if (tenantError || !newTenantId) {
               console.error('Error creating tenant for contact:', tenantError);
-              throw new Error(`Failed to create tenant: ${tenantError.message}`);
+              throw new Error(`Failed to create tenant: ${tenantError?.message || 'Unknown error'}`);
             }
 
-            contactTenantId = newTenant.id;
-            console.log(`Created new tenant for contact: ${contactTenantId}`);
+            contactTenantId = newTenantId;
+            console.log(`Created new tenant for contact using ensure_user_tenant: ${contactTenantId}`);
           }
 
           // Crear tenant_contact CON contact_tenant_id
