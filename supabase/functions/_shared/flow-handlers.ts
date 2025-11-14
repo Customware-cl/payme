@@ -150,75 +150,136 @@ export class FlowHandlers {
           console.log('Created new contact_profile:', contactProfile.id);
         }
 
-        // Buscar o crear tenant para el contacto (P2P architecture)
-        let contactTenantId = null;
-
-        // Buscar si este contact_profile ya tiene un tenant registrado
-        const { data: existingTenant } = await this.supabase
-          .from('tenants')
-          .select('id')
-          .eq('owner_contact_profile_id', contactProfile.id)
+        // PRIMERO: Verificar si este contacto ya existe en la libreta
+        const { data: existingContact } = await this.supabase
+          .from('tenant_contacts')
+          .select('*, contact_profiles(phone_e164, telegram_id)')
+          .eq('tenant_id', tenantId)
+          .eq('contact_profile_id', contactProfile.id)
           .maybeSingle();
 
-        if (existingTenant) {
-          // Caso 1: El contacto ya tiene tenant (usuario registrado)
-          contactTenantId = existingTenant.id;
-          console.log(`Contact already has tenant: ${contactTenantId}`);
-        } else {
-          // Caso 2: El contacto NO tiene tenant → crear uno automáticamente
-          const tenantName = phoneNumber
-            ? `Cuenta de ${phoneNumber}`
-            : `Cuenta de ${contactName}`;
+        if (existingContact) {
+          // Contacto YA existe → verificar/actualizar contact_tenant_id
+          console.log('Contact already exists in libreta, verifying contact_tenant_id...');
 
-          const { data: newTenant, error: tenantError } = await this.supabase
+          // Buscar tenant del contacto
+          const { data: contactTenant } = await this.supabase
             .from('tenants')
-            .insert({
-              name: tenantName,
-              owner_contact_profile_id: contactProfile.id,
-              settings: {}
-            })
-            .select()
-            .single();
+            .select('id')
+            .eq('owner_contact_profile_id', contactProfile.id)
+            .maybeSingle();
 
-          if (tenantError) {
-            console.error('Error creating tenant for contact:', tenantError);
-            throw new Error(`Failed to create tenant: ${tenantError.message}`);
+          const contactTenantId = contactTenant ? contactTenant.id : null;
+
+          // Si no tiene tenant, crear uno
+          if (!contactTenantId) {
+            const tenantName = phoneNumber
+              ? `Cuenta de ${phoneNumber}`
+              : `Cuenta de ${contactName}`;
+
+            const { data: newTenant, error: tenantError } = await this.supabase
+              .from('tenants')
+              .insert({
+                name: tenantName,
+                owner_contact_profile_id: contactProfile.id,
+                settings: {}
+              })
+              .select()
+              .single();
+
+            if (!tenantError && newTenant) {
+              // Actualizar contact_tenant_id del contacto existente
+              await this.supabase
+                .from('tenant_contacts')
+                .update({ contact_tenant_id: newTenant.id })
+                .eq('id', existingContact.id);
+
+              console.log(`Created tenant and updated existing contact: ${newTenant.id}`);
+            }
+          } else if (existingContact.contact_tenant_id !== contactTenantId) {
+            // Actualizar contact_tenant_id si es diferente
+            await this.supabase
+              .from('tenant_contacts')
+              .update({ contact_tenant_id: contactTenantId })
+              .eq('id', existingContact.id);
+
+            console.log(`Updated contact_tenant_id: ${contactTenantId}`);
           }
 
-          contactTenantId = newTenant.id;
-          console.log(`Created new tenant for contact: ${contactTenantId}`);
-        }
+          contact = existingContact;
+          console.log('Using existing tenant_contact:', contact.id);
 
-        // Ahora crear tenant_contact CON contact_tenant_id
-        const { data: newTenantContact, error: createError } = await this.supabase
-          .from('tenant_contacts')
-          .insert({
-            tenant_id: tenantId,
-            contact_profile_id: contactProfile.id,
-            contact_tenant_id: contactTenantId,  // ✅ SIEMPRE tiene valor
-            name: contactName,
-            preferred_channel: 'whatsapp',
-            opt_in_status: 'pending',
-            preferred_language: 'es',
-            metadata: {
-              created_from: 'new_loan_flow',
-              needs_phone: !context.new_contact_phone
+        } else {
+          // Contacto NUEVO → buscar o crear tenant y luego crear contacto
+          let contactTenantId = null;
+
+          // Buscar si este contact_profile ya tiene un tenant registrado
+          const { data: existingTenant } = await this.supabase
+            .from('tenants')
+            .select('id')
+            .eq('owner_contact_profile_id', contactProfile.id)
+            .maybeSingle();
+
+          if (existingTenant) {
+            // Caso 1: El contacto ya tiene tenant (usuario registrado)
+            contactTenantId = existingTenant.id;
+            console.log(`Contact already has tenant: ${contactTenantId}`);
+          } else {
+            // Caso 2: El contacto NO tiene tenant → crear uno automáticamente
+            const tenantName = phoneNumber
+              ? `Cuenta de ${phoneNumber}`
+              : `Cuenta de ${contactName}`;
+
+            const { data: newTenant, error: tenantError } = await this.supabase
+              .from('tenants')
+              .insert({
+                name: tenantName,
+                owner_contact_profile_id: contactProfile.id,
+                settings: {}
+              })
+              .select()
+              .single();
+
+            if (tenantError) {
+              console.error('Error creating tenant for contact:', tenantError);
+              throw new Error(`Failed to create tenant: ${tenantError.message}`);
             }
-          })
-          .select('*, contact_profiles(phone_e164, telegram_id)')
-          .single();
 
-        if (createError) {
-          console.error('Error creating tenant_contact:', createError);
-          throw new Error(`Failed to create tenant_contact: ${createError.message}`);
+            contactTenantId = newTenant.id;
+            console.log(`Created new tenant for contact: ${contactTenantId}`);
+          }
+
+          // Crear tenant_contact CON contact_tenant_id
+          const { data: newTenantContact, error: createError } = await this.supabase
+            .from('tenant_contacts')
+            .insert({
+              tenant_id: tenantId,
+              contact_profile_id: contactProfile.id,
+              contact_tenant_id: contactTenantId,  // ✅ SIEMPRE tiene valor
+              name: contactName,
+              preferred_channel: 'whatsapp',
+              opt_in_status: 'pending',
+              preferred_language: 'es',
+              metadata: {
+                created_from: 'new_loan_flow',
+                needs_phone: !context.new_contact_phone
+              }
+            })
+            .select('*, contact_profiles(phone_e164, telegram_id)')
+            .single();
+
+          if (createError) {
+            console.error('Error creating tenant_contact:', createError);
+            throw new Error(`Failed to create tenant_contact: ${createError.message}`);
+          }
+
+          if (!newTenantContact) {
+            throw new Error('Tenant contact insert returned null');
+          }
+
+          contact = newTenantContact;
+          console.log('Created new tenant_contact:', contact.id);
         }
-
-        if (!newTenantContact) {
-          throw new Error('Tenant contact insert returned null');
-        }
-
-        contact = newTenantContact;
-        console.log('Created new tenant_contact:', contact.id);
 
       } else {
         throw new Error('Neither contact_id nor temp_contact_name provided in context');

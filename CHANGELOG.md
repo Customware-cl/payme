@@ -19,11 +19,32 @@ Al agregar un contacto desde la webapp, el campo `contact_tenant_id` quedaba NUL
 - Handler de confirmación en wa_webhook no podía encontrar el préstamo correcto
 - Confirmaba préstamo equivocado (el más antiguo en lugar del específico)
 
+**Bug Adicional:**
+- Error "duplicate key" al reintentar crear préstamo después de fallo
+- No se verificaba si contacto ya existía en libreta antes de INSERT
+
 ### ✅ Solución Aplicada
 
-**Archivo:** `supabase/functions/_shared/flow-handlers.ts` (líneas 153-190)
+**Archivo:** `supabase/functions/_shared/flow-handlers.ts` (líneas 153-282)
 
-Implementamos lógica de 2 pasos al crear contacto:
+Implementamos lógica de 3 pasos robusta:
+
+1. **Verificar si contacto ya existe en libreta:**
+   ```typescript
+   const { data: existingContact } = await supabase
+     .from('tenant_contacts')
+     .select('*')
+     .eq('tenant_id', tenantId)
+     .eq('contact_profile_id', contactProfile.id)
+     .maybeSingle();
+   ```
+
+2. **Si existe → verificar/actualizar contact_tenant_id:**
+   - Buscar tenant del contacto
+   - Si no tiene, crear tenant automáticamente
+   - Actualizar contact_tenant_id si es necesario
+
+3. **Si NO existe → crear contacto completo:**
 
 1. **Buscar tenant existente:**
    ```typescript
