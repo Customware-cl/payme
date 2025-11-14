@@ -447,7 +447,7 @@ async function processInboundMessage(
 
                 const loanDescription = pendingLoan.amount
                   ? `$${formatMoney(pendingLoan.amount)}`
-                  : (pendingLoan.item_description || pendingLoan.title);
+                  : (pendingLoan.description || pendingLoan.title);
 
                 responseMessage = `✅ *Préstamo confirmado*\n\nHas confirmado recibir: ${loanDescription}\n\n📅 Fecha de devolución: ${formatDate(pendingLoan.due_date)}\n\n💡 Escribe "estado" para ver tus préstamos activos.`;
 
@@ -1602,7 +1602,7 @@ async function processInboundMessage(
 
                     const loanDescription = pendingLoan.amount
                       ? `$${formatMoney(pendingLoan.amount)}`
-                      : (pendingLoan.item_description || pendingLoan.title);
+                      : (pendingLoan.description || pendingLoan.title);
 
                     responseMessage = `✅ *Préstamo confirmado*\n\nHas confirmado recibir: ${loanDescription}\n\n📅 Fecha de devolución: ${formatDate(pendingLoan.due_date)}\n\n💡 Escribe "estado" para ver tus préstamos activos.`;
                     console.log('[LOAN_CONFIRMATION_BUTTON] Loan confirmed successfully:', pendingLoan.id);

@@ -2,6 +2,94 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.15] - 2025-11-14 - 🔧 Fix: Usar campo 'description' en lugar de 'item_description'
+
+### 🎯 Problema Detectado
+
+Usuario reportó que los préstamos mostraban "Sin concepto" en la app web a pesar de tener descripción al crearlos.
+
+Investigación:
+- DB tiene datos en `description`: "test6", "test5", "test", "test4" ✅
+- UI mostraba "Sin concepto" ❌
+
+**Causa Raíz:**
+
+Tres edge functions estaban usando el **campo incorrecto** para la descripción del préstamo:
+
+```typescript
+// ❌ ANTES: Usaban item_description (que es null)
+.select(`
+  id,
+  amount,
+  item_description,  // ❌ Este campo está null
+  ...
+`)
+```
+
+El schema de `agreements` tiene DOS campos de descripción:
+- `description` → Campo correcto con los datos ✅
+- `item_description` → Campo legacy que está `null` ❌
+
+### 🔧 Solución Aplicada
+
+**menu-data/index.ts (líneas 199 y 217):**
+
+Cambiar SELECT queries de ambas listas (lent/borrowed):
+
+```typescript
+// ✅ AHORA: Usa description (campo correcto)
+.select(`
+  id,
+  amount,
+  description,  // ✅ Campo correcto
+  ...
+`)
+```
+
+**loan-actions/index.ts (8 ocurrencias):**
+
+Reemplazar todas las referencias a `loan.item_description` por `loan.description`:
+
+```typescript
+// ❌ ANTES
+const loanText = loan.amount ? formatMoney(loan.amount) : loan.item_description;
+
+// ✅ AHORA
+const loanText = loan.amount ? formatMoney(loan.amount) : loan.description;
+```
+
+**wa_webhook/index.ts (2 ocurrencias):**
+
+Reemplazar referencias a `pendingLoan.item_description` por `pendingLoan.description`:
+
+```typescript
+// ❌ ANTES
+const loanDescription = pendingLoan.amount
+  ? `$${formatMoney(pendingLoan.amount)}`
+  : (pendingLoan.item_description || pendingLoan.title);
+
+// ✅ AHORA
+const loanDescription = pendingLoan.amount
+  ? `$${formatMoney(pendingLoan.amount)}`
+  : (pendingLoan.description || pendingLoan.title);
+```
+
+### ✅ Resultado
+
+Préstamos ahora muestran su descripción correctamente:
+
+1. ✅ Lista de préstamos muestra "test6", "test5", etc. en lugar de "Sin concepto"
+2. ✅ Mensajes de confirmación incluyen la descripción correcta
+3. ✅ Notificaciones usan la descripción correcta
+
+### 📦 Edge Functions Desplegadas
+
+- `menu-data` (nueva versión con campo description)
+- `loan-actions` (nueva versión con campo description)
+- `wa_webhook` (nueva versión con campo description)
+
+---
+
 ## [v3.0.14] - 2025-11-14 - 🔧 Fix: Llenar borrower_tenant_id al confirmar préstamo
 
 ### 🎯 Problema Detectado

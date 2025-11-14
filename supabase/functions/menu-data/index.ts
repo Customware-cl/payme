@@ -196,7 +196,7 @@ serve(async (req: Request) => {
           .select(`
             id,
             amount,
-            item_description,
+            description,
             due_date,
             status,
             created_at,
@@ -214,7 +214,7 @@ serve(async (req: Request) => {
           .select(`
             id,
             amount,
-            item_description,
+            description,
             due_date,
             status,
             created_at,
