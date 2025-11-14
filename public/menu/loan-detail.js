@@ -149,8 +149,8 @@ function renderLoanDetails() {
     const descriptionRow = $('#detail-description-row');
     const descriptionValue = $('#detail-description');
 
-    // Para préstamos de dinero, usar title; para objetos, usar item_description
-    const concept = loan.amount !== null ? loan.title : loan.item_description;
+    // Usar el campo description de la tabla agreements
+    const concept = loan.description;
 
     if (concept && concept.trim() !== '') {
         descriptionValue.textContent = concept;

@@ -2,6 +2,39 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.18] - 2025-11-14 - 🔧 Fix: Campo "Concepto" en Detalle de Préstamos
+
+### 🎯 Problema Detectado
+
+En la app web, al ver el detalle de un préstamo, el campo "Concepto" no mostraba la descripción correcta del préstamo.
+
+**Causa Raíz:**
+- Frontend usaba incorrectamente `loan.title` para préstamos de dinero e `loan.item_description` para objetos
+- El campo correcto en la tabla `agreements` es `loan.description`
+- Backend ya usaba correctamente `loan.description` en los mensajes de WhatsApp
+
+### ✅ Solución Aplicada
+
+Unificado el uso del campo `description` en toda la app web.
+
+#### Archivos Modificados
+
+1. **`public/menu/loan-detail.js`** (línea 153)
+   - **ANTES:** `const concept = loan.amount !== null ? loan.title : loan.item_description;`
+   - **DESPUÉS:** `const concept = loan.description;`
+
+2. **`public/menu/loans.js`** (línea 451)
+   - **ANTES:** `const concept = loan.title || loan.item_description || 'Sin concepto';`
+   - **DESPUÉS:** `const concept = loan.description || 'Sin concepto';`
+
+#### Beneficios
+
+- ✅ Consistencia entre backend (WhatsApp) y frontend (web)
+- ✅ Simplificación de lógica (un solo campo para todos los tipos de préstamo)
+- ✅ Campo "Concepto" muestra la descripción correcta del préstamo
+
+---
+
 ## [v3.0.17] - 2025-11-14 - 🚀 Arquitectura Simplificada: Mensajes WhatsApp desde Secrets
 
 ### 🎯 Problema Detectado

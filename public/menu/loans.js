@@ -447,8 +447,8 @@ function openDrawer(groupKey) {
     // Renderizar lista de préstamos
     const drawerList = $('#drawer-loans-list');
     drawerList.innerHTML = group.loans.map(loan => {
-        // Para préstamos de dinero usar title, para objetos usar item_description
-        const concept = loan.title || loan.item_description || 'Sin concepto';
+        // Usar el campo description de la tabla agreements
+        const concept = loan.description || 'Sin concepto';
         return `
             <div class="drawer-loan-item" data-loan-id="${loan.id}">
                 <div class="drawer-loan-amount">${formatMoney(loan.amount)}</div>
