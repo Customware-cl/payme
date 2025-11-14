@@ -202,10 +202,12 @@ export class FlowHandlers {
       const description = context.item_description || 'Dinero';
 
       // Usar función create_p2p_loan para sincronización automática
+      // Firma correcta: (p_my_tenant_id, p_other_contact_id, p_i_am_lender, ...)
       const { data: agreementId, error: loanError } = await this.supabase
         .rpc('create_p2p_loan', {
-          p_lender_tenant_id: tenantId,
-          p_borrower_contact_id: contact.id,
+          p_my_tenant_id: tenantId,
+          p_other_contact_id: contact.id,
+          p_i_am_lender: true, // El usuario que crea el préstamo es el lender
           p_amount: context.amount || 0,
           p_title: title,
           p_description: description,

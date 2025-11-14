@@ -2,6 +2,167 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.7] - 2025-11-13 - 🐛 Agregar created_by a create_p2p_loan
+
+### 🎯 Problema Detectado
+
+Después de corregir los parámetros de `create_p2p_loan` en v3.0.6, aparece nuevo error al crear préstamos:
+
+```
+Error: null value in column "created_by" of relation "agreements"
+violates not-null constraint
+```
+
+**Contexto:**
+- La función `create_p2p_loan` crea agreements correctamente
+- PERO el campo `created_by` es **NOT NULL** en la tabla
+- La función no incluía este campo en el INSERT
+- Resultado: INSERT falla con constraint violation
+
+### 🔧 Solución Aplicada
+
+**Migración 045:** Actualizar `create_p2p_loan` para incluir `created_by`
+
+**Cambios en la función:**
+
+```sql
+-- 1. Declarar variable para almacenar user_id
+DECLARE
+  v_created_by_user_id UUID;
+
+-- 2. Obtener owner user del tenant
+SELECT id INTO v_created_by_user_id
+FROM users
+WHERE tenant_id = p_my_tenant_id
+  AND role = 'owner'
+LIMIT 1;
+
+-- 3. Validar que existe
+IF v_created_by_user_id IS NULL THEN
+  RAISE EXCEPTION 'Owner user not found for tenant';
+END IF;
+
+-- 4. Incluir en INSERT de agreements
+INSERT INTO agreements (
+  tenant_id,
+  tenant_contact_id,
+  lender_tenant_id,
+  borrower_tenant_id,
+  created_by,           -- ✅ NUEVO campo
+  type,
+  title,
+  ...
+) VALUES (
+  p_my_tenant_id,
+  p_other_contact_id,
+  v_lender_tenant_id,
+  v_borrower_tenant_id,
+  v_created_by_user_id, -- ✅ Owner user del tenant
+  'loan',
+  p_title,
+  ...
+);
+```
+
+### ✨ Resultado
+
+- ✅ Agreements se crean con `created_by` poblado automáticamente
+- ✅ Se usa el owner user del tenant que crea el préstamo
+- ✅ Constraint NOT NULL satisfecho
+- ✅ Préstamos se crean exitosamente desde formulario web
+
+**Archivos modificados:**
+- `supabase/migrations/045_add_created_by_to_create_p2p_loan.sql`
+
+---
+
+## [v3.0.6] - 2025-11-13 - 🐛 HOTFIX CRÍTICO: Corrección de create_p2p_loan
+
+### 🎯 Problema Detectado
+
+Los préstamos creados desde el formulario web se guardaban correctamente, PERO:
+- Los campos `lender_tenant_id` y `borrower_tenant_id` quedaban **NULL**
+- **NO se enviaba la confirmación por WhatsApp al borrower**
+- El préstamo quedaba creado solo con campos legacy (tenant_id, tenant_contact_id)
+
+**Síntomas:**
+- Usuario reportó: "envié un préstamo y no llegó la confirmación"
+- Investigación mostró: agreement existe pero sin campos P2P
+- No se activó el flujo de confirmación porque faltaban los tenant IDs
+
+### 🔍 Causa Raíz
+
+Existían **DOS versiones** de la función `create_p2p_loan` en la base de datos (function overloading):
+
+**Versión INCORRECTA (fantasma - OID 57299):**
+```sql
+create_p2p_loan(
+  p_lender_tenant_id UUID,
+  p_borrower_contact_id UUID,
+  p_amount NUMERIC,
+  ...
+)
+-- ❌ SIN p_i_am_lender
+-- ❌ No puede determinar quién es lender/borrower
+-- ❌ Deja lender_tenant_id y borrower_tenant_id como NULL
+```
+
+**Versión CORRECTA (OID 58406):**
+```sql
+create_p2p_loan(
+  p_my_tenant_id UUID,
+  p_other_contact_id UUID,
+  p_i_am_lender BOOLEAN, -- ✅ Parámetro crítico
+  p_amount NUMERIC,
+  ...
+)
+```
+
+El código en `flow-handlers.ts` llamaba a la versión incorrecta con parámetros que coincidían con la firma fantasma.
+
+### 🔧 Solución Aplicada
+
+**1. Migración 044:** Eliminar función fantasma
+```sql
+DROP FUNCTION IF EXISTS create_p2p_loan(
+  UUID, UUID, NUMERIC, VARCHAR, TEXT, DATE, VARCHAR
+);
+```
+
+**2. flow-handlers.ts (líneas 204-216):** Corregir parámetros RPC
+
+```typescript
+// ANTES (❌):
+.rpc('create_p2p_loan', {
+  p_lender_tenant_id: tenantId,
+  p_borrower_contact_id: contact.id,
+  p_amount: context.amount || 0,
+  // FALTA p_i_am_lender
+});
+
+// DESPUÉS (✅):
+.rpc('create_p2p_loan', {
+  p_my_tenant_id: tenantId,
+  p_other_contact_id: contact.id,
+  p_i_am_lender: true, // ✅ Usuario que crea = lender
+  p_amount: context.amount || 0,
+  ...
+});
+```
+
+### ✨ Resultado
+
+- ✅ Préstamos ahora se crean CON `lender_tenant_id` y `borrower_tenant_id` correctos
+- ✅ Se envía confirmación por WhatsApp al borrower usando plantilla `loan_confirmation_request_v1`
+- ✅ Sincronización P2P bidireccional funciona correctamente
+- ✅ Contactos recíprocos se auto-crean cuando corresponde
+
+**Archivos modificados:**
+- `supabase/migrations/044_drop_incorrect_create_p2p_loan.sql`
+- `supabase/functions/_shared/flow-handlers.ts`
+
+---
+
 ## [v3.0.5] - 2025-11-13 - 🐛 Hotfix: Corrección de Registro de Eventos en Formulario Web
 
 ### 🎯 Problema Detectado
