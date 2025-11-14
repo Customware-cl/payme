@@ -2,6 +2,60 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.20] - 2025-11-14 - 🔧 Hotfix: Resolver Ambigüedad en ensure_user_tenant
+
+### 🐛 Problema Detectado
+
+Al crear agreements desde la web app, se producía error:
+```
+Error: Failed to create tenant: Could not choose the best candidate function
+between: public.ensure_user_tenant(p_contact_profile_id => uuid),
+public.ensure_user_tenant(p_contact_profile_id => uuid, p_invited_by_tenant_id => uuid, p_acquisition_type => text)
+```
+
+### 🎯 Causa Raíz
+
+PostgreSQL detectó **ambigüedad de sobrecarga de funciones**:
+
+**Versión antigua** (migración 047):
+```sql
+ensure_user_tenant(p_contact_profile_id UUID)
+```
+
+**Versión nueva** (migración 049):
+```sql
+ensure_user_tenant(
+  p_contact_profile_id UUID,
+  p_invited_by_tenant_id UUID DEFAULT NULL,
+  p_acquisition_type TEXT DEFAULT 'organic'
+)
+```
+
+Cuando se llamaba con **solo 1 parámetro** (desde web app), PostgreSQL no podía decidir cuál usar porque ambas firmas eran válidas.
+
+### ✅ Solución Aplicada
+
+**Migración:** `050_drop_old_ensure_user_tenant_version.sql`
+
+```sql
+-- Eliminar versión antigua (1 parámetro)
+DROP FUNCTION IF EXISTS ensure_user_tenant(UUID);
+```
+
+**Resultado:**
+- ✅ Solo existe una versión de `ensure_user_tenant` (con 3 parámetros, 2 DEFAULT)
+- ✅ No más ambigüedad al llamar con 1 parámetro
+- ✅ Compatibilidad total: `ensure_user_tenant(contact_id)` funciona gracias a DEFAULT
+
+### 🧪 Verificación
+
+```sql
+SELECT COUNT(*) FROM pg_proc WHERE proname = 'ensure_user_tenant';
+-- Resultado: 1 (solo la versión nueva existe)
+```
+
+---
+
 ## [v3.0.19] - 2025-11-14 - 🎉 Sistema de Mensajes de Bienvenida Automáticos + Tracking de Adquisición
 
 ### 🎯 Requerimientos
