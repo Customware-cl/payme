@@ -152,26 +152,8 @@ serve(async (req: Request) => {
 
     const contactProfileId = tenantContact.contact_profile_id;
 
-    // 2. Verificar si el usuario ya tiene tenant (no debería, pero por seguridad)
-    const { data: existingTenant } = await supabase
-      .from('tenants')
-      .select('id')
-      .eq('owner_contact_profile_id', contactProfileId)
-      .maybeSingle();
-
-    if (existingTenant) {
-      console.log('[ONBOARDING] User already has tenant:', existingTenant.id);
-      return new Response(JSON.stringify({
-        success: true,
-        message: 'Usuario ya tiene tenant creado',
-        tenant_id: existingTenant.id,
-        already_exists: true
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-
-    // 3. Actualizar contact_profile con los datos del perfil
+    // 2. Actualizar contact_profile con los datos del perfil (ANTES de verificar tenant)
+    // Esto es importante porque usuarios de WhatsApp ya tienen tenant auto-creado
     const { error: updateError } = await supabase
       .from('contact_profiles')
       .update({

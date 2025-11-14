@@ -140,7 +140,7 @@ serve(async (req: Request) => {
           .eq('id', tokenData.contact_id)
           .single();
 
-        // Detectar si el usuario requiere onboarding (no tiene tenant propio)
+        // Detectar si el usuario requiere onboarding (falta completar perfil)
         let requiresOnboarding = false;
         let hasProfileData = false;
         let userName = contact?.name || 'Usuario';
@@ -148,11 +148,12 @@ serve(async (req: Request) => {
         if (contact?.contact_profiles) {
           const profile = contact.contact_profiles;
 
-          // Verificar si tiene tenant propio (optimizado con JOIN)
-          requiresOnboarding = !profile.tenants || profile.tenants.length === 0;
-
           // Verificar si tiene datos de perfil
           hasProfileData = !!(profile.first_name && profile.last_name && profile.email);
+
+          // Activar onboarding si falta información del perfil
+          // (independientemente de si tiene tenant, ya que usuarios de WhatsApp lo crean automáticamente)
+          requiresOnboarding = !hasProfileData;
 
           // Usar solo el primer nombre del contact_profile si existe
           if (profile.first_name) {

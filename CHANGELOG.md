@@ -2,6 +2,331 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.26] - 2025-11-14 - 🐛 Fix: Guardar Datos del Onboarding para Usuarios con Tenant Existente
+
+### 🐛 Problema Detectado
+
+Después de activar el onboarding (v3.0.25), los usuarios podían ver y completar el formulario, pero al hacer click en "Continuar" no ocurría nada y la página mostraba el onboarding nuevamente (loop infinito).
+
+**Comportamiento incorrecto:**
+1. Usuario completa formulario de onboarding (nombre, apellido, email) ✅
+2. Click en "Continuar" ✅
+3. Backend responde `success: true` ✅
+4. Frontend recarga la página ✅
+5. Perfil sigue vacío → onboarding se muestra de nuevo ❌ (LOOP INFINITO)
+
+### 🎯 Causa Raíz
+
+**Archivo:** `supabase/functions/complete-onboarding/index.ts` (líneas 155-172 - código antiguo)
+
+El backend verificaba si el usuario tenía tenant ANTES de actualizar el perfil:
+
+```typescript
+// CÓDIGO ANTIGUO (incorrecto)
+const contactProfileId = tenantContact.contact_profile_id;
+
+// 2. Verificar si el usuario ya tiene tenant
+const { data: existingTenant } = await supabase
+  .from('tenants')
+  .select('id')
+  .eq('owner_contact_profile_id', contactProfileId)
+  .maybeSingle();
+
+if (existingTenant) {
+  // ❌ Retorna success SIN actualizar contact_profile
+  return new Response(JSON.stringify({
+    success: true,
+    tenant_id: existingTenant.id,
+    already_exists: true
+  }));
+}
+
+// 3. Actualizar contact_profile (NUNCA SE EJECUTABA para usuarios de WhatsApp)
+```
+
+**El problema:**
+- Usuarios de WhatsApp ya tienen tenant auto-creado (`wa_webhook`, líneas 287-349)
+- Backend encontraba tenant existente
+- Retornaba success SIN guardar los datos del formulario
+- Contact_profile quedaba con `first_name: null`, `last_name: null`, `email: null`
+- Al recargar, onboarding se activaba de nuevo (perfil vacío)
+
+### ✅ Solución Implementada
+
+**Archivo:** `supabase/functions/complete-onboarding/index.ts` (líneas 155-195)
+
+Reordené el flujo para actualizar el perfil ANTES de verificar/crear el tenant:
+
+```typescript
+const contactProfileId = tenantContact.contact_profile_id;
+
+// 2. Actualizar contact_profile con los datos del perfil (ANTES de verificar tenant)
+// Esto es importante porque usuarios de WhatsApp ya tienen tenant auto-creado
+const { error: updateError } = await supabase
+  .from('contact_profiles')
+  .update({
+    first_name,
+    last_name,
+    email
+  })
+  .eq('id', contactProfileId);
+
+// Manejar errores...
+
+console.log('[ONBOARDING] Contact profile updated:', contactProfileId);
+
+// 4. Ejecutar ensure_user_tenant() para crear el tenant (o retornar existente)
+// La función ensure_user_tenant() retorna el tenant_id existente si ya hay uno
+const { data: tenantResult, error: tenantError } = await supabase
+  .rpc('ensure_user_tenant', { p_contact_profile_id: contactProfileId });
+```
+
+**Función ensure_user_tenant** (migración 049, líneas 18-27):
+```sql
+-- Si ya tiene tenant, retornarlo (usuarios de WhatsApp)
+SELECT id INTO v_tenant_id
+FROM tenants
+WHERE owner_contact_profile_id = p_contact_profile_id;
+
+IF v_tenant_id IS NOT NULL THEN
+  RAISE NOTICE '[ensure_user_tenant] Tenant existente encontrado: %', v_tenant_id;
+  RETURN v_tenant_id;  -- Retorna el existente, no crea uno nuevo
+END IF;
+```
+
+### 🎯 Resultado
+
+**Flujo correcto:**
+1. Usuario completa onboarding → submit
+2. Backend actualiza `contact_profile` con datos del formulario ✅
+3. Backend llama `ensure_user_tenant()`:
+   - Si ya existe tenant (WhatsApp): retorna el `tenant_id` existente ✅
+   - Si NO existe tenant (web): crea uno nuevo ✅
+4. Backend registra evento `onboarding_completed`
+5. Frontend recarga página
+6. `menu-data` detecta perfil completo (`first_name`, `last_name`, `email` != null)
+7. Usuario ve el menú principal (NO onboarding) ✅
+
+**Archivos modificados:**
+- `supabase/functions/complete-onboarding/index.ts` (líneas 155-195)
+
+**Comandos ejecutados:**
+```bash
+npx supabase functions deploy complete-onboarding
+```
+
+---
+
+## [v3.0.25] - 2025-11-14 - ✅ Fix: Activar Onboarding para Usuarios con Perfil Incompleto
+
+### 🐛 Problema Detectado
+
+Los usuarios que accedían al portal web por primera vez NO veían el formulario de onboarding para completar su perfil (nombre, apellido, email), a pesar de que estos datos son requeridos.
+
+**Comportamiento incorrecto:**
+1. Usuario nuevo escribe por WhatsApp → recibe URL del menú ✅
+2. Accede al portal web → va directo al menú principal ❌
+3. Su perfil queda incompleto: `first_name: null`, `last_name: null`, `email: null` ❌
+
+### 🎯 Causa Raíz
+
+**Archivo:** `supabase/functions/menu-data/index.ts` (línea 152)
+
+La lógica de detección de onboarding verificaba si el usuario **tenía tenant propio**:
+
+```typescript
+// ANTES (incorrecto)
+requiresOnboarding = !profile.tenants || profile.tenants.length === 0;
+```
+
+**El problema:** Los usuarios de WhatsApp tienen tenant AUTO-CREADO cuando escriben por primera vez:
+- `wa_webhook/index.ts` (líneas 287-349) auto-crea `contact_profile` + `tenant`
+- El usuario YA tiene tenant cuando accede al portal
+- Por lo tanto, `requiresOnboarding = false`
+- Onboarding nunca se activa
+
+### ✅ Solución Implementada
+
+**Archivo:** `supabase/functions/menu-data/index.ts` (líneas 151-156)
+
+Cambié la lógica para activar onboarding cuando **falten datos del perfil**, independientemente de si tiene tenant:
+
+```typescript
+// Verificar si tiene datos de perfil
+hasProfileData = !!(profile.first_name && profile.last_name && profile.email);
+
+// DESPUÉS (correcto)
+// Activar onboarding si falta información del perfil
+// (independientemente de si tiene tenant, ya que usuarios de WhatsApp lo crean automáticamente)
+requiresOnboarding = !hasProfileData;
+```
+
+### 🎯 Resultado
+
+**Ahora el flujo completo funciona:**
+1. Usuario nuevo escribe por WhatsApp → recibe URL del menú ✅
+2. Accede al portal web → ve formulario de onboarding ✅
+3. Completa datos (nombre, apellido, email) ✅
+4. Perfil completo guardado en `contact_profiles` ✅
+5. Accede al menú principal con toda la información ✅
+
+**Datos recolectados en onboarding:**
+- ✅ `first_name` (Nombre)
+- ✅ `last_name` (Apellido)
+- ✅ `email` (Correo electrónico)
+- ✅ `phone_e164` (ya existe, auto-creado)
+
+### 📊 Casos de Uso
+
+| Escenario | Tiene Tenant | Tiene Perfil | Onboarding |
+|-----------|--------------|--------------|------------|
+| Usuario WhatsApp nuevo | ✅ Auto-creado | ❌ Vacío | ✅ Se activa |
+| Usuario después de onboarding | ✅ Auto-creado | ✅ Completo | ❌ No se activa |
+| Usuario web (futuro) | ❌ Sin crear | ❌ Vacío | ✅ Se activa |
+
+---
+
+## [v3.0.24] - 2025-11-14 - ✅ Fix: Acceso Automático al Menú para Usuarios Nuevos Orgánicos
+
+### 🐛 Problema Detectado
+
+Para usuarios nuevos orgánicos (que escriben por primera vez por WhatsApp):
+1. ✅ Se enviaba mensaje de bienvenida correctamente
+2. ❌ Luego se enviaba mensaje de fallback: "Por el momento solo puedo ayudarte con acceso al menú web..."
+3. ❌ NO se enviaba la URL del menú automáticamente
+
+El usuario tenía que escribir "menu" o "hola" manualmente para obtener la URL.
+
+**Log que reveló el problema:**
+```
+[WELCOME] ✓ Mensaje de bienvenida enviado exitosamente
+[AI-AGENT] AI processing disabled, sending fallback message
+Response Message: Por el momento solo puedo ayudarte con acceso al menú web...
+```
+
+### 🎯 Causa Raíz
+
+Había dos flujos separados:
+1. **Línea 443-445**: Enviaba mensaje de bienvenida para usuarios nuevos
+2. **Líneas 633-693**: Generaba acceso al menú solo para comandos específicos (hola, menu, etc.)
+
+El problema: después de enviar el mensaje de bienvenida, el código continuaba procesando el mensaje original del usuario. Si el usuario escribía algo diferente a los comandos conocidos (ej: "Hello"), se enviaba el mensaje de fallback.
+
+### ✅ Solución Implementada
+
+**Archivo:** `supabase/functions/wa_webhook/index.ts`
+
+1. **Eliminado envío separado del mensaje de bienvenida** (líneas 442-445):
+   - Ya no se envía mensaje de bienvenida como mensaje separado para usuarios orgánicos
+   - Evita duplicación de mensajes
+
+2. **Generación automática del menú para usuarios nuevos** (línea 633):
+   ```typescript
+   // ANTES
+   } else if (lowerText === 'hola' || lowerText === 'hi' || lowerText === 'menu' || ...) {
+
+   // DESPUÉS
+   } else if (isNewUser ||  // ← Detecta usuarios nuevos automáticamente
+              lowerText === 'hola' || lowerText === 'hi' || lowerText === 'menu' || ...) {
+   ```
+
+3. **Mensaje unificado con URL** (línea 670):
+   - El mensaje de bienvenida se envía JUNTO con la URL del menú
+   - Todo en un solo mensaje interactivo con botón CTA
+
+### 🎯 Resultado
+
+**Ahora cuando un usuario nuevo escribe CUALQUIER mensaje por WhatsApp:**
+1. Recibe UN SOLO mensaje interactivo que incluye:
+   - ✅ Mensaje de bienvenida personalizado
+   - ✅ Botón "Acceder a Payme" con la URL del menú
+2. NO recibe mensajes de fallback ✅
+3. Puede acceder inmediatamente al menú sin escribir comandos adicionales ✅
+
+**Comparación de flujos:**
+
+| Escenario | v3.0.23 (anterior) | v3.0.24 (ahora) |
+|-----------|-------------------|-----------------|
+| Usuario invitado confirma préstamo | 1. Mensaje confirmación<br>2. Mensaje bienvenida ✅ | 1. Mensaje confirmación<br>2. Mensaje bienvenida ✅ |
+| Usuario nuevo escribe "Hello" | 1. Mensaje bienvenida<br>2. Mensaje fallback ❌ | 1. Mensaje con bienvenida + URL ✅ |
+| Usuario nuevo escribe "menu" | 1. Mensaje bienvenida<br>2. Mensaje con URL | 1. Mensaje con bienvenida + URL ✅ |
+
+---
+
+## [v3.0.23] - 2025-11-14 - ✅ Fix: Mensaje de Bienvenida en Handler de Botones
+
+### 🐛 Problema Detectado (diagnóstico de v3.0.22)
+
+Después de analizar los logs, descubrí que el mensaje de bienvenida NO se enviaba porque:
+- La lógica de bienvenida estaba solo en el handler de **mensajes de texto** (líneas 485-616)
+- Los botones de WhatsApp se procesan en un handler diferente de **eventos tipo "button"** (líneas 1680-1815)
+- Cuando el usuario presiona "Sí, confirmo" o "No, rechazar", WhatsApp envía un evento de tipo `"button"`, NO un mensaje de texto
+
+**Log que reveló el problema:**
+```
+[LOAN_CONFIRMATION_BUTTON] Loan confirmed successfully: c5a8f199-...
+```
+Este log pertenece al handler de botones que NO tenía la lógica de bienvenida.
+
+### ✅ Solución Implementada
+
+**Archivo:** `supabase/functions/wa_webhook/index.ts`
+
+Agregada la lógica de envío de mensaje de bienvenida en el **handler de botones**:
+
+1. **Confirmación de préstamo** (después de línea 1745):
+   ```typescript
+   // Enviar mensaje de bienvenida si es la primera vez que interactúa
+   console.log('[LOAN_CONFIRMATION_BUTTON] Checking welcome message for tenant:', {
+     tenant_id: tenant.id,
+     welcome_message_sent: tenant.welcome_message_sent,
+     acquisition_type: tenant.acquisition_type,
+     invited_by_tenant_id: tenant.invited_by_tenant_id
+   });
+
+   if (contact.whatsapp_id) {
+     const welcomeSent = await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+     console.log('[LOAN_CONFIRMATION_BUTTON] Welcome message result:', welcomeSent);
+   }
+   ```
+
+2. **Rechazo de préstamo** (después de línea 1792):
+   - Misma lógica aplicada para el caso de rechazo
+
+### 🎯 Resultado Esperado
+
+Ahora cuando un usuario nuevo (invitado):
+1. Recibe notificación de préstamo por WhatsApp
+2. Presiona el botón "Sí, confirmo" o "No, rechazar"
+3. **Recibirá el mensaje de bienvenida** inmediatamente después del mensaje de confirmación/rechazo
+
+### 📊 Próximos Pasos
+
+Probar creando un nuevo préstamo para contacto nuevo y verificar que se envían **dos mensajes**:
+1. Mensaje de confirmación/rechazo ✅
+2. Mensaje de bienvenida 🆕
+
+---
+
+## [v3.0.22] - 2025-11-14 - 🔍 Debug: Logs para Diagnóstico de Mensaje de Bienvenida
+
+### 🐛 Problema Detectado
+
+El mensaje de bienvenida NO se está enviando después de que un usuario nuevo confirma o rechaza un préstamo, a pesar de que:
+- El tracking de `acquisition_type: 'invited'` funciona correctamente ✅
+- El campo `welcome_message_sent: false` está correctamente inicializado ✅
+- El tenant tiene todos los datos de invitación correctos ✅
+
+### 🔍 Cambios Realizados
+
+Agregados logs de depuración detallados en ambos handlers (texto y botones) para diagnosticar el problema.
+
+### 📊 Resultado del Diagnóstico
+
+Los logs revelaron que se estaba usando el handler de botones (`[LOAN_CONFIRMATION_BUTTON]`) que no tenía la lógica de bienvenida. Fix aplicado en v3.0.23
+
+---
+
 ## [v3.0.21] - 2025-11-14 - 🔧 Fix: Tracking Correcto de Usuarios Invitados
 
 ### 🐛 Problema Detectado

@@ -353,6 +353,15 @@ async function processInboundMessage(
       return { success: false, error: 'Tenant not found' };
     }
 
+    console.log('[ROUTING] ✓ Tenant determinado:', {
+      id: tenant.id,
+      name: tenant.name,
+      welcome_message_sent: tenant.welcome_message_sent,
+      acquisition_type: tenant.acquisition_type,
+      invited_by_tenant_id: tenant.invited_by_tenant_id,
+      is_new_user: isNewUser
+    });
+
     // 2. Obtener o crear tenant_contact (patrón tenant_contacts)
     // formattedPhone ya fue declarado en el enrutamiento multi-tenant (línea 157)
     const contactName = contacts[0]?.profile?.name || 'Usuario';
@@ -430,11 +439,10 @@ async function processInboundMessage(
     const contact = tenantContact;
     console.log('[Webhook] Using tenant_contact:', contact.id);
 
-    // 2.6. Enviar mensaje de bienvenida si es usuario nuevo (orgánico)
-    if (isNewUser && contact.whatsapp_id) {
-      console.log('[NEW_USER] Usuario nuevo detectado, enviando mensaje de bienvenida');
-      await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
-    }
+    // 2.6. Nota: Para usuarios nuevos orgánicos, NO enviamos mensaje de bienvenida aquí.
+    //      El mensaje de bienvenida se enviará automáticamente junto con la URL del menú
+    //      en el flujo de "MENU_ACCESS" más adelante (que detecta isNewUser y personaliza el mensaje).
+    //      Solo enviamos mensaje de bienvenida separado para usuarios invitados después de confirmar/rechazar préstamo.
 
     // 3. Registrar mensaje entrante
     const { error: messageInsertError } = await supabase
@@ -548,8 +556,20 @@ async function processInboundMessage(
                 console.log('[LOAN_CONFIRMATION] Loan confirmed successfully:', pendingLoan.id);
 
                 // Enviar mensaje de bienvenida si es la primera vez que interactúa (usuario invitado)
+                console.log('[LOAN_CONFIRMATION] Checking welcome message for tenant:', {
+                  tenant_id: tenant.id,
+                  tenant_name: tenant.name,
+                  welcome_message_sent: tenant.welcome_message_sent,
+                  acquisition_type: tenant.acquisition_type,
+                  invited_by_tenant_id: tenant.invited_by_tenant_id,
+                  whatsapp_id: contact.whatsapp_id
+                });
+
                 if (contact.whatsapp_id) {
-                  await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+                  const welcomeSent = await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+                  console.log('[LOAN_CONFIRMATION] Welcome message result:', welcomeSent);
+                } else {
+                  console.log('[LOAN_CONFIRMATION] ⚠️ No whatsapp_id available for contact');
                 }
               }
             } else {
@@ -587,8 +607,20 @@ async function processInboundMessage(
                 console.log('[LOAN_CONFIRMATION] Loan rejected successfully:', pendingLoan.id);
 
                 // Enviar mensaje de bienvenida si es la primera vez que interactúa (usuario invitado)
+                console.log('[LOAN_CONFIRMATION] Checking welcome message for tenant (rejection):', {
+                  tenant_id: tenant.id,
+                  tenant_name: tenant.name,
+                  welcome_message_sent: tenant.welcome_message_sent,
+                  acquisition_type: tenant.acquisition_type,
+                  invited_by_tenant_id: tenant.invited_by_tenant_id,
+                  whatsapp_id: contact.whatsapp_id
+                });
+
                 if (contact.whatsapp_id) {
-                  await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+                  const welcomeSent = await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+                  console.log('[LOAN_CONFIRMATION] Welcome message result (rejection):', welcomeSent);
+                } else {
+                  console.log('[LOAN_CONFIRMATION] ⚠️ No whatsapp_id available for contact (rejection)');
                 }
               }
             }
@@ -597,13 +629,14 @@ async function processInboundMessage(
           console.error('[LOAN_CONFIRMATION] Exception processing confirmation:', error);
           responseMessage = 'Hubo un error al procesar tu respuesta. Por favor intenta de nuevo escribiendo "menu".';
         }
-      } else if (lowerText === 'hola' || lowerText === 'hi' || lowerText === 'menu' || lowerText === 'inicio' ||
+      } else if (isNewUser ||
+                 lowerText === 'hola' || lowerText === 'hi' || lowerText === 'menu' || lowerText === 'inicio' ||
                  lowerText === 'ayuda' || lowerText === 'help' ||
                  lowerText === 'estado' || lowerText === 'status' ||
                  lowerText === 'cancelar' || lowerText === 'cancel' ||
                  lowerText === 'menú web' || lowerText === 'menu web' || lowerText === 'acceso web') {
-        // Todos los comandos ahora generan acceso al menú web
-        console.log(`[MENU_ACCESS] Command "${lowerText}" redirecting to menu access`);
+        // Usuarios nuevos o comandos específicos generan acceso al menú web
+        console.log(`[MENU_ACCESS] ${isNewUser ? 'New user' : `Command "${lowerText}"`} redirecting to menu access`);
         try {
           const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
           const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -1710,6 +1743,23 @@ async function processInboundMessage(
 
                     responseMessage = `✅ *Préstamo confirmado*\n\nHas confirmado recibir: ${loanDescription}\n\n📅 Fecha de devolución: ${formatDate(pendingLoan.due_date)}\n\n💡 Escribe "estado" para ver tus préstamos activos.`;
                     console.log('[LOAN_CONFIRMATION_BUTTON] Loan confirmed successfully:', pendingLoan.id);
+
+                    // Enviar mensaje de bienvenida si es la primera vez que interactúa (usuario invitado)
+                    console.log('[LOAN_CONFIRMATION_BUTTON] Checking welcome message for tenant:', {
+                      tenant_id: tenant.id,
+                      tenant_name: tenant.name,
+                      welcome_message_sent: tenant.welcome_message_sent,
+                      acquisition_type: tenant.acquisition_type,
+                      invited_by_tenant_id: tenant.invited_by_tenant_id,
+                      whatsapp_id: contact.whatsapp_id
+                    });
+
+                    if (contact.whatsapp_id) {
+                      const welcomeSent = await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+                      console.log('[LOAN_CONFIRMATION_BUTTON] Welcome message result:', welcomeSent);
+                    } else {
+                      console.log('[LOAN_CONFIRMATION_BUTTON] ⚠️ No whatsapp_id available for contact');
+                    }
                   }
                 } else {
                   // RECHAZAR
@@ -1740,6 +1790,23 @@ async function processInboundMessage(
 
                     responseMessage = `❌ *Préstamo rechazado*\n\nHas rechazado el préstamo. Se notificará al prestamista.\n\n💡 Si tienes alguna duda, escribe "menu" para acceder al portal.`;
                     console.log('[LOAN_CONFIRMATION_BUTTON] Loan rejected successfully:', pendingLoan.id);
+
+                    // Enviar mensaje de bienvenida si es la primera vez que interactúa (usuario invitado)
+                    console.log('[LOAN_CONFIRMATION_BUTTON] Checking welcome message for tenant (rejection):', {
+                      tenant_id: tenant.id,
+                      tenant_name: tenant.name,
+                      welcome_message_sent: tenant.welcome_message_sent,
+                      acquisition_type: tenant.acquisition_type,
+                      invited_by_tenant_id: tenant.invited_by_tenant_id,
+                      whatsapp_id: contact.whatsapp_id
+                    });
+
+                    if (contact.whatsapp_id) {
+                      const welcomeSent = await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+                      console.log('[LOAN_CONFIRMATION_BUTTON] Welcome message result (rejection):', welcomeSent);
+                    } else {
+                      console.log('[LOAN_CONFIRMATION_BUTTON] ⚠️ No whatsapp_id available for contact (rejection)');
+                    }
                   }
                 }
               }
