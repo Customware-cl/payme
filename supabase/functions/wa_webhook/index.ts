@@ -154,6 +154,94 @@ function parsePhoneNumber(phone: string): string {
   return '+' + cleaned;
 }
 
+/**
+ * Envía mensaje de bienvenida a un usuario nuevo si no se ha enviado previamente
+ * @param supabase Cliente de Supabase
+ * @param tenant Tenant del usuario
+ * @param whatsappId ID de WhatsApp del usuario
+ * @returns true si se envió exitosamente, false si ya se había enviado o hubo error
+ */
+async function sendWelcomeMessageIfNeeded(
+  supabase: any,
+  tenant: any,
+  whatsappId: string
+): Promise<boolean> {
+  try {
+    // 1. Verificar si ya se envió mensaje de bienvenida
+    if (tenant.welcome_message_sent) {
+      console.log('[WELCOME] Mensaje de bienvenida ya fue enviado previamente para tenant:', tenant.id);
+      return false;
+    }
+
+    console.log('[WELCOME] Enviando mensaje de bienvenida a tenant:', tenant.id);
+
+    // 2. Preparar mensaje de bienvenida
+    const welcomeMessage = '¡Hola! 👋 Te damos la bienvenida a Payme, tu asistente de préstamos.\n\n' +
+      'Aquí puedes:\n' +
+      '✅ Registrar préstamos que hiciste o te hicieron\n' +
+      '✅ Ver el estado de tus préstamos\n' +
+      '✅ Recibir recordatorios de pago automáticos\n\n' +
+      '💡 Comandos útiles:\n' +
+      '• Escribe "estado" para ver tus préstamos activos\n' +
+      '• Escribe "menu" para acceder al portal web';
+
+    // 3. Enviar mensaje usando WhatsApp API
+    const whatsappAccessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+    const whatsappPhoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID');
+
+    if (!whatsappAccessToken || !whatsappPhoneNumberId) {
+      console.error('[WELCOME] Credenciales de WhatsApp no configuradas');
+      return false;
+    }
+
+    const response = await fetch(
+      `https://graph.facebook.com/v17.0/${whatsappPhoneNumberId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${whatsappAccessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: whatsappId,
+          type: 'text',
+          text: {
+            body: welcomeMessage
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[WELCOME] Error enviando mensaje:', errorText);
+      return false;
+    }
+
+    console.log('[WELCOME] ✓ Mensaje de bienvenida enviado exitosamente');
+
+    // 4. Marcar flag welcome_message_sent como true
+    const { error: updateError } = await supabase
+      .from('tenants')
+      .update({ welcome_message_sent: true })
+      .eq('id', tenant.id);
+
+    if (updateError) {
+      console.error('[WELCOME] Error actualizando flag welcome_message_sent:', updateError);
+      // No es crítico, el mensaje ya se envió
+    } else {
+      console.log('[WELCOME] ✓ Flag welcome_message_sent actualizado');
+    }
+
+    return true;
+
+  } catch (error) {
+    console.error('[WELCOME] Exception enviando mensaje de bienvenida:', error);
+    return false;
+  }
+}
+
 async function processInboundMessage(
   message: any,
   contacts: any[],
@@ -342,6 +430,12 @@ async function processInboundMessage(
     const contact = tenantContact;
     console.log('[Webhook] Using tenant_contact:', contact.id);
 
+    // 2.6. Enviar mensaje de bienvenida si es usuario nuevo (orgánico)
+    if (isNewUser && contact.whatsapp_id) {
+      console.log('[NEW_USER] Usuario nuevo detectado, enviando mensaje de bienvenida');
+      await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+    }
+
     // 3. Registrar mensaje entrante
     const { error: messageInsertError } = await supabase
       .from('whatsapp_messages')
@@ -452,6 +546,11 @@ async function processInboundMessage(
                 responseMessage = `✅ *Préstamo confirmado*\n\nHas confirmado recibir: ${loanDescription}\n\n📅 Fecha de devolución: ${formatDate(pendingLoan.due_date)}\n\n💡 Escribe "estado" para ver tus préstamos activos.`;
 
                 console.log('[LOAN_CONFIRMATION] Loan confirmed successfully:', pendingLoan.id);
+
+                // Enviar mensaje de bienvenida si es la primera vez que interactúa (usuario invitado)
+                if (contact.whatsapp_id) {
+                  await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+                }
               }
             } else {
               // RECHAZAR: cambiar status a rejected
@@ -486,6 +585,11 @@ async function processInboundMessage(
                 responseMessage = `❌ *Préstamo rechazado*\n\nHas rechazado el préstamo. Se notificará al prestamista.\n\n💡 Si tienes alguna duda, escribe "menu" para acceder al portal.`;
 
                 console.log('[LOAN_CONFIRMATION] Loan rejected successfully:', pendingLoan.id);
+
+                // Enviar mensaje de bienvenida si es la primera vez que interactúa (usuario invitado)
+                if (contact.whatsapp_id) {
+                  await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+                }
               }
             }
           }

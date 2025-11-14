@@ -2,6 +2,177 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.19] - 2025-11-14 - 🎉 Sistema de Mensajes de Bienvenida Automáticos + Tracking de Adquisición
+
+### 🎯 Requerimientos
+
+Implementar sistema automático de mensajes de bienvenida para usuarios nuevos y tracking de origen de usuarios (orgánico vs invitado) para análisis futuro.
+
+**Casos de uso:**
+1. Usuario totalmente nuevo llega al WhatsApp → Enviar mensaje de bienvenida
+2. Usuario recibe un préstamo por primera vez y confirma/rechaza → Enviar mensaje de bienvenida
+3. Trackear si un usuario llegó orgánicamente o fue invitado por otro usuario
+
+### ✅ Solución Implementada
+
+#### 1. Nuevos Campos en Tabla `tenants`
+
+**Migración:** `048_add_welcome_tracking_to_tenants.sql`
+
+```sql
+-- Flag para controlar si ya se envió mensaje de bienvenida
+ALTER TABLE tenants
+ADD COLUMN welcome_message_sent BOOLEAN DEFAULT FALSE NOT NULL;
+
+-- Tracking de quién invitó al usuario
+ALTER TABLE tenants
+ADD COLUMN invited_by_tenant_id UUID REFERENCES tenants(id);
+
+-- Tipo de adquisición del usuario
+ALTER TABLE tenants
+ADD COLUMN acquisition_type TEXT CHECK (acquisition_type IN ('organic', 'invited'));
+```
+
+**Índices añadidos:**
+- `idx_tenants_invited_by` → Análisis de red de referidos
+- `idx_tenants_acquisition_type` → Análisis de canales de adquisición
+
+#### 2. Función SQL `ensure_user_tenant` Actualizada
+
+**Migración:** `049_update_ensure_user_tenant_with_acquisition_tracking.sql`
+
+**Nueva firma:**
+```sql
+ensure_user_tenant(
+  p_contact_profile_id UUID,
+  p_invited_by_tenant_id UUID DEFAULT NULL,
+  p_acquisition_type TEXT DEFAULT 'organic'
+) RETURNS UUID
+```
+
+**Comportamiento:**
+- Por defecto crea tenants con `acquisition_type='organic'`
+- Permite especificar `invited_by_tenant_id` para trackear referidos
+- Inicializa `welcome_message_sent=FALSE`
+
+#### 3. Función Helper para Envío de Bienvenida
+
+**Archivo:** `supabase/functions/wa_webhook/index.ts` (líneas 157-243)
+
+**Función:** `sendWelcomeMessageIfNeeded(supabase, tenant, whatsappId)`
+
+**Lógica:**
+1. Verifica flag `welcome_message_sent` (skip si ya se envió)
+2. Envía mensaje de bienvenida vía WhatsApp API
+3. Actualiza flag `welcome_message_sent=true`
+4. Idempotente y safe (no envía duplicados)
+
+**Mensaje de bienvenida:**
+```
+¡Hola! 👋 Te damos la bienvenida a Payme, tu asistente de préstamos.
+
+Aquí puedes:
+✅ Registrar préstamos que hiciste o te hicieron
+✅ Ver el estado de tus préstamos
+✅ Recibir recordatorios de pago automáticos
+
+💡 Comandos útiles:
+• Escribe "estado" para ver tus préstamos activos
+• Escribe "menu" para acceder al portal web
+```
+
+#### 4. Puntos de Integración
+
+**A. Usuario Orgánico (Primera Interacción)**
+
+**Ubicación:** `wa_webhook/index.ts` (líneas 433-437)
+
+```typescript
+// 2.6. Enviar mensaje de bienvenida si es usuario nuevo (orgánico)
+if (isNewUser && contact.whatsapp_id) {
+  console.log('[NEW_USER] Usuario nuevo detectado, enviando mensaje de bienvenida');
+  await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+}
+```
+
+**Trigger:** Cuando un usuario nuevo envía cualquier mensaje por WhatsApp
+
+**B. Usuario Invitado (Confirma Préstamo)**
+
+**Ubicación:** `wa_webhook/index.ts` (líneas 550-553)
+
+```typescript
+// Enviar mensaje de bienvenida si es la primera vez que interactúa (usuario invitado)
+if (contact.whatsapp_id) {
+  await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+}
+```
+
+**Trigger:** Cuando un borrower confirma un préstamo pendiente
+
+**C. Usuario Invitado (Rechaza Préstamo)**
+
+**Ubicación:** `wa_webhook/index.ts` (líneas 589-592)
+
+```typescript
+// Enviar mensaje de bienvenida si es la primera vez que interactúa (usuario invitado)
+if (contact.whatsapp_id) {
+  await sendWelcomeMessageIfNeeded(supabase, tenant, contact.whatsapp_id);
+}
+```
+
+**Trigger:** Cuando un borrower rechaza un préstamo pendiente
+
+### 📊 Beneficios
+
+1. **✅ Experiencia de Usuario Mejorada**
+   - Mensaje de bienvenida automático elimina confusión
+   - Educación temprana sobre comandos disponibles
+   - Guía sobre funcionalidades clave del bot
+
+2. **✅ Tracking para Análisis de Crecimiento**
+   - `acquisition_type` permite medir canales orgánicos vs invitados
+   - `invited_by_tenant_id` permite construir grafo de red de referidos
+   - Análisis futuro de viral coefficient y growth loops
+
+3. **✅ Control de Duplicados**
+   - Flag `welcome_message_sent` previene envíos múltiples
+   - Idempotencia garantizada a nivel de base de datos
+
+4. **✅ Arquitectura Escalable**
+   - Función helper reutilizable en múltiples puntos
+   - Fácil agregar nuevos puntos de activación
+   - Sin overhead si el mensaje ya fue enviado
+
+### 🔄 Flujos de Usuario
+
+#### Flujo 1: Usuario Orgánico
+```
+Usuario envía "Hola" → Se crea tenant (organic) → Mensaje de bienvenida
+```
+
+#### Flujo 2: Usuario Invitado (Confirma)
+```
+Lender crea préstamo → Borrower recibe notificación →
+Borrower responde "Sí, confirmo" → Préstamo activado → Mensaje de bienvenida
+```
+
+#### Flujo 3: Usuario Invitado (Rechaza)
+```
+Lender crea préstamo → Borrower recibe notificación →
+Borrower responde "No, rechazar" → Préstamo rechazado → Mensaje de bienvenida
+```
+
+### 🧪 Casos de Prueba
+
+- [ ] Usuario nuevo envía mensaje → Recibe bienvenida automática
+- [ ] Usuario nuevo confirma préstamo → Recibe bienvenida solo una vez
+- [ ] Usuario existente confirma préstamo → NO recibe bienvenida duplicada
+- [ ] Verificar campos `acquisition_type` y `invited_by_tenant_id` en DB
+- [ ] Verificar flag `welcome_message_sent` se actualiza correctamente
+
+---
+
 ## [v3.0.17] - 2025-11-14 - 🚀 Arquitectura Simplificada: Mensajes WhatsApp desde Secrets
 
 ### 🎯 Problema Detectado
