@@ -388,6 +388,109 @@ async function processInboundMessage(
         // Convertir a comando para iniciar flujo
         console.log('Detected button text for new_loan, converting to command');
         // Procesar como si fuera el comando directo - continuar con flujo conversacional
+      } else if (cleanText.includes('si, confirmo') || cleanText.includes('sí, confirmo') ||
+                 cleanText.includes('no, rechazar')) {
+        // Handler para botones de confirmación de préstamo
+        const isConfirm = cleanText.includes('si, confirmo') || cleanText.includes('sí, confirmo');
+        console.log(`[LOAN_CONFIRMATION] Processing ${isConfirm ? 'confirmation' : 'rejection'} from borrower`);
+
+        try {
+          // Buscar el agreement más reciente pendiente de confirmación donde el usuario es borrower
+          const { data: pendingLoan, error: fetchError } = await supabase
+            .from('agreements')
+            .select('*')
+            .eq('tenant_contact_id', contact.id) // Usuario es el borrower
+            .eq('status', 'pending_confirmation')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (fetchError) {
+            console.error('[LOAN_CONFIRMATION] Error fetching pending loan:', fetchError);
+            responseMessage = 'Hubo un error al procesar tu respuesta. Por favor intenta de nuevo.';
+          } else if (!pendingLoan) {
+            console.log('[LOAN_CONFIRMATION] No pending loan found for borrower');
+            responseMessage = 'No encontré ningún préstamo pendiente de confirmación.\n\nSi necesitas ayuda, escribe "menu".';
+          } else {
+            // Procesar confirmación o rechazo
+            if (isConfirm) {
+              // CONFIRMAR: cambiar status a active
+              const { error: updateError } = await supabase
+                .from('agreements')
+                .update({
+                  status: 'active',
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', pendingLoan.id);
+
+              if (updateError) {
+                console.error('[LOAN_CONFIRMATION] Error confirming loan:', updateError);
+                responseMessage = 'Hubo un error al confirmar el préstamo. Por favor intenta de nuevo.';
+              } else {
+                // Registrar evento
+                await supabase
+                  .from('events')
+                  .insert({
+                    tenant_id: tenant.id,
+                    tenant_contact_id: contact.id,
+                    agreement_id: pendingLoan.id,
+                    event_type: 'confirmed_returned', // Reutilizamos tipo existente
+                    payload: {
+                      action: 'loan_confirmed_by_borrower',
+                      contact_name: contact.name,
+                      agreement_title: pendingLoan.title,
+                      confirmed_at: new Date().toISOString()
+                    }
+                  });
+
+                const loanDescription = pendingLoan.amount
+                  ? `$${formatMoney(pendingLoan.amount)}`
+                  : (pendingLoan.item_description || pendingLoan.title);
+
+                responseMessage = `✅ *Préstamo confirmado*\n\nHas confirmado recibir: ${loanDescription}\n\n📅 Fecha de devolución: ${formatDate(pendingLoan.due_date)}\n\n💡 Escribe "estado" para ver tus préstamos activos.`;
+
+                console.log('[LOAN_CONFIRMATION] Loan confirmed successfully:', pendingLoan.id);
+              }
+            } else {
+              // RECHAZAR: cambiar status a rejected
+              const { error: updateError } = await supabase
+                .from('agreements')
+                .update({
+                  status: 'rejected',
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', pendingLoan.id);
+
+              if (updateError) {
+                console.error('[LOAN_CONFIRMATION] Error rejecting loan:', updateError);
+                responseMessage = 'Hubo un error al rechazar el préstamo. Por favor intenta de nuevo.';
+              } else {
+                // Registrar evento
+                await supabase
+                  .from('events')
+                  .insert({
+                    tenant_id: tenant.id,
+                    tenant_contact_id: contact.id,
+                    agreement_id: pendingLoan.id,
+                    event_type: 'button_clicked',
+                    payload: {
+                      action: 'loan_rejected_by_borrower',
+                      contact_name: contact.name,
+                      agreement_title: pendingLoan.title,
+                      rejected_at: new Date().toISOString()
+                    }
+                  });
+
+                responseMessage = `❌ *Préstamo rechazado*\n\nHas rechazado el préstamo. Se notificará al prestamista.\n\n💡 Si tienes alguna duda, escribe "menu" para acceder al portal.`;
+
+                console.log('[LOAN_CONFIRMATION] Loan rejected successfully:', pendingLoan.id);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('[LOAN_CONFIRMATION] Exception processing confirmation:', error);
+          responseMessage = 'Hubo un error al procesar tu respuesta. Por favor intenta de nuevo escribiendo "menu".';
+        }
       } else if (lowerText === 'hola' || lowerText === 'hi' || lowerText === 'menu' || lowerText === 'inicio' ||
                  lowerText === 'ayuda' || lowerText === 'help' ||
                  lowerText === 'estado' || lowerText === 'status' ||

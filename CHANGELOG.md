@@ -2,6 +2,87 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.8] - 2025-11-13 - ✅ Activar confirmación de préstamos por WhatsApp
+
+### 🎯 Problema Detectado
+
+Después de corregir v3.0.6 y v3.0.7, la confirmación de préstamos por WhatsApp funciona PERO:
+- Usuario recibe plantilla `loan_confirmation_request_v1` correctamente ✅
+- Usuario hace clic en botón "Sí, confirmo" ✅
+- Aparece mensaje: "Esta funcionalidad está temporalmente desactivada" ❌
+
+**Causa:**
+No existía handler para procesar los botones `quick_reply` de la plantilla.
+Los botones envían el texto como mensaje regular, pero no había lógica para detectar
+"Sí, confirmo" o "No, rechazar".
+
+### 🔧 Solución Aplicada
+
+**wa_webhook/index.ts (líneas 391-493):** Nuevo handler para confirmación
+
+```typescript
+else if (cleanText.includes('si, confirmo') || cleanText.includes('sí, confirmo') ||
+          cleanText.includes('no, rechazar')) {
+
+  const isConfirm = cleanText.includes('si, confirmo') || cleanText.includes('sí, confirmo');
+
+  // 1. Buscar agreement pendiente más reciente del borrower
+  const pendingLoan = await supabase
+    .from('agreements')
+    .select('*')
+    .eq('tenant_contact_id', contact.id)
+    .eq('status', 'pending_confirmation')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (isConfirm) {
+    // 2. CONFIRMAR: cambiar status a 'active'
+    await supabase
+      .from('agreements')
+      .update({ status: 'active' })
+      .eq('id', pendingLoan.id);
+
+    // 3. Registrar evento
+    await supabase.from('events').insert({
+      event_type: 'confirmed_returned',
+      payload: { action: 'loan_confirmed_by_borrower' }
+    });
+
+    responseMessage = "✅ Préstamo confirmado...";
+
+  } else {
+    // 2. RECHAZAR: cambiar status a 'rejected'
+    await supabase
+      .from('agreements')
+      .update({ status: 'rejected' })
+      .eq('id', pendingLoan.id);
+
+    responseMessage = "❌ Préstamo rechazado...";
+  }
+}
+```
+
+### ✨ Resultado
+
+- ✅ Usuario hace clic en "Sí, confirmo" → status cambia a 'active'
+- ✅ Usuario hace clic en "No, rechazar" → status cambia a 'rejected'
+- ✅ Se registra evento con acción específica
+- ✅ Usuario recibe mensaje de confirmación/rechazo
+- ✅ Si no hay préstamos pendientes, informa al usuario
+
+**Flujo completo funcionando:**
+1. Lender crea préstamo desde formulario web
+2. Sistema envía plantilla WhatsApp al borrower
+3. Borrower recibe mensaje con botones "Sí, confirmo" / "No, rechazar"
+4. Borrower hace clic → Status actualizado y evento registrado
+5. Borrower recibe confirmación de la acción
+
+**Archivos modificados:**
+- `supabase/functions/wa_webhook/index.ts` (líneas 391-493)
+
+---
+
 ## [v3.0.7] - 2025-11-13 - 🐛 Agregar created_by a create_p2p_loan
 
 ### 🎯 Problema Detectado
