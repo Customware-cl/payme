@@ -396,10 +396,11 @@ async function processInboundMessage(
 
         try {
           // Buscar el agreement más reciente pendiente de confirmación donde el usuario es borrower
+          // En arquitectura P2P: buscar por borrower_tenant_id (mi tenant = tenant que recibe préstamo)
           const { data: pendingLoan, error: fetchError } = await supabase
             .from('agreements')
             .select('*')
-            .eq('tenant_contact_id', contact.id) // Usuario es el borrower
+            .eq('borrower_tenant_id', tenant.id) // MI tenant es el borrower
             .eq('status', 'pending_confirmation')
             .order('created_at', { ascending: false })
             .limit(1)
@@ -1552,10 +1553,11 @@ async function processInboundMessage(
 
             try {
               // Buscar el agreement más reciente pendiente de confirmación donde el usuario es borrower
+              // En arquitectura P2P: buscar por borrower_tenant_id (mi tenant = tenant que recibe préstamo)
               const { data: pendingLoan, error: fetchError } = await supabase
                 .from('agreements')
                 .select('*')
-                .eq('tenant_contact_id', contact.id)
+                .eq('borrower_tenant_id', tenant.id) // MI tenant es el borrower
                 .eq('status', 'pending_confirmation')
                 .order('created_at', { ascending: false })
                 .limit(1)

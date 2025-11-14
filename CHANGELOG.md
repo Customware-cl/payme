@@ -2,6 +2,82 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.11] - 2025-11-13 - 🔧 Fix: Buscar préstamos por borrower_tenant_id
+
+### 🎯 Problema Detectado
+
+Usuario reportó que después de v3.0.10, el handler seguía mostrando
+"No encontré ningún préstamo pendiente de confirmación" a pesar de que
+los préstamos existían con status `'pending_confirmation'`.
+
+**Causa Raíz:**
+Los handlers de confirmación (líneas 400-407 y 1557-1564) buscaban préstamos
+usando el campo INCORRECTO en arquitectura P2P multi-tenant:
+
+```typescript
+// ❌ INCORRECTO
+.eq('tenant_contact_id', contact.id)  // Busca contacto en SU tenant
+```
+
+**Por qué fallaba:**
+En arquitectura P2P, cuando Felipe (+56964943476) crea un préstamo para el tester (+56942356880):
+
+```
+Agreement creado:
+- tenant_id: tenant de Felipe (lender)
+- tenant_contact_id: contacto del tester EN tenant de Felipe
+- lender_tenant_id: tenant de Felipe
+- borrower_tenant_id: tenant del tester (f33df5ba-...)
+
+Cuando tester hace clic en "Sí, confirmo":
+- Su tenant.id = f33df5ba-... (tenant del tester)
+- Su contact.id = dd7fd0e0-... (contacto en SU tenant)
+
+Handler buscaba:
+.eq('tenant_contact_id', dd7fd0e0-...) ❌ NO coincide
+
+Debía buscar:
+.eq('borrower_tenant_id', f33df5ba-...) ✅ Coincide
+```
+
+### 🔧 Solución Aplicada
+
+**wa_webhook/index.ts (líneas 400-407 y 1557-1564):** Buscar por borrower_tenant_id
+
+```typescript
+// ✅ CORRECTO
+const { data: pendingLoan } = await supabase
+  .from('agreements')
+  .select('*')
+  .eq('borrower_tenant_id', tenant.id)  // MI tenant es el borrower
+  .eq('status', 'pending_confirmation')
+  .order('created_at', { ascending: false })
+  .limit(1)
+  .maybeSingle();
+```
+
+**Lógica corregida:**
+- **Handler tipo "text"** (líneas 400-407): Busca por `borrower_tenant_id`
+- **Handler tipo "button"** (líneas 1557-1564): Busca por `borrower_tenant_id`
+- Ambos handlers ahora alineados con arquitectura P2P multi-tenant
+
+### ✅ Resultado
+
+Flujo de confirmación ahora funciona correctamente en arquitectura P2P:
+
+1. ✅ Lender crea préstamo → `borrower_tenant_id` = tenant del borrower
+2. ✅ Sistema envía plantilla al borrower
+3. ✅ Borrower hace clic en botón
+4. ✅ Handler busca por `borrower_tenant_id` = SU tenant
+5. ✅ Encuentra préstamo pendiente correctamente
+6. ✅ Actualiza status a `'active'` o `'rejected'`
+
+### 📦 Edge Functions Desplegadas
+
+- `wa_webhook` (versión 175)
+
+---
+
 ## [v3.0.10] - 2025-11-13 - 🔧 Fix: Préstamos creados con status 'pending_confirmation'
 
 ### 🎯 Problema Detectado
