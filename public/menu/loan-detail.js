@@ -123,12 +123,14 @@ function renderLoanDetails() {
     const overdue = isOverdue(loan.due_date);
 
     // Título del header
-    const loanTypeText = userRole === 'lender' ? 'Préstamo que hiciste' : 'Préstamo que te hicieron';
-    $('#loan-title').textContent = loanTypeText;
+    const headerTitle = userRole === 'lender' ? 'Préstamo que hiciste' : 'Préstamo que te hicieron';
+    $('#loan-title').textContent = headerTitle;
 
-    // Tipo (Préstamo de dinero o préstamo de objeto)
-    const loanType = loan.amount !== null ? '💰 Préstamo de dinero' : '📦 Préstamo de objeto';
-    $('#detail-type').textContent = loanType;
+    // Tipo (Préstamo de dinero o préstamo de objeto) - usando loan_type
+    const isMoneyLoan = loan.loan_type === 'money' ||
+        (loan.loan_type === 'unknown' && loan.amount !== null && loan.amount > 0);
+    const loanTypeLabel = isMoneyLoan ? '💰 Préstamo de dinero' : '📦 Préstamo de objeto';
+    $('#detail-type').textContent = loanTypeLabel;
 
     // Contacto
     const contactLabel = userRole === 'lender' ? 'A quien le prestaste' : 'Quien te prestó';
@@ -136,14 +138,14 @@ function renderLoanDetails() {
     $('#contact-label').textContent = contactLabel;
     $('#detail-contact').textContent = contact ? contact.name : 'Contacto desconocido';
 
-    // Préstamo (dinero u objeto)
-    let loanText = '';
-    if (loan.amount !== null) {
-        loanText = formatMoney(loan.amount);
+    // Préstamo (dinero u objeto) - usando loan_type
+    let loanDisplayText = '';
+    if (isMoneyLoan) {
+        loanDisplayText = formatMoney(loan.amount);
     } else {
-        loanText = loan.item_description || 'Objeto';
+        loanDisplayText = loan.item_description || loan.title || 'Objeto';
     }
-    $('#detail-loan').textContent = loanText;
+    $('#detail-loan').textContent = loanDisplayText;
 
     // Concepto/Descripción del préstamo
     const descriptionRow = $('#detail-description-row');
