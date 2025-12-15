@@ -60,8 +60,10 @@ serve(async (req: Request) => {
     // Verificar autenticación del scheduler
     const authToken = req.headers.get('authorization')?.replace('Bearer ', '');
     const expectedToken = Deno.env.get('SCHEDULER_AUTH_TOKEN') || 'your-scheduler-auth-token';
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
-    if (authToken !== expectedToken) {
+    // Aceptar SCHEDULER_AUTH_TOKEN o SUPABASE_SERVICE_ROLE_KEY
+    if (authToken !== expectedToken && authToken !== serviceRoleKey) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -77,12 +79,12 @@ serve(async (req: Request) => {
 
     // Obtener parámetros de la request
     const body = await req.json().catch(() => ({}));
-    const { tenant_id, dry_run = false, max_instances = 100 } = body;
+    const { tenant_id, dry_run = false, max_instances = 100, force_mode } = body;
 
-    // Detectar modo de operación
+    // Detectar modo de operación (puede ser forzado via parámetro)
     const isOfficialHour = isOfficialSendHour('America/Santiago', 9);
-    const mode = isOfficialHour ? 'normal' : 'catchup';
-    console.log(`🕐 Scheduler running in ${mode.toUpperCase()} mode (official hour: ${isOfficialHour})`);
+    const mode = force_mode || (isOfficialHour ? 'normal' : 'catchup');
+    console.log(`🕐 Scheduler running in ${mode.toUpperCase()} mode (official hour: ${isOfficialHour}, forced: ${!!force_mode})`);
 
     // Estadísticas de procesamiento
     const stats: ProcessingStats = {
@@ -242,30 +244,31 @@ async function generateReminderInstances(
         // Solo generar si es en el futuro
         if (sendDate <= new Date()) continue;
 
-        // Verificar si ya existe esta instancia
+        // Verificar si ya existe esta instancia para este reminder y fecha
+        // Usamos scheduled_for ya que due_date no existe en reminder_instances
+        const scheduledForDate = sendDate.toISOString();
         const { data: existingInstance } = await supabase
           .from('reminder_instances')
           .select('id')
           .eq('reminder_id', reminder.id)
-          .eq('due_date', targetDate)
+          .gte('scheduled_for', new Date(sendDate.getTime() - 60000).toISOString()) // 1 minuto antes
+          .lte('scheduled_for', new Date(sendDate.getTime() + 60000).toISOString()) // 1 minuto después
           .eq('status', 'pending')
           .maybeSingle();
 
         if (existingInstance) continue;
 
         // Crear nueva instancia
+        // Solo usamos columnas que existen en reminder_instances según schema
+        // La info del agreement/contact se obtiene via: reminder_instances -> reminders -> agreements
         const { error: insertError } = await supabase
           .from('reminder_instances')
           .insert({
             reminder_id: reminder.id,
-            agreement_id: agreement.id,
-            tenant_id: agreement.tenant_id,
-            contact_id: agreement.contact_id,
-            due_date: targetDate,
-            scheduled_time: sendDate.toISOString(),
-            status: 'pending',
-            reminder_type: reminder.reminder_type,
-            template_id: reminder.template_id
+            scheduled_for: scheduledForDate,
+            status: 'pending'
+            // Nota: agreement_id, tenant_id, contact_id, etc. se obtienen via relaciones
+            // rendered_variables se puede usar para guardar datos extra si es necesario
           });
 
         if (!insertError) {
@@ -308,20 +311,33 @@ async function processScheduledReminders(
     }
 
     // Obtener instancias que deben enviarse ahora
+    // Navegamos las relaciones: reminder_instances -> reminders -> agreements -> tenant_contacts
     let instancesQuery = supabase
       .from('reminder_instances')
       .select(`
-        id, reminder_id, agreement_id, tenant_id, contact_id,
-        due_date, scheduled_time, reminder_type, template_id,
-        agreements!inner(title, item_description, amount, currency),
-        contacts!inner(name, phone_e164, opt_in_status),
-        templates(meta_template_name, body, variables_count)
+        id, reminder_id, scheduled_for, status, sent_at,
+        reminders!inner(
+          id, reminder_type, template_id, is_active,
+          agreements!inner(
+            id, tenant_id, contact_id, title, item_description, amount, currency, due_date, created_at, metadata,
+            borrower:tenant_contacts!tenant_contact_id(
+              id, name, opt_in_status,
+              contact_profiles(phone_e164, first_name, last_name)
+            ),
+            lender:tenant_contacts!lender_tenant_contact_id(
+              id, name,
+              contact_profiles(first_name, last_name, email, bank_accounts)
+            )
+          ),
+          templates(meta_template_name, body, variable_count)
+        )
       `)
       .eq('status', 'pending')
-      .lte('scheduled_time', timeFilter);
+      .lte('scheduled_for', timeFilter);
 
+    // Filtrar por tenant_id a través de la relación
     if (tenantId) {
-      instancesQuery = instancesQuery.eq('tenant_id', tenantId);
+      instancesQuery = instancesQuery.eq('reminders.agreements.tenant_id', tenantId);
     }
 
     const { data: instances, error: instancesError } = await instancesQuery.limit(50);
@@ -342,9 +358,41 @@ async function processScheduledReminders(
     for (const instance of instances) {
       stats.processed++;
 
+      // Extraer datos de las relaciones anidadas para facilitar acceso
+      const reminder = instance.reminders;
+      const agreement = reminder?.agreements;
+      const borrower = agreement?.borrower;
+      let lender = agreement?.lender;
+      const borrowerProfile = borrower?.contact_profiles;
+      let lenderProfile = lender?.contact_profiles;
+      const template = reminder?.templates;
+
+      // Si lender es null, intentar obtenerlo desde metadata.original_context.lender_contact_id
+      const lenderContactId = agreement?.metadata?.original_context?.lender_contact_id || agreement?.metadata?.lender_contact_id;
+      if (!lender && lenderContactId) {
+        const { data: lenderFromMetadata } = await supabase
+          .from('tenant_contacts')
+          .select('id, name, contact_profiles(first_name, last_name, email, bank_accounts)')
+          .eq('id', lenderContactId)
+          .single();
+
+        if (lenderFromMetadata) {
+          lender = lenderFromMetadata;
+          lenderProfile = lenderFromMetadata.contact_profiles;
+          console.log('[SCHEDULER] Lender resolved from metadata:', lender?.name);
+        }
+      }
+
       try {
+        // Verificar que tenemos los datos necesarios
+        if (!reminder || !agreement || !borrower) {
+          console.error(`Missing required data for instance ${instance.id}`);
+          stats.failed++;
+          continue;
+        }
+
         // Verificar opt-in del contacto
-        if (instance.contacts.opt_in_status !== 'accepted') {
+        if (borrower.opt_in_status !== 'opted_in') {
           stats.skipped++;
           await supabase
             .from('reminder_instances')
@@ -354,22 +402,48 @@ async function processScheduledReminders(
         }
 
         if (dryRun) {
-          console.log(`[DRY RUN] Would send reminder to ${instance.contacts.name} for ${instance.agreements.title}`);
+          console.log(`[DRY RUN] Would send reminder to ${borrower.name} for ${agreement.title}`);
           stats.sent++;
           continue;
         }
 
+        // Preparar datos aplanados para funciones auxiliares
+        const flatInstance = {
+          ...instance,
+          tenant_id: agreement.tenant_id,
+          contact_id: borrower.id,
+          due_date: agreement.due_date,
+          created_at: agreement.created_at,
+          reminder_type: reminder.reminder_type,
+          borrower: {
+            name: borrower.name,
+            phone_e164: borrowerProfile?.phone_e164,
+            opt_in_status: borrower.opt_in_status,
+            first_name: borrowerProfile?.first_name,
+            last_name: borrowerProfile?.last_name
+          },
+          lender: {
+            name: lender?.name,
+            first_name: lenderProfile?.first_name,
+            last_name: lenderProfile?.last_name,
+            email: lenderProfile?.email,
+            bank_accounts: lenderProfile?.bank_accounts
+          },
+          agreements: agreement,
+          templates: template
+        };
+
         // Preparar mensaje
-        const messageText = await prepareReminderMessage(instance);
+        const messageText = await prepareReminderMessage(flatInstance);
 
         // Enviar mensaje usando Window Manager
         const sendResult = await windowManager.sendMessage(
-          instance.tenant_id,
-          instance.contact_id,
+          agreement.tenant_id,
+          borrower.id,
           messageText,
           {
-            templateName: instance.templates?.meta_template_name,
-            templateVariables: extractTemplateVariables(instance),
+            templateName: template?.meta_template_name,
+            templateVariables: extractTemplateVariables(flatInstance),
             priority: 'normal'
           }
         );
@@ -432,35 +506,93 @@ async function processScheduledReminders(
 
 // Preparar mensaje de recordatorio
 async function prepareReminderMessage(instance: any): Promise<string> {
-  const contact = instance.contacts;
+  const borrower = instance.borrower;
   const agreement = instance.agreements;
   const dueDate = new Date(instance.due_date).toLocaleDateString('es-CL');
+  const borrowerName = borrower?.first_name || borrower?.name || 'Usuario';
 
-  const messageTemplates = {
-    before_24h: `📅 Hola ${contact.name}, te recordamos que mañana ${dueDate} vence el préstamo de "${agreement.item_description}". ¿Todo listo para la devolución?`,
+  const messageTemplates: Record<string, string> = {
+    before_24h: `📅 Hola ${borrowerName}, te recordamos que mañana ${dueDate} vence el préstamo de "${agreement?.item_description || agreement?.title}". ¿Todo listo para la devolución?`,
 
-    due_date: `🚨 Hola ${contact.name}, hoy ${dueDate} vence el préstamo de "${agreement.item_description}". Por favor confirma cuando hayas hecho la devolución.`,
+    due_date: `🚨 Hola ${borrowerName}, hoy ${dueDate} vence el préstamo de "${agreement?.item_description || agreement?.title}". Por favor confirma cuando hayas hecho la devolución.`,
 
-    overdue: `⚠️ ${contact.name}, el préstamo de "${agreement.item_description}" venció el ${dueDate}. Por favor contacta para resolver esta situación.`,
+    overdue: `⚠️ ${borrowerName}, el préstamo de "${agreement?.item_description || agreement?.title}" venció el ${dueDate}. Por favor contacta para resolver esta situación.`,
 
-    monthly_service: `💳 Hola ${contact.name}, es momento del cobro de "${agreement.item_description}" por $${agreement.amount || '0'}. ¿Confirmas el pago?`
+    monthly_service: `💳 Hola ${borrowerName}, es momento del cobro de "${agreement?.item_description || agreement?.title}" por $${agreement?.amount || '0'}. ¿Confirmas el pago?`
   };
 
   return messageTemplates[instance.reminder_type] ||
-    `Recordatorio: ${agreement.title} - Fecha: ${dueDate}`;
+    `Recordatorio: ${agreement?.title} - Fecha: ${dueDate}`;
 }
 
-// Extraer variables para templates
+// Extraer variables para templates según tipo
 function extractTemplateVariables(instance: any): Record<string, any> {
-  const contact = instance.contacts;
+  const borrower = instance.borrower;
+  const lender = instance.lender;
   const agreement = instance.agreements;
-  const dueDate = new Date(instance.due_date).toLocaleDateString('es-CL');
+  const templateName = instance.templates?.meta_template_name || '';
+
+  // Formatear fecha
+  const formatDate = (date: string) => new Date(date).toLocaleDateString('es-CL');
+
+  // Formatear monto con separador de miles
+  const formatAmount = (amount: number) => {
+    return amount ? `$${amount.toLocaleString('es-CL')}` : '$0';
+  };
+
+  // Formatear RUT chileno
+  const formatRUT = (rut: string) => {
+    if (!rut) return 'No disponible';
+    const clean = rut.replace(/[^0-9kK]/g, '');
+    if (clean.length < 2) return rut;
+    const dv = clean.slice(-1);
+    const num = clean.slice(0, -1);
+    return `${num.replace(/\B(?=(\d{3})+(?!\d))/g, '.')}-${dv}`;
+  };
+
+  // Template due_date_item_v1: 4 variables + URL
+  if (templateName === 'due_date_item_v1') {
+    const agreementId = agreement?.id || '';
+    const buttonUrlPath = `loan/${agreementId}/returned`;
+
+    return {
+      '1': borrower?.first_name || borrower?.name || 'Usuario',           // Nombre borrower
+      '2': formatDate(instance.due_date),                                  // Fecha vencimiento
+      '3': agreement?.item_description || agreement?.title || 'Objeto',   // Descripción item
+      '4': lender?.name || 'el prestamista',                              // Nombre lender
+      'button_url': buttonUrlPath                                          // URL del botón
+    };
+  }
+
+  // Template due_date_money_v1: 11 variables (+ URL en botón)
+  // Obtener datos bancarios del lender (si existe)
+  const bankAccount = lender?.bank_accounts?.[0] || {};
+
+  // Nombre completo del lender (con fallback)
+  const lenderFullName = lender?.first_name && lender?.last_name
+    ? `${lender.first_name} ${lender.last_name}`.trim()
+    : (lender?.name || 'el prestamista');
+
+  // Manejar caso donde lender es null (préstamos sin lender asignado)
+  const hasBankInfo = bankAccount.bank_name || bankAccount.account_number;
+
+  // Generar URL para el botón (marca como devuelto)
+  const agreementId = agreement?.id || '';
+  const buttonUrlPath = `loan/${agreementId}/returned`;
 
   return {
-    '1': contact.name,
-    '2': dueDate,
-    '3': agreement.item_description || agreement.title,
-    '4': agreement.amount?.toString() || '0'
+    '1': borrower?.first_name || borrower?.name || 'Usuario',           // Nombre borrower
+    '2': lenderFullName,                                                  // Nombre lender
+    '3': formatDate(instance.created_at || instance.due_date),           // Fecha préstamo
+    '4': formatAmount(agreement?.amount),                                 // Monto
+    '5': agreement?.item_description || agreement?.title || 'Préstamo', // Concepto
+    '6': bankAccount.holder_name || lenderFullName,                       // Nombre transferencia
+    '7': hasBankInfo ? formatRUT(bankAccount.rut || '') : 'Pendiente',   // RUT
+    '8': bankAccount.bank_name || 'Pendiente',                           // Banco
+    '9': bankAccount.account_type || 'Pendiente',                        // Tipo cuenta
+    '10': bankAccount.account_number || 'Pendiente',                     // Número cuenta
+    '11': lender?.email || 'Pendiente',                                  // Email
+    'button_url': buttonUrlPath                                           // URL del botón (se añade a somospayme.cl/)
   };
 }
 
@@ -520,6 +652,7 @@ async function processRefinedAgreementStates(
       .select(`
         id, title, status, due_date, agreement_type, tenant_id,
         tenant_contact_id, lender_tenant_contact_id,
+        loan_type, amount,
         last_reminder_sent, reminder_sequence_step, opt_in_required,
         borrower:tenant_contacts!tenant_contact_id(
           id, name, opt_in_status,
@@ -531,7 +664,7 @@ async function processRefinedAgreementStates(
             first_name, last_name, email, bank_accounts
           )
         ),
-        tenants!inner(id, name, whatsapp_phone_number_id, whatsapp_access_token)
+        tenants!agreements_tenant_id_fkey(id, name, whatsapp_phone_number_id, whatsapp_access_token)
       `)
       .in('status', ['due_soon', 'overdue'])
       .not('due_date', 'is', null)
@@ -686,9 +819,10 @@ async function sendRefinedReminder(supabase: any, agreement: any): Promise<{
         // Día de vencimiento → Recordatorio con botones
         if (agreement.agreement_type === 'loan') {
           templateCategory = 'due_date';
-          // Seleccionar template según tipo de préstamo
-          const isMoneyLoan = agreement.amount !== null;
-          templateName = isMoneyLoan ? 'due_date_money_v1' : 'due_date_object_v1';
+          // Seleccionar template según tipo de préstamo (usar columna loan_type con fallback para legacy)
+          const isMoneyLoan = agreement.loan_type === 'money' ||
+                              (agreement.loan_type === 'unknown' && agreement.amount !== null);
+          templateName = isMoneyLoan ? 'due_date_money_v1' : 'due_date_item_v1';
         } else {
           templateCategory = 'monthly_service';
         }
@@ -793,14 +927,26 @@ async function sendRefinedReminder(supabase: any, agreement: any): Promise<{
     // Importar WhatsApp client
     const { sendWhatsAppMessage } = await import('../_shared/whatsapp-client.ts');
 
+    // Usar credenciales del tenant o fallback a plataforma
+    const PLATFORM_PHONE_NUMBER_ID = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '926278350558118';
+    const PLATFORM_ACCESS_TOKEN = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
+
+    const phoneNumberId = agreement.tenants?.whatsapp_phone_number_id || PLATFORM_PHONE_NUMBER_ID;
+    const accessToken = agreement.tenants?.whatsapp_access_token || PLATFORM_ACCESS_TOKEN;
+
+    if (!phoneNumberId || !accessToken) {
+      console.error('❌ No WhatsApp credentials available (tenant or platform)');
+      return { success: false, error: 'No WhatsApp credentials' };
+    }
+
     // Enviar mensaje HSM
     const messageResult = await sendWhatsAppMessage({
-      phoneNumberId: agreement.tenants.whatsapp_phone_number_id,
-      accessToken: agreement.tenants.whatsapp_access_token,
+      phoneNumberId,
+      accessToken,
       to: agreement.borrower?.contact_profiles?.phone_e164,
       template: {
         name: template.meta_template_name,
-        language: { code: 'es_CL' }, // Spanish (Chile) según Meta Business
+        language: { code: 'es_CL' }, // Spanish (Chile)
         components
       }
     });

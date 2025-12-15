@@ -52,9 +52,15 @@ function formatDateTime(isoString) {
 
 // Agrupar préstamos de dinero por contacto + fecha de devolución
 function groupLoansByContactAndDate(loans, type) {
-    // 1. Separar dinero y objetos
-    const moneyLoans = loans.filter(l => l.amount !== null);
-    const objectLoans = loans.filter(l => l.amount === null);
+    // 1. Separar dinero y objetos usando loan_type (con fallback para datos legacy)
+    const moneyLoans = loans.filter(l =>
+        l.loan_type === 'money' ||
+        (l.loan_type === 'unknown' && l.amount !== null && l.amount > 0)
+    );
+    const objectLoans = loans.filter(l =>
+        l.loan_type === 'object' ||
+        (l.loan_type === 'unknown' && (l.amount === null || l.amount === 0))
+    );
 
     // 2. Agrupar préstamos de dinero por contacto + fecha
     const groups = new Map();
@@ -392,15 +398,18 @@ function renderLoanCard(loan, type) {
     const contact = type === 'lent' ? loan.borrower : loan.lender;
     const contactName = contact ? contact.name : 'Contacto desconocido';
 
-    // Determinar el texto del préstamo con icono
+    // Determinar el texto del préstamo con icono (usando loan_type)
     let loanIcon = '';
     let loanText = '';
-    if (loan.amount !== null) {
+    const isMoneyLoan = loan.loan_type === 'money' ||
+        (loan.loan_type === 'unknown' && loan.amount !== null && loan.amount > 0);
+
+    if (isMoneyLoan) {
         loanIcon = '💰';
         loanText = formatMoney(loan.amount);
     } else {
         loanIcon = '📦';
-        loanText = loan.item_description || 'Objeto';
+        loanText = loan.item_description || loan.title || 'Objeto';
     }
 
     // Status badge

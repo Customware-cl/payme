@@ -134,6 +134,12 @@ export async function getSchemaForAI(
           description: 'Tipo de acuerdo: "loan" (préstamo) o "service" (servicio)'
         },
         {
+          name: 'loan_type',
+          type: 'loan_type',
+          nullable: true,
+          description: 'Tipo de préstamo: "money" (dinero), "object" (objeto físico), "unknown" (legacy). NULL para servicios.'
+        },
+        {
           name: 'title',
           type: 'VARCHAR',
           nullable: false,

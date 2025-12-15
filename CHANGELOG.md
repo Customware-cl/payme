@@ -2,6 +2,229 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.33] - 2025-12-15 - ✨ Campo loan_type para diferenciar préstamos
+
+### ✨ Nueva Funcionalidad
+
+Agregar campo `loan_type` a la tabla `agreements` para diferenciar préstamos de dinero vs objetos de forma explícita (no depender de metadata).
+
+### 📝 Cambios
+
+**Base de datos:**
+- `supabase/migrations/051_add_loan_type_to_agreements.sql`:
+  - Crear ENUM `loan_type` con valores: `'money'`, `'object'`, `'unknown'`
+  - Agregar columna `loan_type` a tabla `agreements`
+  - Migración automática de datos existentes basada en `amount` y `metadata`
+  - Índice parcial para consultas por `loan_type`
+
+- `supabase/migrations/052_add_loan_type_to_create_p2p_loan.sql`:
+  - Agregar parámetro `p_loan_type` a función SQL `create_p2p_loan()`
+
+**Edge Functions:**
+- `supabase/functions/_shared/schema-provider.ts`:
+  - Agregar campo `loan_type` al schema para AI Agent
+
+- `supabase/functions/_shared/flow-handlers.ts`:
+  - Guardar `loan_type` como columna real en vez de metadata
+
+- `supabase/functions/create-received-loan/index.ts`:
+  - Usar columna `loan_type` en vez de `metadata.is_money_loan`
+
+- `supabase/functions/scheduler_dispatch/index.ts`:
+  - Query incluye `loan_type` y `amount`
+  - Selección de template usa `loan_type` con fallback a `amount !== null` para legacy
+
+### 🔄 Compatibilidad
+
+- Campo tiene DEFAULT `'unknown'` para no romper inserts existentes
+- Scheduler mantiene fallback a `amount !== null` para datos legacy
+- Datos existentes migrados automáticamente
+
+---
+
+## [v3.0.32] - 2025-12-15 - 🐛 Fix: Recordatorios WhatsApp funcionando
+
+### 🐛 Problemas Detectados
+
+1. Template name incorrecto: `due_date_object_v1` → `due_date_item_v1`
+2. Templates en WABA incorrecto (diferentes al número de teléfono)
+3. Número de parámetros incorrecto (enviaba 4, template requiere 11+URL)
+4. Faltaba soporte para botón URL dinámico
+5. Referencias a `contact` en vez de `borrower` causaban undefined
+6. Lender no se obtenía porque `lender_tenant_contact_id` es null (datos en metadata)
+7. Ruta incorrecta al `lender_contact_id` (estaba en `metadata.original_context`)
+
+### ✅ Solución
+
+1. Corregir nombre del template
+2. Usuario creó templates en el WABA correcto (`1558540088893371`)
+3. Actualizar `extractTemplateVariables` para generar 11 variables + URL (money) o 4+URL (item)
+4. Agregar soporte en `WhatsAppWindowManager` para botones URL dinámicos
+5. Refactorizar query para obtener borrower/lender con datos bancarios
+6. Fallback: obtener lender desde `metadata.original_context.lender_contact_id`
+7. Agregar parámetro `force_mode` para pruebas fuera de hora oficial
+
+### 📝 Cambios
+
+- **`supabase/functions/scheduler_dispatch/index.ts`**:
+  - Query actualizada con borrower/lender, bank_accounts y metadata
+  - Fallback para lender desde `metadata.original_context.lender_contact_id`
+  - `extractTemplateVariables`: genera variables según template (money: 11+URL, item: 4+URL)
+  - `prepareReminderMessage`: usa `borrower` en vez de `contacts`
+  - Auth: acepta service role key además de SCHEDULER_AUTH_TOKEN
+  - Nuevo parámetro `force_mode` para forzar modo normal/catchup
+
+- **`supabase/functions/_shared/whatsapp-window-manager.ts`**:
+  - Soporte para `button_url` en componentes del template
+  - Language code: `es_CL` (Spanish Chile)
+
+- **`supabase/functions/_shared/whatsapp-templates.ts`**:
+  - Language code: `es_CL` para todos los templates
+
+---
+
+## [v3.0.31] - 2025-12-15 - 🐛 Fix: Mensajes WhatsApp no se envían desde usuarios orgánicos
+
+### 🐛 Problema Detectado
+
+Usuarios que completaron onboarding (orgánicos) podían crear préstamos, pero el mensaje de confirmación no se enviaba al borrower.
+
+### 🎯 Causa Raíz
+
+Los tenants creados vía onboarding no tienen `whatsapp_phone_number_id` ni `whatsapp_access_token` configurados. El código verificaba estas credenciales y retornaba sin enviar el mensaje.
+
+### ✅ Solución
+
+Agregar fallback a credenciales de plataforma cuando el tenant no tiene propias.
+
+### 📝 Cambios
+
+- **`supabase/functions/_shared/flow-handlers.ts`**:
+  - Línea 878-888: Fallback a `WHATSAPP_PHONE_NUMBER_ID` de env o hardcoded `926278350558118`
+  - Línea 959: Usar variable `whatsappPhoneNumberId` en vez de `tenant.whatsapp_phone_number_id`
+
+---
+
+## [v3.0.30] - 2025-12-15 - 🐛 Fix: Borrowers no pueden crear préstamos
+
+### 🐛 Problema Detectado
+
+Usuarios que completaron onboarding como borrowers (receptores de préstamos) no podían crear sus propios préstamos. Error: `Owner user not found`.
+
+### 🎯 Causa Raíz
+
+La función `ensure_user_tenant()` crea un tenant pero NO crea un registro en la tabla `users` con rol `owner`. El flujo de creación de préstamos requiere un usuario owner.
+
+### ✅ Solución
+
+Modificar `complete-onboarding` para crear automáticamente un usuario owner después de crear el tenant.
+
+### 📝 Cambios
+
+- **`supabase/functions/complete-onboarding/index.ts`**:
+  - Agregado paso 5: crear usuario owner si no existe
+  - Obtiene email, nombre y teléfono del perfil para el registro
+
+---
+
+## [v3.0.29] - 2025-12-12 - 🐛 Fix: Errores adicionales en scheduler_dispatch
+
+### 🐛 Problemas Detectados
+
+Al probar el scheduler después de v3.0.28, se encontraron errores adicionales:
+
+1. **FK incorrecta `tenant_contacts`** - Usaba `agreements_tenant_contact_id_fkey` pero el nombre real es `fk_agreements_tenant_contact`
+2. **Enum incorrecto de opt_in_status** - El código comparaba con `'accepted'` pero el enum usa `'opted_in'`
+3. **Columna inexistente `variables_count`** - El nombre correcto es `variable_count` (singular)
+
+### ✅ Solución
+
+- FK corregida: `tenant_contacts!fk_agreements_tenant_contact`
+- Enum corregido: `opt_in_status !== 'opted_in'`
+- Columna corregida: `variable_count`
+
+### 🧪 Resultado del Test
+
+El scheduler ahora procesa correctamente:
+- ✅ 7 instancias procesadas
+- ✅ 6 saltadas (contactos sin opt_in)
+- ✅ 1 intentó enviar (falló por template inexistente en Meta WhatsApp API)
+
+### 📝 Nota de Configuración
+
+El error `Template name does not exist in the translation` indica que el template `due_date_money_v1` debe crearse/aprobarse en Meta WhatsApp Business Manager.
+
+---
+
+## [v3.0.28] - 2025-12-12 - 🐛 Fix: Errores en scheduler_dispatch
+
+### 🐛 Problemas Detectados
+
+El scheduler de recordatorios fallaba con múltiples errores:
+
+1. **`this.supabase.raw is not a function`** - El cliente Supabase JS no tiene método `.raw()`
+2. **Relación ambigua `agreements` ↔ `tenants`** - Múltiples FK sin especificar cuál usar
+3. **Relación inexistente `reminder_instances` ↔ `agreements`** - El código asumía columnas que no existen
+
+### 🎯 Causa Raíz
+
+El código del scheduler fue escrito asumiendo un schema de `reminder_instances` con columnas adicionales (agreement_id, tenant_id, contact_id, etc.) que no existen en el schema actual. El schema actual solo tiene `reminder_id` como FK, y la información del agreement/contact debe obtenerse navegando las relaciones.
+
+### ✅ Solución
+
+Adaptar el código al schema existente:
+
+1. **whatsapp-window-manager.ts**: Remover uso de `.raw()`, filtrar en código
+2. **scheduler_dispatch.ts**:
+   - Especificar FK exacta: `tenants!agreements_tenant_id_fkey`
+   - Reescribir queries para navegar relaciones correctamente
+   - `processScheduledReminders()`: Navegar `reminder_instances` → `reminders` → `agreements` → `tenant_contacts`
+   - `generateReminderInstances()`: Usar solo columnas que existen (`reminder_id`, `scheduled_for`, `status`)
+
+### 📝 Cambios
+
+- **`supabase/functions/_shared/whatsapp-window-manager.ts`**:
+  - Línea 503: Removido `this.supabase.raw()`, filtrado en código
+
+- **`supabase/functions/scheduler_dispatch/index.ts`**:
+  - Línea 534: Especificada FK `tenants!agreements_tenant_id_fkey`
+  - Líneas 310-334: Reescrita query para navegar relaciones anidadas
+  - Líneas 351-414: Adaptado acceso a datos con estructura aplanada
+  - Líneas 245-270: Corregido `generateReminderInstances()` para usar columnas existentes
+
+---
+
+## [v3.0.27] - 2025-12-11 - 🐛 Fix: Error 401 en complete-onboarding
+
+### 🐛 Problema Detectado
+
+La Edge Function `complete-onboarding` retornaba error 401 Unauthorized cuando usuarios nuevos (borrowers) intentaban completar el onboarding desde el portal web.
+
+**Comportamiento incorrecto:**
+1. Usuario recibe mensaje de confirmación de préstamo en WhatsApp ✅
+2. Usuario acepta el préstamo ✅
+3. Usuario accede al link web ✅
+4. Usuario completa formulario de onboarding (nombre, apellido, email) ✅
+5. Click en "Continuar" → Error 401 ❌
+
+### 🎯 Causa Raíz
+
+La función `complete-onboarding` fue deployada con verificación JWT habilitada (default de Supabase), pero el frontend de `/menu/app.js` no envía el header `Authorization` porque usa sistema de tokens propios.
+
+### ✅ Solución
+
+Re-deployar la función con `--no-verify-jwt`:
+```bash
+npx supabase functions deploy complete-onboarding --no-verify-jwt --project-ref qgjxkszfdoolaxmsupil
+```
+
+### 📝 Cambios
+
+- **Deploy**: `complete-onboarding` con `--no-verify-jwt`
+- **Docs**: Agregada `complete-onboarding` a la lista de funciones sin JWT en `EDGE_FUNCTIONS_DEPLOYMENT.md`
+
+---
+
 ## [v3.0.26] - 2025-11-14 - 🐛 Fix: Guardar Datos del Onboarding para Usuarios con Tenant Existente
 
 ### 🐛 Problema Detectado

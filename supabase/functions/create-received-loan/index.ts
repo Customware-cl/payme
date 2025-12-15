@@ -283,13 +283,12 @@ serve(async (req) => {
       lender_tenant_contact_id: lender_tenant_contact_id, // LENDER
       created_by: user_id,
       type: 'loan',
+      loan_type: isMoneyLoan ? 'money' : 'object', // Columna real para tipo de préstamo
       start_date: loan.start_date || new Date().toISOString().split('T')[0],
       due_date: loan.due_date,
       status: 'active',
       metadata: {
-        created_from: 'received_loan_form',
-        loan_type: 'received',
-        is_money_loan: isMoneyLoan
+        created_from: 'received_loan_form'
       }
     };
 

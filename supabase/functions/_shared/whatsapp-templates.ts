@@ -66,7 +66,7 @@ export class WhatsAppTemplates {
         type: 'template',
         template: {
           name: 'menu_web_access',
-          language: { code: 'es' },
+          language: { code: 'es_CL' },
           components: components
         }
       };
@@ -282,7 +282,7 @@ export class WhatsAppTemplates {
         type: 'template',
         template: {
           name: 'loan_invitation',
-          language: { code: 'es' },
+          language: { code: 'es_CL' },
           components: components
         }
       };

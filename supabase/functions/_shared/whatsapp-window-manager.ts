@@ -321,6 +321,38 @@ export class WhatsAppWindowManager {
         throw new Error('Contact phone number not found');
       }
 
+      // Preparar componentes del template
+      const components: any[] = [];
+
+      // Separar variables del body y URL del botón
+      const bodyVars = { ...variables };
+      const buttonUrl = bodyVars['button_url'];
+      delete bodyVars['button_url'];
+
+      // Agregar parámetros del body
+      if (Object.keys(bodyVars).length > 0) {
+        components.push({
+          type: 'body',
+          parameters: Object.values(bodyVars).map(value => ({
+            type: 'text',
+            text: String(value)
+          }))
+        });
+      }
+
+      // Agregar parámetro del botón URL si existe
+      if (buttonUrl) {
+        components.push({
+          type: 'button',
+          sub_type: 'url',
+          index: '0',
+          parameters: [{
+            type: 'text',
+            text: String(buttonUrl)
+          }]
+        });
+      }
+
       // Preparar payload para WhatsApp API
       const payload = {
         messaging_product: 'whatsapp',
@@ -328,16 +360,8 @@ export class WhatsAppWindowManager {
         type: 'template',
         template: {
           name: templateName,
-          language: { code: 'es' },
-          components: Object.keys(variables).length > 0 ? [
-            {
-              type: 'body',
-              parameters: Object.values(variables).map(value => ({
-                type: 'text',
-                text: String(value)
-              }))
-            }
-          ] : []
+          language: { code: 'es_CL' },
+          components
         }
       };
 
@@ -496,11 +520,12 @@ export class WhatsAppWindowManager {
   }> {
     try {
       // Obtener mensajes pendientes
+      // Nota: No podemos comparar retry_count < max_retries directamente con PostgREST
+      // Obtenemos todos los pendientes y filtramos en código
       let query = this.supabase
         .from('message_queue')
         .select('*')
         .eq('status', 'pending')
-        .lt('retry_count', this.supabase.raw('max_retries'))
         .or('scheduled_for.is.null,scheduled_for.lte.' + new Date().toISOString());
 
       if (tenantId) {
@@ -516,9 +541,12 @@ export class WhatsAppWindowManager {
         return { processed: 0, sent: 0, failed: 0, expired: 0 };
       }
 
+      // Filtrar items donde retry_count < max_retries (no se puede hacer en PostgREST)
+      const eligibleItems = queueItems.filter(item => item.retry_count < item.max_retries);
+
       const stats = { processed: 0, sent: 0, failed: 0, expired: 0 };
 
-      for (const item of queueItems) {
+      for (const item of eligibleItems) {
         stats.processed++;
 
         // Verificar expiración

@@ -202,7 +202,10 @@ serve(async (req: Request) => {
             status,
             created_at,
             tenant_contact_id,
-            borrower_tenant_id
+            borrower_tenant_id,
+            loan_type,
+            item_description,
+            title
           `)
           .eq('lender_tenant_id', tokenData.tenant_id)
           .in('status', ['active', 'pending_confirmation'])
@@ -220,7 +223,10 @@ serve(async (req: Request) => {
             status,
             created_at,
             tenant_contact_id,
-            lender_tenant_id
+            lender_tenant_id,
+            loan_type,
+            item_description,
+            title
           `)
           .eq('borrower_tenant_id', tokenData.tenant_id)
           .in('status', ['active', 'pending_confirmation'])

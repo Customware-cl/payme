@@ -18,6 +18,10 @@ npx supabase functions deploy menu-data --no-verify-jwt
 npx supabase functions deploy loan-actions --no-verify-jwt
 npx supabase functions deploy loan-web-form --no-verify-jwt
 npx supabase functions deploy create-received-loan --no-verify-jwt
+npx supabase functions deploy complete-onboarding --no-verify-jwt
+
+# Scheduler (autenticación por SCHEDULER_AUTH_TOKEN)
+npx supabase functions deploy scheduler_dispatch --no-verify-jwt
 ```
 
 ## ⚠️ IMPORTANTE

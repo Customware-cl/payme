@@ -194,7 +194,43 @@ serve(async (req: Request) => {
     const newTenantId = tenantResult;
     console.log('[ONBOARDING] Tenant created:', newTenantId);
 
-    // 5. Registrar evento de onboarding completado
+    // 5. Crear usuario owner para que pueda crear préstamos
+    // Primero verificamos si ya existe un usuario owner para este tenant
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('id')
+      .eq('tenant_id', newTenantId)
+      .eq('role', 'owner')
+      .maybeSingle();
+
+    if (!existingUser) {
+      // Obtener teléfono del contact_profile
+      const { data: profile } = await supabase
+        .from('contact_profiles')
+        .select('phone_e164')
+        .eq('id', contactProfileId)
+        .single();
+
+      const { error: userError } = await supabase
+        .from('users')
+        .insert({
+          tenant_id: newTenantId,
+          email: email,
+          role: 'owner',
+          first_name: first_name,
+          last_name: last_name,
+          phone: profile?.phone_e164 || null
+        });
+
+      if (userError) {
+        console.error('[ONBOARDING] Error creating user:', userError);
+        // No fallamos si no se puede crear el usuario, solo logueamos
+      } else {
+        console.log('[ONBOARDING] Owner user created for tenant:', newTenantId);
+      }
+    }
+
+    // 6. Registrar evento de onboarding completado
     await supabase
       .from('events')
       .insert({

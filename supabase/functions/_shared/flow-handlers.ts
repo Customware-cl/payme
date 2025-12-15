@@ -314,12 +314,13 @@ export class FlowHandlers {
         throw new Error(`Failed to create P2P loan: ${loanError?.message || 'Unknown error'}`);
       }
 
-      // Actualizar el agreement con campos legacy adicionales
+      // Actualizar el agreement con campos legacy adicionales + loan_type como columna
       const { data: agreement } = await this.supabase
         .from('agreements')
         .update({
           created_by: ownerUser.id,
           status: 'pending_confirmation',
+          loan_type: context.loan_type || 'unknown', // Columna real (money/object/unknown)
           reminder_config: {
             enabled: true,
             before_24h: true,
@@ -328,7 +329,6 @@ export class FlowHandlers {
           },
           metadata: {
             created_from: 'new_loan_flow',
-            loan_type: context.loan_type || 'unknown',
             original_context: context
           },
           exdates: [],
@@ -875,10 +875,17 @@ export class FlowHandlers {
         .eq('id', tenantId)
         .single();
 
-      if (!tenant || !tenant.whatsapp_phone_number_id) {
-        console.error('[NOTIFICATION] Tenant has no WhatsApp phone number ID configured');
+      // Usar credenciales del tenant o fallback a credenciales de plataforma
+      const PLATFORM_PHONE_NUMBER_ID = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '926278350558118';
+      const whatsappPhoneNumberId = tenant?.whatsapp_phone_number_id || PLATFORM_PHONE_NUMBER_ID;
+
+      if (!whatsappPhoneNumberId) {
+        console.error('[NOTIFICATION] No WhatsApp phone number ID available (tenant or platform)');
         return;
       }
+
+      console.log('[NOTIFICATION] Using WhatsApp phone_number_id:',
+        tenant?.whatsapp_phone_number_id ? 'from tenant' : 'from platform fallback');
 
       // 3. Obtener información del prestamista (lender) desde tenant_contacts
       let lenderName = 'Alguien';
@@ -949,7 +956,7 @@ export class FlowHandlers {
       console.log('[NOTIFICATION] Using token from:', tenant.whatsapp_access_token ? 'tenant' : 'env var');
 
       const response = await fetch(
-        `https://graph.facebook.com/v18.0/${tenant.whatsapp_phone_number_id}/messages`,
+        `https://graph.facebook.com/v18.0/${whatsappPhoneNumberId}/messages`,
         {
           method: 'POST',
           headers: {
