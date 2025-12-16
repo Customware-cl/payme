@@ -33,17 +33,22 @@ function showToast(message, duration = 3000) {
 
 // Validación y formateo de RUT
 function formatRUT(rut) {
-    // Eliminar puntos y guiones
-    let value = rut.replace(/\./g, '').replace(/-/g, '');
+    // Eliminar puntos y guiones, solo dejar números y K
+    let value = rut.replace(/[^\dkK]/g, '').toUpperCase();
+
+    if (!value) return '';
+
+    // Si solo hay un carácter, mostrarlo sin formato
+    if (value.length === 1) return value;
 
     // Separar número y dígito verificador
     let body = value.slice(0, -1);
-    let dv = value.slice(-1).toUpperCase();
+    let dv = value.slice(-1);
 
-    // Formatear con puntos
+    // Formatear con puntos (cada 3 dígitos desde la derecha)
     body = body.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
-    return body ? `${body}-${dv}` : '';
+    return `${body}-${dv}`;
 }
 
 function validateRUT(rut) {
@@ -102,16 +107,21 @@ function setupEventListeners() {
 
     // Formateo automático de RUT
     $('#rut').addEventListener('input', (e) => {
-        const cursorPosition = e.target.selectionStart;
-        const oldValue = e.target.value;
-        const newValue = formatRUT(oldValue);
+        const input = e.target;
+        const cursorPos = input.selectionStart;
+        const oldLen = input.value.length;
 
-        e.target.value = newValue;
+        // Formatear el valor
+        const newValue = formatRUT(input.value);
+        input.value = newValue;
 
-        // Mantener cursor en posición relativa
-        if (newValue.length >= oldValue.length) {
-            e.target.setSelectionRange(cursorPosition + 1, cursorPosition + 1);
-        }
+        // Calcular nueva posición del cursor
+        const newLen = newValue.length;
+        const diff = newLen - oldLen;
+
+        // Ajustar cursor manteniendo posición relativa
+        const newCursor = Math.max(0, cursorPos + diff);
+        input.setSelectionRange(newCursor, newCursor);
     });
 
     // Solo números en número de cuenta

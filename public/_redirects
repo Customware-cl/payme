@@ -1,0 +1,2 @@
+# Redirect rutas de préstamos a la página de redirect
+/loan/*  /loan/index.html  200

@@ -455,6 +455,85 @@ export async function getSchemaForAI(
       ],
       primaryKey: 'id',
       foreignKeys: []
+    },
+    loan_repayment_proofs: {
+      name: 'loan_repayment_proofs',
+      description: 'Pruebas de pago de préstamos (fotos, comprobantes TEF, etc.)',
+      columns: [
+        {
+          name: 'id',
+          type: 'UUID',
+          nullable: false,
+          description: 'ID único de la prueba de pago'
+        },
+        {
+          name: 'agreement_id',
+          type: 'UUID',
+          nullable: false,
+          description: 'ID del préstamo al que corresponde esta prueba'
+        },
+        {
+          name: 'proof_type',
+          type: 'TEXT',
+          nullable: false,
+          description: 'Tipo de prueba: "photo" (foto), "tef_receipt" (comprobante TEF), "other" (otro)'
+        },
+        {
+          name: 'file_url',
+          type: 'TEXT',
+          nullable: false,
+          description: 'URL del archivo en storage'
+        },
+        {
+          name: 'file_name',
+          type: 'TEXT',
+          nullable: true,
+          description: 'Nombre del archivo original'
+        },
+        {
+          name: 'file_size',
+          type: 'INTEGER',
+          nullable: true,
+          description: 'Tamaño del archivo en bytes'
+        },
+        {
+          name: 'mime_type',
+          type: 'TEXT',
+          nullable: true,
+          description: 'Tipo MIME del archivo (ej: image/jpeg, application/pdf)'
+        },
+        {
+          name: 'note',
+          type: 'TEXT',
+          nullable: true,
+          description: 'Nota opcional del usuario sobre la prueba de pago'
+        },
+        {
+          name: 'created_at',
+          type: 'TIMESTAMPTZ',
+          nullable: false,
+          description: 'Fecha de creación de la prueba'
+        },
+        {
+          name: 'created_by',
+          type: 'UUID',
+          nullable: true,
+          description: 'ID del contacto que subió la prueba (puede ser NULL para uploads públicos)'
+        }
+      ],
+      primaryKey: 'id',
+      foreignKeys: [
+        {
+          column: 'agreement_id',
+          references: 'agreements(id)',
+          description: 'Relación con el préstamo (ON DELETE CASCADE)'
+        },
+        {
+          column: 'created_by',
+          references: 'tenant_contacts(id)',
+          description: 'Contacto que subió la prueba'
+        }
+      ]
     }
   };
 
@@ -464,7 +543,7 @@ export async function getSchemaForAI(
     `El usuario actual es el contacto con ID = '${contactId}'`,
     `Para préstamos donde YO PRESTÉ (me deben): lender_tenant_contact_id = '${contactId}'`,
     `Para préstamos donde YO RECIBÍ (debo): tenant_contact_id = '${contactId}'`,
-    `Solo se pueden consultar tablas: agreements, tenant_contacts, contact_profiles`,
+    `Solo se pueden consultar tablas: agreements, tenant_contacts, contact_profiles, loan_repayment_proofs`,
     `NO se pueden hacer JOINs con: users, tenants, whatsapp_messages, auth.*`,
     `STATUS de préstamos - IMPORTANTE:`,
     `  - 'active': Préstamo activo, sin devolver, no vencido, confirmado`,

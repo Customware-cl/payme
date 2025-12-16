@@ -2,6 +2,143 @@
 
 Todos los cambios notables del proyecto serán documentados en este archivo.
 
+## [v3.0.38] - 2025-12-15 - 🐛 Fix input de RUT en datos bancarios
+
+### 🐛 Fix
+
+**Bug:** Al escribir el RUT en el formulario de datos bancarios, el texto ingresado no era visible.
+
+**Causa:** La función `formatRUT()` retornaba string vacío cuando solo había 1 carácter, porque hacía `slice(0, -1)` que en un string de 1 carácter resulta en vacío.
+
+**Solución:**
+- Agregar caso especial para 1 carácter: retornar el valor sin formato
+- Mejorar limpieza del input: ahora solo permite dígitos y K
+- Mejorar posicionamiento del cursor durante el formateo
+
+### 📁 Archivos modificados
+- `public/menu/bank-details.js` - Fix en `formatRUT()` y event listener
+
+---
+
+## [v3.0.37] - 2025-12-15 - 📎 UI de comprobantes en confirmación de devolución
+
+### ✨ Nueva Funcionalidad
+
+**Página de confirmación de devolución mejorada:**
+- Nueva UI para adjuntar comprobantes opcionales:
+  - 📷 Foto (del objeto devuelto o captura de pantalla)
+  - 🏦 Comprobante TEF (transferencia bancaria)
+  - Sin comprobante (opción por defecto)
+- Dropzone con drag & drop y preview de imagen
+- Validación de archivos: máx 5MB, formatos JPG/PNG/WEBP/PDF
+- Barra de progreso durante upload
+
+**WhatsApp Client ampliado:**
+- Nueva función `sendWhatsAppImage()` para enviar imágenes con caption
+- `sendWhatsAppMessage()` ahora soporta mensajes de texto además de templates
+- Notificación al prestamista incluye imagen si el prestatario adjuntó comprobante
+
+**Registro de comprobantes:**
+- Se guarda en tabla `loan_repayment_proofs` con metadata
+- URL del comprobante se guarda en `agreements.metadata.return_confirmation.proof_url`
+
+### 📁 Archivos modificados
+- `supabase/functions/loan-confirm-return/index.ts` - UI mejorada + manejo de multipart/form-data
+- `supabase/functions/_shared/whatsapp-client.ts` - sendWhatsAppImage + text support
+
+### 🚀 Deployment
+```bash
+npx supabase functions deploy loan-confirm-return --no-verify-jwt
+```
+
+---
+
+## [v3.0.36] - 2025-12-15 - 🗄️ Bucket de Storage para comprobantes de pago
+
+### ✨ Nueva Funcionalidad
+
+**Bucket `repayment-proofs`:**
+- Bucket público de Storage para almacenar comprobantes de pago de préstamos
+- Configuración:
+  - Límite de tamaño: 5MB por archivo
+  - MIME types permitidos: `image/jpeg`, `image/png`, `image/webp`, `application/pdf`
+  - Acceso público para lectura y escritura
+- RLS configurado:
+  - Política `Public can view proofs`: Permite lectura pública
+  - Política `Public can upload proofs`: Permite upload público
+
+### 📁 Archivos modificados
+- `supabase/migrations/053_repayment_proofs_bucket.sql` - Migración de creación de bucket
+
+---
+
+## [v3.0.35] - 2025-12-15 - 📊 Nueva tabla loan_repayment_proofs
+
+### ✨ Nueva Funcionalidad
+
+**Tabla `loan_repayment_proofs`:**
+- Permite almacenar pruebas de pago de préstamos (fotos, comprobantes TEF, etc.)
+- Estructura:
+  - `agreement_id`: Referencia al préstamo
+  - `proof_type`: Tipo de prueba ('photo', 'tef_receipt', 'other')
+  - `file_url`: URL del archivo en storage
+  - `file_name`, `file_size`, `mime_type`: Metadatos del archivo
+  - `note`: Nota opcional del usuario
+  - `created_by`: Referencia al contacto que subió la prueba
+- RLS habilitado:
+  - INSERT público (para página de confirmación)
+  - SELECT público (para visualización)
+- Índice en `agreement_id` para búsquedas rápidas
+- Eliminación en cascada cuando se borra un préstamo
+
+### 📁 Archivos modificados
+- `supabase/migrations/20251215_create_loan_repayment_proofs.sql` - Migración de creación de tabla
+- `supabase/functions/_shared/schema-provider.ts` - Actualizado schema para AI Agent (incluye nueva tabla en queries permitidas)
+
+---
+
+## [v3.0.34] - 2025-12-15 - 🔧 Simplificación de flujo de recordatorios
+
+### 📝 Cambios
+
+**scheduler_dispatch simplificado:**
+- **Automático (09:00):** Solo envía recordatorios el día de vencimiento (`due_date = HOY`)
+- **Manual (force_send):** Envía a todos los préstamos sin recordatorio previo (`last_reminder_sent = NULL`), sin importar la fecha
+- Solo usa templates existentes: `due_date_money_v1` y `due_date_item_v1`
+
+### 🐛 Fixes
+- Corregido orden de variables para templates de WhatsApp (coincide con estructura real en Meta)
+- Corregido idioma de template: `es_CL` (Spanish Chile)
+- Eliminado template duplicado `due_date_money_v1` en BD
+
+### 🗑️ Eliminado
+- Lógica de `before_24h` (24h antes del vencimiento)
+- Lógica de `overdue` (post-vencimiento automático)
+- Referencias a templates inexistentes (`devolucion_24h_v2`, `devolucion_vencida_v2`)
+
+### 📊 Lógica simplificada
+```
+AUTOMÁTICO (09:00):
+├─ Filtro: type='loan', status IN ('active','due_soon','overdue'), due_date=HOY
+└─ Enviar si last_reminder_sent no es de hoy
+
+MANUAL (force_send=true):
+├─ Filtro: type='loan', status NOT IN ('completed','cancelled','rejected'), last_reminder_sent=NULL
+└─ Enviar recordatorio con template según loan_type
+```
+
+### ✅ Probado
+- 6/7 recordatorios enviados exitosamente con `force_send=true`
+
+### Nueva Edge Function: `loan-confirm-return`
+- Página pública para confirmar devolución desde botón de WhatsApp
+- Muestra resumen del préstamo (monto, lender, fechas)
+- Campo opcional para nota/mensaje
+- Notifica al lender vía WhatsApp al confirmar
+- Accesible en: `https://somospayme.cl/loan/{id}/returned`
+
+---
+
 ## [v3.0.33] - 2025-12-15 - ✨ Campo loan_type para diferenciar préstamos
 
 ### ✨ Nueva Funcionalidad

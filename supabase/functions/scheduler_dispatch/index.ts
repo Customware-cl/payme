@@ -17,6 +17,9 @@ interface ProcessingStats {
   failed: number;
   skipped: number;
   queued: number;
+  debug_query_count?: number;
+  debug_error?: string;
+  debug_send_errors?: string[];
 }
 
 /**
@@ -79,12 +82,12 @@ serve(async (req: Request) => {
 
     // Obtener parámetros de la request
     const body = await req.json().catch(() => ({}));
-    const { tenant_id, dry_run = false, max_instances = 100, force_mode } = body;
+    const { tenant_id, dry_run = false, max_instances = 100, force_mode, force_send = false } = body;
 
     // Detectar modo de operación (puede ser forzado via parámetro)
     const isOfficialHour = isOfficialSendHour('America/Santiago', 9);
-    const mode = force_mode || (isOfficialHour ? 'normal' : 'catchup');
-    console.log(`🕐 Scheduler running in ${mode.toUpperCase()} mode (official hour: ${isOfficialHour}, forced: ${!!force_mode})`);
+    const mode = force_send ? 'normal' : (force_mode || (isOfficialHour ? 'normal' : 'catchup'));
+    console.log(`🕐 Scheduler running in ${mode.toUpperCase()} mode (official hour: ${isOfficialHour}, forced: ${!!force_mode}, force_send: ${force_send})`);
 
     // Estadísticas de procesamiento
     const stats: ProcessingStats = {
@@ -103,9 +106,9 @@ serve(async (req: Request) => {
     const statusUpdateResult = await supabase.rpc('update_agreement_status_by_time');
     console.log('📊 Estados de acuerdos actualizados:', statusUpdateResult.data || 0);
 
-    // 2. Procesar acuerdos con nuevos estados temporales (solo hora oficial)
+    // 2. Procesar acuerdos con nuevos estados temporales (solo hora oficial o force_send)
     if (mode === 'normal') {
-      refinedProcessingResult = await processRefinedAgreementStates(supabase, tenant_id, dry_run);
+      refinedProcessingResult = await processRefinedAgreementStates(supabase, tenant_id, dry_run, force_send);
       console.log('🔄 Acuerdos refinados procesados:', refinedProcessingResult);
     } else {
       console.log('⏭️  Skipping refined state processing (not official hour)');
@@ -128,6 +131,9 @@ serve(async (req: Request) => {
     stats.failed = processingResult.failed + refinedProcessingResult.failed;
     stats.skipped = processingResult.skipped + refinedProcessingResult.skipped;
     stats.queued = processingResult.queued + refinedProcessingResult.queued;
+    stats.debug_query_count = refinedProcessingResult.debug_query_count;
+    stats.debug_error = refinedProcessingResult.debug_error;
+    stats.debug_send_errors = refinedProcessingResult.debug_send_errors;
 
     // 3. Procesar cola de mensajes de WhatsApp
     const windowManager = new WhatsAppWindowManager(supabaseUrl, supabaseServiceKey);
@@ -637,38 +643,58 @@ async function cleanupExpiredData(supabase: any): Promise<{
   }
 }
 
-// Procesar acuerdos con estados refinados (DUE_SOON, DIA_D, VENCIDO)
+// Procesar acuerdos para envío de recordatorios (SIMPLIFICADO)
+// Automático: solo préstamos del día de vencimiento
+// Manual (force_send): todos los préstamos no completados
 async function processRefinedAgreementStates(
   supabase: any,
   tenantId?: string,
-  dryRun: boolean = false
+  dryRun: boolean = false,
+  forceSend: boolean = false
 ): Promise<ProcessingStats> {
   try {
-    const stats: ProcessingStats = { processed: 0, sent: 0, failed: 0, skipped: 0, queued: 0 };
+    const stats: ProcessingStats = { processed: 0, sent: 0, failed: 0, skipped: 0, queued: 0, debug_send_errors: [] };
 
-    // Obtener acuerdos que necesitan recordatorios basados en estado
+    // Fecha de hoy en formato YYYY-MM-DD
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+
+    // Construir query base
     let agreementsQuery = supabase
       .from('agreements')
       .select(`
-        id, title, status, due_date, agreement_type, tenant_id,
+        id, title, status, due_date, type, tenant_id,
         tenant_contact_id, lender_tenant_contact_id,
-        loan_type, amount,
+        loan_type, amount, item_description, metadata, created_at,
         last_reminder_sent, reminder_sequence_step, opt_in_required,
         borrower:tenant_contacts!tenant_contact_id(
           id, name, opt_in_status,
-          contact_profiles!inner(phone_e164)
+          contact_profiles!inner(phone_e164, first_name)
         ),
         lender:tenant_contacts!lender_tenant_contact_id(
           id, name,
-          contact_profiles!inner(
+          contact_profiles(
             first_name, last_name, email, bank_accounts
           )
         ),
         tenants!agreements_tenant_id_fkey(id, name, whatsapp_phone_number_id, whatsapp_access_token)
       `)
-      .in('status', ['due_soon', 'overdue'])
-      .not('due_date', 'is', null)
+      .eq('type', 'loan')
       .not('tenant_contact_id', 'is', null);
+
+    if (forceSend) {
+      // force_send: todos los préstamos no completados (sin importar fecha)
+      agreementsQuery = agreementsQuery
+        .not('status', 'in', '("completed","cancelled","rejected")')
+        .is('last_reminder_sent', null);  // Solo los que nunca recibieron recordatorio
+      console.log(`🔄 [FORCE_SEND] Buscando préstamos sin recordatorio enviado`);
+    } else {
+      // Automático: solo préstamos del día de vencimiento
+      agreementsQuery = agreementsQuery
+        .in('status', ['active', 'due_soon', 'overdue'])
+        .eq('due_date', todayStr);
+      console.log(`📅 [AUTOMÁTICO] Buscando préstamos con due_date = ${todayStr}`);
+    }
 
     if (tenantId) {
       agreementsQuery = agreementsQuery.eq('tenant_id', tenantId);
@@ -676,21 +702,31 @@ async function processRefinedAgreementStates(
 
     const { data: agreements, error: agreementsError } = await agreementsQuery.limit(50);
 
+    console.log(`📋 Query returned ${agreements?.length || 0} agreements, error: ${agreementsError ? JSON.stringify(agreementsError) : 'none'}`);
+
+    stats.debug_query_count = agreements?.length || 0;
+
     if (agreementsError) {
       console.error('Error obteniendo acuerdos refinados:', agreementsError);
+      stats.debug_error = agreementsError.message || JSON.stringify(agreementsError);
       return stats;
     }
 
     if (!agreements || agreements.length === 0) {
+      console.log('📋 No agreements found matching criteria');
       return stats;
     }
+
+    console.log(`📋 Processing ${agreements.length} agreements: ${agreements.map((a: any) => a.title).join(', ')}`);
 
     for (const agreement of agreements) {
       stats.processed++;
 
       try {
         // Determinar si debe enviar recordatorio
-        const shouldSendReminder = await shouldSendRefinedReminder(agreement);
+        // force_send: ya filtrado en query (solo sin last_reminder_sent)
+        // automático: verificar con shouldSendRefinedReminder
+        const shouldSendReminder = forceSend || shouldSendRefinedReminder(agreement);
 
         if (!shouldSendReminder) {
           stats.skipped++;
@@ -720,10 +756,14 @@ async function processRefinedAgreementStates(
             .eq('id', agreement.id);
         } else {
           stats.failed++;
+          const errorMsg = `${agreement.title}: ${sendResult.error}`;
+          stats.debug_send_errors?.push(errorMsg);
           console.error(`Error enviando recordatorio refinado:`, sendResult.error);
         }
 
-      } catch (agreementError) {
+      } catch (agreementError: any) {
+        const errorMsg = `${agreement.title}: ${agreementError.message || agreementError}`;
+        stats.debug_send_errors?.push(errorMsg);
         console.error(`Error procesando acuerdo refinado ${agreement.id}:`, agreementError);
         stats.failed++;
       }
@@ -737,120 +777,85 @@ async function processRefinedAgreementStates(
   }
 }
 
-// Determinar si debe enviar recordatorio refinado
-// Los recordatorios se envían a las 09:00 por defecto (configurable)
-async function shouldSendRefinedReminder(agreement: any, targetHour: number = 9): Promise<boolean> {
+// Determinar si debe enviar recordatorio (SIMPLIFICADO)
+// Solo envía recordatorios el día de vencimiento (daysUntilDue === 0)
+function shouldSendRefinedReminder(agreement: any): boolean {
   const now = new Date();
-  const currentHour = now.getHours();
-  const dueDate = new Date(agreement.due_date);
-  dueDate.setHours(0, 0, 0, 0); // Normalizar a medianoche
-
   const today = new Date();
-  today.setHours(0, 0, 0, 0); // Normalizar a medianoche
+  today.setHours(0, 0, 0, 0);
 
-  const lastSent = agreement.last_reminder_sent ? new Date(agreement.last_reminder_sent) : null;
+  const dueDate = new Date(agreement.due_date);
+  dueDate.setHours(0, 0, 0, 0);
 
   // Calcular días hasta vencimiento
   const daysUntilDue = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 
-  // Ventana de envío: entre 2 horas antes y 2 horas después de la hora objetivo
-  const inSendWindow = currentHour >= (targetHour - 2) && currentHour <= (targetHour + 2);
-
-  if (agreement.status === 'due_soon') {
-    // Día antes del vencimiento (daysUntilDue === 1) → Recordatorio "before_24h"
-    // Día de vencimiento (daysUntilDue === 0) → Recordatorio "due_date" con botones
-    if (daysUntilDue !== 0 && daysUntilDue !== 1) {
-      return false; // No es el día correcto
-    }
-
-    // Verificar que estamos en la ventana de envío (cerca de las 09:00)
-    if (!inSendWindow) {
-      return false; // No es la hora correcta
-    }
-
-    // No enviar si ya se envió hoy (en las últimas 12 horas)
-    if (lastSent && (now.getTime() - lastSent.getTime()) < (12 * 60 * 60 * 1000)) {
-      return false;
-    }
-
-    return true;
+  // Solo enviar el día de vencimiento (daysUntilDue === 0)
+  if (daysUntilDue !== 0) {
+    return false;
   }
 
-  if (agreement.status === 'overdue') {
-    // Para overdue: enviar cada 48 horas a las 09:00
-    if (!inSendWindow) {
-      return false; // No es la hora correcta
-    }
-
-    if (lastSent && (now.getTime() - lastSent.getTime()) < (48 * 60 * 60 * 1000)) {
+  // No enviar si ya se envió hoy
+  const lastSent = agreement.last_reminder_sent ? new Date(agreement.last_reminder_sent) : null;
+  if (lastSent) {
+    lastSent.setHours(0, 0, 0, 0);
+    if (lastSent.getTime() === today.getTime()) {
       return false;
     }
-
-    return true;
   }
 
-  return false;
+  return true;
 }
 
-// Enviar recordatorio refinado usando plantillas HSM
+// Enviar recordatorio usando plantillas HSM (SIMPLIFICADO)
+// Solo usa due_date_money_v1 o due_date_item_v1
 async function sendRefinedReminder(supabase: any, agreement: any): Promise<{
   success: boolean;
   error?: string;
 }> {
   try {
+    // Fecha de vencimiento (usada para notificaciones)
     const dueDate = new Date(agreement.due_date);
-    dueDate.setHours(0, 0, 0, 0);
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Determinar template según tipo de préstamo
+    const isMoneyLoan = agreement.loan_type === 'money' ||
+                        (agreement.loan_type === 'unknown' && agreement.amount !== null);
+    const templateName = isMoneyLoan ? 'due_date_money_v1' : 'due_date_item_v1';
+    const templateCategory = 'due_date';
 
-    // Calcular días hasta vencimiento
-    const daysUntilDue = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-
-    // Determinar categoría de plantilla basándose en días
-    let templateCategory = '';
-    let templateName = '';
-
-    if (agreement.status === 'due_soon') {
-      if (daysUntilDue === 1) {
-        // Día antes del vencimiento → Recordatorio previo
-        templateCategory = agreement.agreement_type === 'loan' ? 'before_24h' : 'monthly_service_preview';
-      } else if (daysUntilDue === 0) {
-        // Día de vencimiento → Recordatorio con botones
-        if (agreement.agreement_type === 'loan') {
-          templateCategory = 'due_date';
-          // Seleccionar template según tipo de préstamo (usar columna loan_type con fallback para legacy)
-          const isMoneyLoan = agreement.loan_type === 'money' ||
-                              (agreement.loan_type === 'unknown' && agreement.amount !== null);
-          templateName = isMoneyLoan ? 'due_date_money_v1' : 'due_date_item_v1';
-        } else {
-          templateCategory = 'monthly_service';
-        }
-      }
-    } else if (agreement.status === 'overdue') {
-      templateCategory = agreement.agreement_type === 'loan' ? 'overdue' : 'monthly_service_overdue';
-    }
-
-    if (!templateCategory) {
-      return { success: false, error: 'No se pudo determinar categoría de plantilla' };
-    }
+    console.log(`📨 Enviando recordatorio con template: ${templateName} para ${agreement.title}`);
 
     // Obtener plantilla HSM
-    let templateQuery = supabase
+    const { data: template, error: templateError } = await supabase
       .from('templates')
       .select('*')
       .eq('category', templateCategory)
-      .is('tenant_id', null);
-
-    // Para due_date, buscar por nombre específico (money vs object)
-    if (templateName) {
-      templateQuery = templateQuery.eq('meta_template_name', templateName);
-    }
-
-    const { data: template, error: templateError } = await templateQuery.maybeSingle();
+      .eq('meta_template_name', templateName)
+      .is('tenant_id', null)
+      .maybeSingle();
 
     if (templateError || !template) {
       return { success: false, error: `Plantilla no encontrada para categoría: ${templateCategory}${templateName ? ' (' + templateName + ')' : ''}` };
+    }
+
+    // Si lender no está en la relación directa, obtenerlo desde metadata
+    let lenderData = agreement.lender;
+    if (!lenderData) {
+      const lenderContactId = agreement.metadata?.original_context?.lender_contact_id ||
+                              agreement.metadata?.lender_contact_id;
+      if (lenderContactId) {
+        const { data: lenderFromMetadata } = await supabase
+          .from('tenant_contacts')
+          .select('id, name, contact_profiles(first_name, last_name, email, bank_accounts)')
+          .eq('id', lenderContactId)
+          .single();
+
+        if (lenderFromMetadata) {
+          lenderData = lenderFromMetadata;
+          agreement.lender = lenderData; // Actualizar para que prepareRefinedTemplateVariables lo use
+          console.log(`📎 Lender obtenido desde metadata: ${lenderData.name}`);
+        }
+      }
     }
 
     // Preparar variables de la plantilla (incluyendo URL del detalle)
@@ -863,80 +868,39 @@ async function sendRefinedReminder(supabase: any, agreement: any): Promise<{
     const bodyVariables = hasUrlButton ? variables.slice(0, -1) : variables;
 
     // Crear componentes del mensaje HSM
+    // Nota: Headers sin variables dinámicas no se incluyen
     const components: any[] = [
       {
         type: 'body',
-        parameters: bodyVariables.map((v: string) => ({ type: 'text', text: v }))
+        parameters: bodyVariables.map((v: string) => ({ type: 'text', text: String(v || '') }))
       }
     ];
 
-    // Agregar header si existe
-    if (template.header) {
-      components.unshift({
-        type: 'header',
-        parameters: []
+    // Botón CTA URL (index 0)
+    if (template.button_config?.cta_url && detailUrl) {
+      components.push({
+        type: 'button',
+        sub_type: 'url',
+        index: '0',
+        parameters: [{
+          type: 'text',
+          text: String(detailUrl)
+        }]
       });
     }
 
-    // Agregar botones si la plantilla los tiene (formato JSONB)
-    if (template.button_config) {
-      let buttonIndex = 0;
-
-      // Quick Reply buttons
-      if (template.button_config.quick_replies && Array.isArray(template.button_config.quick_replies)) {
-        template.button_config.quick_replies.forEach((button: any) => {
-          components.push({
-            type: 'button',
-            sub_type: 'quick_reply',
-            index: buttonIndex.toString(),
-            parameters: [{
-              type: 'payload',
-              payload: `loan_${agreement.id}_mark_returned`
-            }]
-          });
-          buttonIndex++;
-        });
-      }
-
-      // CTA URL button (con variable dinámica en la URL - última variable)
-      if (template.button_config.cta_url && detailUrl) {
-        components.push({
-          type: 'button',
-          sub_type: 'url',
-          index: buttonIndex.toString(),
-          parameters: [{
-            type: 'text',
-            text: detailUrl
-          }]
-        });
-      }
-    }
-
-    // Soporte legacy para buttons_config (si existe)
-    if (template.buttons_config && template.buttons_config.length > 0) {
-      template.buttons_config.forEach((button: any, index: number) => {
-        components.push({
-          type: 'button',
-          sub_type: 'quick_reply',
-          index: index.toString(),
-          parameters: [{ type: 'payload', payload: `agreement_${agreement.id}_${button.text.toLowerCase().replace(/\s+/g, '_')}` }]
-        });
-      });
-    }
+    console.log(`📝 Template: ${templateName}, bodyVars: ${bodyVariables.length}, vars: ${JSON.stringify(bodyVariables)}, URL: ${detailUrl}`);
 
     // Importar WhatsApp client
     const { sendWhatsAppMessage } = await import('../_shared/whatsapp-client.ts');
 
-    // Usar credenciales del tenant o fallback a plataforma
-    const PLATFORM_PHONE_NUMBER_ID = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '926278350558118';
-    const PLATFORM_ACCESS_TOKEN = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
-
-    const phoneNumberId = agreement.tenants?.whatsapp_phone_number_id || PLATFORM_PHONE_NUMBER_ID;
-    const accessToken = agreement.tenants?.whatsapp_access_token || PLATFORM_ACCESS_TOKEN;
+    // SIEMPRE usar credenciales del bot central (donde están las plantillas HSM)
+    const phoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID');
+    const accessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN');
 
     if (!phoneNumberId || !accessToken) {
-      console.error('❌ No WhatsApp credentials available (tenant or platform)');
-      return { success: false, error: 'No WhatsApp credentials' };
+      console.error('❌ No WhatsApp credentials in env vars (WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN)');
+      return { success: false, error: 'No WhatsApp credentials configured' };
     }
 
     // Enviar mensaje HSM
@@ -1043,7 +1007,7 @@ async function prepareRefinedTemplateVariables(agreement: any, category: string,
       variables.push(
         agreement.borrower?.name || 'Usuario',
         agreement.tenants?.name || 'la empresa',
-        agreement.agreement_type === 'loan' ? 'préstamos y devoluciones' : 'servicios mensuales'
+        agreement.type === 'loan' ? 'préstamos y devoluciones' : 'servicios mensuales'
       );
       break;
 
@@ -1063,38 +1027,40 @@ async function prepareRefinedTemplateVariables(agreement: any, category: string,
       const borrowerProfileName = agreement.borrower?.contact_profiles?.first_name || agreement.borrower?.name || 'Usuario';
 
       if (isMoneyTemplate) {
-        // Plantilla de dinero: 12 variables
-        // {{1}} nombre_borrower, {{2}} monto, {{3}} nombre_lender, {{4}} fecha_creación,
-        // {{5}} concepto, {{6}} nombre_completo_lender, {{7}} rut, {{8}} banco,
-        // {{9}} tipo_cuenta, {{10}} nro_cuenta, {{11}} email, {{12}} url_detalle
+        // Plantilla de dinero: 11 variables body + 1 URL botón
+        // {{1}} nombre_borrower, {{2}} nombre_lender, {{3}} fecha_préstamo, {{4}} monto,
+        // {{5}} concepto, {{6}} nombre_transferencia, {{7}} rut, {{8}} banco,
+        // {{9}} tipo_cuenta, {{10}} nro_cuenta, {{11}} email
+        // Botón URL: {{1}} path dinámico
         const bankInfo = getBankInfo();
         const montoFormateado = agreement.amount ? `$${formatAmount(agreement.amount)}` : '$0';
 
         variables.push(
-          borrowerProfileName,
-          montoFormateado,
-          agreement.lender?.name || 'el prestamista',
-          formatShortDate(createdDate),
-          agreement.item_description || agreement.title || 'préstamo',
-          bankInfo.name,
-          bankInfo.rut,
-          bankInfo.bank,
-          bankInfo.accountType,
-          bankInfo.accountNumber,
-          bankInfo.email,
-          generateDetailUrl()
+          borrowerProfileName,                                    // 1 - nombre borrower
+          agreement.lender?.name || 'el prestamista',            // 2 - nombre lender
+          formatShortDate(createdDate),                          // 3 - fecha préstamo
+          montoFormateado,                                        // 4 - monto
+          agreement.item_description || agreement.title || 'préstamo', // 5 - concepto
+          bankInfo.name,                                          // 6 - nombre transferencia
+          bankInfo.rut,                                           // 7 - RUT
+          bankInfo.bank,                                          // 8 - banco
+          bankInfo.accountType,                                   // 9 - tipo cuenta
+          bankInfo.accountNumber,                                 // 10 - número cuenta
+          bankInfo.email,                                         // 11 - email
+          `loan/${agreement.id}/returned`                         // URL botón (path relativo)
         );
       } else {
-        // Plantilla de objeto: 6 variables
-        // {{1}} nombre_borrower, {{2}} objeto, {{3}} nombre_lender,
-        // {{4}} fecha_creación, {{5}} concepto, {{6}} url_detalle
+        // Plantilla de objeto: 5 variables body + 1 URL botón
+        // {{1}} nombre_borrower, {{2}} nombre_lender, {{3}} fecha_préstamo,
+        // {{4}} objeto, {{5}} descripción
+        // Botón URL: {{1}} path dinámico
         variables.push(
-          borrowerProfileName,
-          agreement.item_description || agreement.title || 'objeto',
-          agreement.lender?.name || 'el prestamista',
-          formatShortDate(createdDate),
-          agreement.title || 'préstamo',
-          generateDetailUrl()
+          borrowerProfileName,                                    // 1 - nombre borrower
+          agreement.lender?.name || 'el prestamista',            // 2 - nombre lender
+          formatShortDate(createdDate),                          // 3 - fecha préstamo
+          agreement.item_description || agreement.title || 'objeto', // 4 - objeto
+          agreement.title || 'préstamo',                          // 5 - descripción
+          `loan/${agreement.id}/returned`                         // URL botón (path relativo)
         );
       }
       break;
